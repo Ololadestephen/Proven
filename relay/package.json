@@ -1,0 +1,22 @@
+{
+  "name": "proven-relay",
+  "version": "0.1.0",
+  "description": "Runs the Proven verifier on OutLayer, checks the attestation, and records the result in the escrow",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "relay": "node --env-file=../.env src/cli.ts",
+    "secret": "node --env-file=../.env src/secret.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/*.test.ts"
+  },
+  "dependencies": {
+    "near-api-js": "7.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.0",
+    "typescript": "5.9.3"
+  }
+}
