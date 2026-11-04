@@ -240,3 +240,37 @@ fn a_challenge_cannot_mix_an_inline_check_with_a_secret_reference() {
     let v: Value = serde_json::from_str(&run_with_secrets(mixed.to_string().as_bytes(), |_| Some(reference.clone()))).unwrap();
     assert_eq!(v["error"], "invalid_input");
 }
+
+#[test]
+fn a_run_requested_by_the_escrow_echoes_its_job_and_request_id() {
+    let check = example("data-job/check-strong.json");
+    let deliverable = example("data-job/deliverable-honest.json");
+    let variables = |name: &str| match name {
+        "PROVEN_CHECK" => Some(check.clone()),
+        "PROVEN_DELIVERABLE" => Some(deliverable.clone()),
+        "NEAR_REQUEST_ID" => Some("6245".to_string()),
+        _ => None,
+    };
+    let input = json!({ "mode": "verify", "escrow": "escrow.proven.testnet", "job": 42, "check_hash": sha256_hex(check.as_bytes()), "deliverable_hash": sha256_hex(deliverable.as_bytes()) });
+    let v: Value = serde_json::from_str(&run_with_secrets(input.to_string().as_bytes(), variables)).unwrap();
+    assert_eq!(v["pass"], true);
+    assert_eq!((v["escrow"].as_str(), v["job"].as_u64(), v["request_id"].as_u64()), (Some("escrow.proven.testnet"), Some(42), Some(6245)));
+
+    // Without OutLayer's variable there is no request id to report.
+    let v: Value = serde_json::from_str(&run_with_secrets(input.to_string().as_bytes(), |name| variables(name).filter(|_| name != "NEAR_REQUEST_ID"))).unwrap();
+    assert!(v["request_id"].is_null());
+}
+
+#[test]
+fn an_escrow_name_that_is_not_an_account_id_is_refused() {
+    let check = example("data-job/check-strong.json");
+    let input = json!({ "mode": "verify", "escrow": "x".repeat(65), "job": 1, "check": check, "deliverable": "{}" });
+    assert_eq!(output(&input)["error"], "invalid_input");
+}
+
+#[test]
+fn a_bound_rejected_challenge_with_many_missed_fakes_stays_within_the_output_limit() {
+    let input = json!({ "mode": "challenge", "escrow": "e".repeat(64), "job": u64::MAX, "check": example("data-job/check-weak.json"), "reference": example("data-job/reference.json") });
+    let text = run_with_secrets(input.to_string().as_bytes(), |name| (name == "NEAR_REQUEST_ID").then(|| u64::MAX.to_string()));
+    assert!(text.len() <= MAX_OUTPUT_BYTES, "{}", text.len());
+}

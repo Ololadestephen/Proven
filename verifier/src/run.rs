@@ -16,6 +16,10 @@
 //! the SHA-256 of the reference file text: the fakes are fully determined by that text and the
 //! verifier build.
 //!
+//! When the escrow contract requests the run, it adds `escrow` and `job` to the input. The verifier
+//! echoes them, with OutLayer's `NEAR_REQUEST_ID`, in the output, so the contract can tell which job
+//! a verdict belongs to and store the request id that finds its attestation.
+//!
 //! The output is compact JSON with sorted keys, the same canonical form OutLayer hashes for its
 //! attestation, so the SHA-256 of the printed bytes equals the attestation's `output_hash`.
 
@@ -30,6 +34,12 @@ pub const MAX_OUTPUT_BYTES: usize = 900;
 /// Fewest confirmed fakes a check must face before it can be accepted.
 pub const MIN_FAKES: u32 = 5;
 const VERSION: u32 = 1;
+/// Room kept in the output for the job binding: `escrow` (at most 64 characters), `job` and
+/// `request_id`.
+const BINDING_BYTES: usize = 140;
+const MAX_ACCOUNT_ID_LEN: usize = 64;
+/// The variable OutLayer sets to the on-chain request id of the run.
+const REQUEST_ID_VARIABLE: &str = "NEAR_REQUEST_ID";
 
 /// Secret variable names the verifier reads when only hashes are in the public input.
 pub const CHECK_SECRET: &str = "PROVEN_CHECK";
@@ -39,8 +49,22 @@ pub const DELIVERABLE_SECRET: &str = "PROVEN_DELIVERABLE";
 #[derive(Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum Input {
-    Verify { check: Option<String>, check_hash: Option<String>, deliverable: Option<String>, deliverable_hash: Option<String> },
-    Challenge { check: Option<String>, check_hash: Option<String>, reference: Option<String>, reference_hash: Option<String> },
+    Verify {
+        check: Option<String>,
+        check_hash: Option<String>,
+        deliverable: Option<String>,
+        deliverable_hash: Option<String>,
+        escrow: Option<String>,
+        job: Option<u64>,
+    },
+    Challenge {
+        check: Option<String>,
+        check_hash: Option<String>,
+        reference: Option<String>,
+        reference_hash: Option<String>,
+        escrow: Option<String>,
+        job: Option<u64>,
+    },
 }
 
 /// Runs one input, reading any private texts from the process environment (OutLayer secrets).
@@ -56,26 +80,42 @@ pub fn run_with_secrets(input: &[u8], secret: impl Fn(&str) -> Option<String>) -
         Ok(Input::Verify { check, deliverable, .. }) if check.is_some() != deliverable.is_some() => {
             json!({ "v": VERSION, "mode": "verify", "error": "invalid_input" })
         }
-        Ok(Input::Verify { check, check_hash, deliverable, deliverable_hash }) => {
-            match (text(check, check_hash, CHECK_SECRET, &secret), text(deliverable, deliverable_hash, DELIVERABLE_SECRET, &secret)) {
+        Ok(Input::Verify { check, check_hash, deliverable, deliverable_hash, escrow, job }) => {
+            let verdict = match (text(check, check_hash, CHECK_SECRET, &secret), text(deliverable, deliverable_hash, DELIVERABLE_SECRET, &secret)) {
                 (Ok(check), Ok(deliverable)) => verify(&check, &deliverable),
                 (Err(error), _) | (_, Err(error)) => json!({ "v": VERSION, "mode": "verify", "error": error }),
-            }
+            };
+            bind(verdict, escrow, job, &secret)
         }
         Ok(Input::Challenge { check, reference, .. }) if check.is_some() != reference.is_some() => {
             json!({ "v": VERSION, "mode": "challenge", "error": "invalid_input" })
         }
-        Ok(Input::Challenge { check, check_hash, reference, reference_hash }) => {
-            match (text(check, check_hash, CHECK_SECRET, &secret), text(reference, reference_hash, REFERENCE_SECRET, &secret)) {
+        Ok(Input::Challenge { check, check_hash, reference, reference_hash, escrow, job }) => {
+            let verdict = match (text(check, check_hash, CHECK_SECRET, &secret), text(reference, reference_hash, REFERENCE_SECRET, &secret)) {
                 (Ok(check), Ok(reference)) => challenge(&check, &reference),
                 (Err(error), _) | (_, Err(error)) => json!({ "v": VERSION, "mode": "challenge", "error": error }),
-            }
+            };
+            bind(verdict, escrow, job, &secret)
         }
         Err(_) => json!({ "v": VERSION, "error": "invalid_input" }),
     };
     let text = verdict.to_string();
     debug_assert!(text.len() <= MAX_OUTPUT_BYTES);
     text
+}
+
+/// Adds the job binding to a verdict. An `escrow` too long to be an account id is refused, so the
+/// output limit always holds.
+fn bind(mut verdict: Value, escrow: Option<String>, job: Option<u64>, variable: &impl Fn(&str) -> Option<String>) -> Value {
+    if escrow.as_ref().is_some_and(|e| e.len() > MAX_ACCOUNT_ID_LEN || !e.bytes().all(|b| b.is_ascii_graphic() && b != b'"' && b != b'\\')) {
+        return json!({ "v": VERSION, "error": "invalid_input" });
+    }
+    if escrow.is_some() || job.is_some() {
+        verdict["escrow"] = json!(escrow);
+        verdict["job"] = json!(job);
+        verdict["request_id"] = json!(variable(REQUEST_ID_VARIABLE).and_then(|id| id.parse::<u64>().ok()));
+    }
+    verdict
 }
 
 /// A text given directly in the input, or read from the named secret and checked against the
@@ -162,7 +202,7 @@ fn challenge(check_text: &str, reference_text: &str) -> Value {
     loop {
         verdict["missed"] = json!(missed[..listed]);
         verdict["missed_more"] = json!(missed.len() - listed);
-        if verdict.to_string().len() <= MAX_OUTPUT_BYTES || listed == 0 {
+        if verdict.to_string().len() + BINDING_BYTES <= MAX_OUTPUT_BYTES || listed == 0 {
             return verdict;
         }
         listed -= 1;
