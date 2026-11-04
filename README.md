@@ -23,7 +23,13 @@ A worker or buyer can also lose money in one case with no verdict involved: if t
 
 Each recorded verdict stores its OutLayer request id and the hash of its output, so anyone can fetch the attestation and compare it. Public execution input contains hashes and the job binding. Outputs also expose counts, failed-rule ids and missed-fake names; stored secrets expose ciphertext lengths. Low-entropy private text may be guessed from its public hash.
 
-The Intel signature chain has been checked through OutLayer's dashboard only. Independent command-line verification with `outlayer-verify` or `dcap-qvl` has **not** been run. The relay checks hash bindings and quote fields; that is not a signature verification.
+Independent command-line verification of **request 8700 (task 19117, job 6)** passed on November 4 with source-built `outlayer-verify` v0.1.0, revision `90c27d9d`, exit code 0. Authenticity (Intel signature chain, TCB UpToDate), measurement approval, execution binding, and input/output bytes recovered from chain all passed. Intel collateral read from the register contract matched the API copy byte for byte. This result covers this attestation; the other listed runs have hash-binding checks only. The relay itself does not verify Intel signatures, and the escrow still does not verify a per-call quote on chain.
+
+The tool's default testnet API address was retired in that revision. Use an explicit API address:
+
+```sh
+outlayer-verify tx AfaFhms3qDvef2HXttdvwkc328oAuyBu8XEsxETJ2zij --network testnet --api https://testnet-api.outlayer.ai --rpc https://test.rpc.fastnear.com --archival-rpc https://archival-rpc.testnet.near.org
+```
 
 ## Calls, refunds and limits
 
@@ -62,7 +68,7 @@ Contract: `escrow-v2.proven.testnet`, [deployment](https://testnet.nearblocks.io
 
 Each challenge was triggered by the fake-worker account, and each delivery verification by the named worker. Both data challenges caught 13 of 13 generated fakes; both function challenges caught 11 of 11, with one additional mutant unconfirmed. These counts describe mutations of the supplied reference; they do not establish check completeness. The strong checks were written with knowledge of the generator. Final token balances: honest worker 275 pUSD, fake worker 0, escrow 0. pUSD is a test token with no value.
 
-To audit a recorded result after configuring `.env`, run `cd relay` and `npm run relay -- audit 6 verify`. That audits hash bindings and quote fields only. Independent Intel signature verification is still pending.
+To audit a recorded result after configuring `.env`, run `cd relay` and `npm run relay -- audit 6 verify`. That audits hash bindings and quote fields only. The independent Intel signature check for request 8700 is described above.
 
 ## Layout
 
