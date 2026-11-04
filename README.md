@@ -70,6 +70,20 @@ Each challenge was triggered by the fake-worker account, and each delivery verif
 
 To audit a recorded result after configuring `.env`, run `cd relay` and `npm run relay -- audit 6 verify`. That audits hash bindings and quote fields only. The independent Intel signature check for request 8700 is described above.
 
+## P5 quote preview (no funds)
+
+From `agent/`, after `npm ci`, run this public quote preview. It needs no `.env`, account, API key or balance. The addresses below are placeholders for this preview only.
+
+```sh
+npm run --silent settlement -- quote '{"origin_asset":"nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1","destination_asset":"nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near","amount":"1000000","refund_to":"0000000000000000000000000000000000000000000000000000000000000000","recipient":"0x1111111111111111111111111111111111111111"}'
+```
+
+Expect JSON with `mode: "dry_quote"`, `execution_enabled: false`, token decimals, and integer input/output amounts. This always sends `dry: true`, including when `--dry-run` is omitted. It requests no deposit address and cannot sign or send a transaction. Choose assets by exact ID from the [public token catalog](https://1click.chaindefuser.com/v0/tokens); `amount` uses the origin token's smallest units. Slippage defaults to 100 basis points (1%); `slippage_bps` accepts 0 to 100. Unknown arguments, mismatched responses and funding fields are rejected. A November 4 preview of 1 NEAR USDC returned 997398 base units of Base USDC (minimum 987424), with a 2400-unit withdrawal fee already included. Quotes change; this is not an execution price or a verified service signature.
+
+For an existing real 1Click deposit, `npm run --silent settlement -- status '{"deposit_address":"<actual deposit address>"}'` reads the API's status. Add `deposit_memo` when the original quote requires it. It preserves all seven documented states, returns transaction hashes, and never retries a payment. `REFUNDED` is an API report requiring independent refund confirmation; fees can reduce the returned amount. `FAILED` does not prove a refund. Unknown states and request failures remain unresolved. These statuses cannot set a Proven verdict or change escrow state.
+
+P5 is incomplete: there is no cross-chain payout integration or mainnet settlement evidence. [1Click has no testnet deployment](https://docs.near-intents.org/resources/faqs), so these estimates concern mainnet assets and cannot spend the testnet escrow's funds. The existing worker receives NEAR or the job's token through the escrow. Mainnet funding, destination/refund addresses and the connection to an escrow payout still need an approved design. The preview trusts the 1Click HTTPS API for estimates; it does not verify settlement on either chain.
+
 ## Layout
 
 The P4 interface lives in `agent/`; see [agent instructions](agent/skill.md) for tool arguments, signer limits and the local private handoff. From `agent/`, `npm ci`, `npm run proven -- --help` and `npm run mcp` start the CLI and MCP interface. The owner-only custody setup requires explicit approval before registration or funding. Agent tools accept custody credentials or scoped worker keys, never a full-access buyer key. The current custody policy supports native-NEAR jobs only; token funding would call a contract outside its escrow-only allowlist.
