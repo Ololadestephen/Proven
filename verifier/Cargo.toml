@@ -1,0 +1,39 @@
+[package]
+name = "proven-verifier"
+version = "0.2.0"
+edition = "2021"
+description = "Proven verifier: runs an acceptance check on a deliverable, or challenges a check with planted fakes, and prints a compact verdict"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+# The program OutLayer runs (wasm32-wasip1): JSON on stdin, verdict on stdout.
+[[bin]]
+name = "proven-verifier"
+path = "src/main.rs"
+
+# Native tooling for buyers and judges: hashing, fake generation, local runs.
+[[bin]]
+name = "proven"
+path = "src/bin/proven.rs"
+required-features = ["cli"]
+
+[features]
+cli = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+wasmi = { version = "2", default-features = false, features = ["std", "validate", "deterministic"] }
+wat = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

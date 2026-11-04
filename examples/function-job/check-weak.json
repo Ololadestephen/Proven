@@ -1,0 +1,36 @@
+{
+ "kind": "function",
+ "proven_check": 1,
+ "verifier": "48f8539704a6a1b293e4930c5f254a59acd96fb61eaf100186c86c8301c7a128",
+ "export": "vat",
+ "arity": 2,
+ "rules": [
+  {
+   "id": "basic",
+   "type": "vectors",
+   "cases": [
+    {
+     "args": [
+      10000,
+      2000
+     ],
+     "expect": 2000
+    },
+    {
+     "args": [
+      0,
+      2000
+     ],
+     "expect": 0
+    },
+    {
+     "args": [
+      50,
+      2000
+     ],
+     "expect": 0
+    }
+   ]
+  }
+ ]
+}

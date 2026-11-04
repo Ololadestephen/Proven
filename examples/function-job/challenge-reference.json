@@ -1,0 +1,13 @@
+{
+ "wat": ";; VAT on a net amount, in cents. rate is in basis points (2000 = 20%).\n;; Amounts under 100 cents are exempt. Otherwise round half up to the nearest cent.\n(module\n  (func (export \"vat\") (param $net i64) (param $rate i64) (result i64)\n    (if (result i64) (i64.lt_s (local.get $net) (i64.const 100))\n      (then (i64.const 0))\n      (else\n        (i64.div_s\n          (i64.add (i64.mul (local.get $net) (local.get $rate)) (i64.const 5000))\n          (i64.const 10000))))))\n",
+ "domain": [
+  [
+   0,
+   100000000
+  ],
+  [
+   0,
+   2500
+  ]
+ ]
+}

@@ -1,0 +1,134 @@
+{
+ "rows": [
+  {
+   "invoice_id": "INV-2026-0101",
+   "supplier": "Northwind Office Co.",
+   "lines": [
+    {
+     "description": "Printer paper, 5 reams",
+     "amount_cents": 2495
+    }
+   ],
+   "total_cents": 2495
+  },
+  {
+   "invoice_id": "INV-2026-0102",
+   "supplier": "Bluepeak Supplies",
+   "lines": [
+    {
+     "description": "Notebooks, pack of 12",
+     "amount_cents": 3750
+    },
+    {
+     "description": "Envelopes, box of 500",
+     "amount_cents": 6570
+    }
+   ],
+   "total_cents": 10320
+  },
+  {
+   "invoice_id": "INV-2026-0103",
+   "supplier": "Harbor Stationers",
+   "lines": [
+    {
+     "description": "Label maker tape",
+     "amount_cents": 4197
+    }
+   ],
+   "total_cents": 4197
+  },
+  {
+   "invoice_id": "INV-2026-0104",
+   "supplier": "Northwind Office Co.",
+   "lines": [
+    {
+     "description": "Sticky notes, 24 pads",
+     "amount_cents": 6560
+    },
+    {
+     "description": "Notebooks, pack of 12",
+     "amount_cents": 1875
+    }
+   ],
+   "total_cents": 8435
+  },
+  {
+   "invoice_id": "INV-2026-0105",
+   "supplier": "Bluepeak Supplies",
+   "lines": [
+    {
+     "description": "Toner cartridge",
+     "amount_cents": 6450
+    }
+   ],
+   "total_cents": 6450
+  },
+  {
+   "invoice_id": "INV-2026-0106",
+   "supplier": "Harbor Stationers",
+   "lines": [
+    {
+     "description": "USB-C cable",
+     "amount_cents": 1990
+    },
+    {
+     "description": "Sticky notes, 24 pads",
+     "amount_cents": 4920
+    }
+   ],
+   "total_cents": 6910
+  },
+  {
+   "invoice_id": "INV-2026-0107",
+   "supplier": "Northwind Office Co.",
+   "lines": [
+    {
+     "description": "Shredder bags",
+     "amount_cents": 4450
+    }
+   ],
+   "total_cents": 4450
+  },
+  {
+   "invoice_id": "INV-2026-0108",
+   "supplier": "Bluepeak Supplies",
+   "lines": [
+    {
+     "description": "Ink pens, box of 50",
+     "amount_cents": 7280
+    },
+    {
+     "description": "USB-C cable",
+     "amount_cents": 995
+    }
+   ],
+   "total_cents": 8275
+  },
+  {
+   "invoice_id": "INV-2026-0109",
+   "supplier": "Harbor Stationers",
+   "lines": [
+    {
+     "description": "Desk lamp",
+     "amount_cents": 3899
+    }
+   ],
+   "total_cents": 3899
+  },
+  {
+   "invoice_id": "INV-2026-0110",
+   "supplier": "Northwind Office Co.",
+   "lines": [
+    {
+     "description": "Whiteboard markers",
+     "amount_cents": 1450
+    },
+    {
+     "description": "Ink pens, box of 50",
+     "amount_cents": 5460
+    }
+   ],
+   "total_cents": 6910
+  }
+ ]
+}

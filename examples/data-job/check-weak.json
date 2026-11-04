@@ -1,0 +1,39 @@
+{
+ "kind": "data",
+ "proven_check": 1,
+ "verifier": "48f8539704a6a1b293e4930c5f254a59acd96fb61eaf100186c86c8301c7a128",
+ "rules": [
+  {
+   "id": "rows",
+   "type": "row_count",
+   "min": 1,
+   "max": 100
+  },
+  {
+   "id": "fields",
+   "type": "fields",
+   "fields": {
+    "invoice_id": "string",
+    "supplier": "string",
+    "lines": "array",
+    "total_cents": "integer"
+   }
+  },
+  {
+   "id": "line_fields",
+   "type": "item_fields",
+   "array": "lines",
+   "fields": {
+    "description": "string",
+    "amount_cents": "integer"
+   }
+  },
+  {
+   "id": "reconcile",
+   "type": "sum_equals",
+   "array": "lines",
+   "item_field": "amount_cents",
+   "total_field": "total_cents"
+  }
+ ]
+}
