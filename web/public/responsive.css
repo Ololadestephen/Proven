@@ -1,0 +1,172 @@
+@media (max-width: 1050px) {
+  .lookup {
+    grid-template-columns: 0.8fr 1.2fr;
+    gap: 24px;
+  }
+  .recorded-jobs {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: 16px 0 0;
+  }
+  .recorded-jobs p {
+    max-width: none;
+  }
+  .quick-buttons {
+    margin: 0;
+  }
+  .summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .trust-panel {
+    grid-template-columns: 1fr 1.5fr;
+  }
+  .settlement-note {
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: 17px 0 0;
+  }
+}
+@media (max-width: 700px) {
+  .shell {
+    width: calc(100% - 36px);
+  }
+  .topbar {
+    min-height: 86px;
+  }
+  .wordmark {
+    font-size: 25px;
+  }
+  .brand-mark {
+    width: 27px;
+    height: 27px;
+    font-size: 20px;
+    margin-right: 8px;
+  }
+  .environment {
+    font-size: 9px;
+    gap: 6px;
+  }
+  .environment .divider {
+    margin: 0;
+  }
+  .intro {
+    grid-template-columns: 1fr;
+    gap: 22px;
+    padding-top: 35px;
+  }
+  h1 {
+    font-size: 42px;
+    letter-spacing: -1.7px;
+  }
+  .intro-copy {
+    max-width: 100%;
+    font-size: 12px;
+  }
+  .masthead {
+    padding-bottom: 84px;
+  }
+  .lookup {
+    grid-template-columns: 1fr;
+    padding: 24px 21px;
+    gap: 22px;
+  }
+  .lookup-title p {
+    max-width: none;
+  }
+  .recorded-jobs {
+    display: block;
+    padding-top: 17px;
+  }
+  .quick-buttons {
+    margin: 10px 0;
+  }
+  .feedback {
+    margin-bottom: 18px;
+  }
+  .snapshot-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-top: 26px;
+  }
+  .snapshot-heading h2 {
+    font-size: 35px;
+  }
+  .snapshot-heading .button {
+    min-height: 36px;
+  }
+  .summary-grid {
+    gap: 9px;
+  }
+  .metric {
+    padding: 18px 15px;
+  }
+  .metric-label {
+    margin-bottom: 12px;
+  }
+  .metric-value,
+  .metric-value.mono {
+    font-size: 18px;
+  }
+  .section-panel {
+    padding: 24px 21px;
+  }
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .progress-grid,
+  .timing-grid,
+  .accounts-grid {
+    grid-template-columns: 1fr;
+    gap: 19px;
+  }
+  .commitment {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+  .attestation-grid {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+  .audit {
+    padding: 24px 21px;
+  }
+  .trust-panel {
+    grid-template-columns: 1fr;
+    gap: 23px;
+    margin-top: 30px;
+  }
+  .trust-panel ul {
+    font-size: 11px;
+  }
+  .footer {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .footer p {
+    flex-basis: calc(100% - 90px);
+    text-align: right;
+    line-height: 1.8;
+  }
+  .empty-state {
+    padding: 28px 5px 40px;
+  }
+  .empty-state h2 {
+    font-size: 27px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

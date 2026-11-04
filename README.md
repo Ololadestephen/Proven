@@ -84,6 +84,14 @@ For an existing real 1Click deposit, `npm run --silent settlement -- status '{"d
 
 P5 is incomplete: there is no cross-chain payout integration or mainnet settlement evidence. [1Click has no testnet deployment](https://docs.near-intents.org/resources/faqs), so these estimates concern mainnet assets and cannot spend the testnet escrow's funds. The existing worker receives NEAR or the job's token through the escrow. Mainnet funding, destination/refund addresses and the connection to an escrow payout still need an approved design. The preview trusts the 1Click HTTPS API for estimates; it does not verify settlement on either chain.
 
+## Local job evidence page
+
+Run `cd web && npm ci && npm start`, then open `http://127.0.0.1:4173`. Node 22.18 or newer is required. No `.env`, wallet or API key is needed. Click **Job 11** to read the existing honest payout, or **Job 12** for the fake delivery's refund. These are existing jobs read live, not newly triggered demos. Refresh is manual; old results are cleared on a new lookup or error.
+
+The page shows the amount, confirmed or pending payout state, current attempt, retry/expiry eligibility, check-challenge counts, hashes and evidence links. It reads the job at a fixed final testnet block and compares each stored request's attestation with that job's input, verifier and output hashes, secret profile and quote commitments. **Bindings matched** means those field comparisons passed. The page does not verify Intel signatures, worker-measurement approval or NEAR light-client proofs; it relies on the public RPC and OutLayer API. It cannot start runs, set verdicts, release funds or read private input files. Runtime dependencies are Node built-ins and the repository's existing pure attestation/hash helpers.
+
+For checks, run `cd web && npm test && npm run typecheck && npm run format:check`. P6 remains incomplete: the page is local only, the new-demo button is not implemented, and no public hosting is deployed. P5's real cross-chain payout remains pending. Stop the local server with Ctrl-C when finished.
+
 ## Layout
 
 The P4 interface lives in `agent/`; see [agent instructions](agent/skill.md) for tool arguments, signer limits and the local private handoff. From `agent/`, `npm ci`, `npm run proven -- --help` and `npm run mcp` start the CLI and MCP interface. The owner-only custody setup requires explicit approval before registration or funding. Agent tools accept custody credentials or scoped worker keys, never a full-access buyer key. The current custody policy supports native-NEAR jobs only; token funding would call a contract outside its escrow-only allowlist.
@@ -102,7 +110,7 @@ The P4 terminal check passed on November 4: job 11 paid the honest worker exactl
 | `verifier/` | Acceptance-check runner (Rust to WebAssembly) and the check challenge |
 | `relay/` | Convenience tool: pins private texts, triggers runs and audits attestations. It cannot set a result |
 | `agent/` | MCP server, CLI and `skill.md` for agents |
-| `web/` | Job page and demo mode |
+| `web/` | Local read-only job/evidence page; a newly triggered demo and hosting remain pending |
 | `examples/` | Sample jobs and fictional data |
 
 ## License

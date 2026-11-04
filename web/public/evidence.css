@@ -1,0 +1,244 @@
+.snapshot-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin: 38px 0 24px;
+}
+.snapshot-heading .eyebrow {
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.snapshot-heading h2 {
+  font:
+    40px Georgia,
+    "Times New Roman",
+    serif;
+  letter-spacing: -1px;
+}
+.snapshot-meta {
+  font: 10px var(--mono);
+  color: var(--muted);
+  line-height: 1.9;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.metric {
+  min-width: 0;
+  padding: 24px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.metric:first-child {
+  background: var(--navy);
+  color: var(--paper);
+  border-color: var(--navy);
+}
+.metric-label {
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 18px;
+}
+.metric:first-child .metric-label,
+.metric:first-child .metric-detail {
+  color: #c1cdcd;
+}
+.metric-value {
+  font-size: 23px;
+  font-weight: 500;
+  letter-spacing: -0.6px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.metric-value.mono {
+  font-size: 21px;
+}
+.metric-detail {
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+.mono {
+  font-family: var(--mono);
+}
+.tone-good {
+  color: var(--green);
+}
+.tone-bad {
+  color: var(--coral);
+}
+.section-panel {
+  padding: 29px 31px;
+  margin-bottom: 24px;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+.section-heading .eyebrow {
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+.section-heading h3 {
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.4px;
+}
+.progress-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 25px;
+}
+.progress-item {
+  min-width: 0;
+  border-top: 2px solid #b8c9b2;
+  padding-top: 13px;
+}
+.progress-item h4 {
+  font-size: 11px;
+  margin: 0 0 9px;
+  font-weight: 600;
+}
+.progress-item p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.detail-grid {
+  display: grid;
+  gap: 22px;
+}
+.timing-grid {
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 25px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+.detail {
+  min-width: 0;
+}
+.detail dt {
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.detail dd {
+  font: 11px/1.8 var(--mono);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.accounts-grid {
+  grid-template-columns: repeat(3, 1fr);
+  margin-bottom: 26px;
+}
+.commitment-list {
+  border-top: 1px solid var(--line);
+}
+.commitment {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid #e9ece5;
+}
+.commitment:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.commitment dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+.commitment dd {
+  margin: 0;
+  font: 10px/1.7 var(--mono);
+  overflow-wrap: anywhere;
+}
+.attestation-section {
+  margin: 38px 0;
+}
+.attestation-section > .section-heading {
+  margin-bottom: 12px;
+}
+.attestation-note {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+  max-width: 730px;
+  margin-bottom: 22px;
+}
+.attestation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+.audit {
+  padding: 27px;
+  min-width: 0;
+}
+.audit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.audit h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.badge {
+  font: 9px var(--mono);
+  background: #edf0e8;
+  color: #4b5c50;
+  border-radius: 3px;
+  padding: 5px 8px;
+}
+.badge.matched {
+  color: var(--green);
+  background: var(--green-light);
+}
+.badge.mismatch {
+  color: #9b3625;
+  background: var(--coral-light);
+}
+.audit-message {
+  font-size: 12px;
+  line-height: 1.8;
+  margin: 16px 0;
+}
+.audit-group {
+  padding: 17px 0 0;
+  margin-top: 17px;
+  border-top: 1px solid var(--line);
+}
+.audit-group h5 {
+  margin: 0 0 10px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.audit-group ul {
+  padding-left: 16px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--muted);
+}
+.audit-link {
+  display: inline-block;
+  margin-top: 20px;
+  font-size: 11px;
+}
