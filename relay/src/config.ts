@@ -1,4 +1,4 @@
-// Relay settings, read from the environment (`.env` at the repository root).
+// Settings, read from the environment (`.env` at the repository root).
 // Keys are only ever handed to the signer; they are never printed or logged.
 
 import type { KeyPairString } from "near-api-js";
@@ -10,8 +10,6 @@ export interface Config {
   escrowContract: string;
   outlayerContract: string;
   outlayerApi: string;
-  verifierWasmUrl: string;
-  verifierWasmHash: string;
 }
 
 function required(name: string, fallback?: string): string {
@@ -27,10 +25,8 @@ export function loadConfig(): Config {
     rpcUrl: process.env.NEAR_RPC_URL || "https://rpc.testnet.near.org",
     relayAccountId: required("RELAY_ACCOUNT_ID", "NEAR_ACCOUNT_ID"),
     relayPrivateKey: key as KeyPairString,
-    escrowContract: process.env.ESCROW_CONTRACT || "escrow.proven.testnet",
+    escrowContract: process.env.ESCROW_CONTRACT || "escrow-v2.proven.testnet",
     outlayerContract: process.env.OUTLAYER_CONTRACT || "outlayer.testnet",
     outlayerApi: process.env.OUTLAYER_API || "https://testnet-api.outlayer.ai",
-    verifierWasmUrl: required("VERIFIER_WASM_URL"),
-    verifierWasmHash: required("VERIFIER_WASM_HASH"),
   };
 }

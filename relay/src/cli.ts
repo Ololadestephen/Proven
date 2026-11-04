@@ -1,151 +1,169 @@
-// Proven relay.
+// Proven relay: a convenience, not an authority. It holds a job's private texts, pins them as an
+// OutLayer secret, triggers runs (anyone may) and audits attestations (anyone may). It cannot set a
+// result: only the escrow's own callback can. If it withholds the texts, no verdict can be reached
+// and the job expires to the buyer; if it changes them, the verifier refuses them.
 //
-//   npm run relay -- challenge <job_id> <check.json> <reference.json> [--public] [--no-post]
-//   npm run relay -- verify    <job_id> <check.json> <deliverable.json> [--public] [--no-post]
+//   npm run relay -- challenge <job_id> <check.json> <reference.json> [--pin-only]
+//   npm run relay -- verify    <job_id> <check.json> <deliverable.json> [--pin-only]
+//   npm run relay -- audit     <job_id> challenge|verify
+//   npm run relay -- unpin     <job_id> challenge|verify
 //
-// By default the files stay private: the relay stores them as its own OutLayer secret (see
-// secret.ts), sends only their hashes in the public input, and deletes the secret afterwards.
-// With --public they are sent in the clear and become public on chain.
-//
-// For a job on the escrow, the relay checks that the files are the ones the job is fixed to (by
-// hash), runs the verifier on OutLayer, checks the attestation against what it sent and received,
-// and records the result on the escrow. Only the verifier's output decides; nothing in the files is
-// read as a result. In a challenge the verifier generates the planted fakes itself from the
-// reference. `--no-post` does everything except the final escrow call.
-// Every run writes an evidence file to runs/relay/ before anything is posted, and updates it after.
+// `challenge` and `verify` check the files against the job's hashes, pin them, trigger the run,
+// audit the attestation and delete the secret. With `--pin-only` they stop after pinning, so any
+// account can trigger the run. Every run writes an evidence file to runs/relay/.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { checkAttestation, fetchAttestation } from "./attestation.ts";
-import { loadConfig } from "./config.ts";
-import { canonicalJson, sha256Hex } from "./hash.ts";
-import { getJob, recordOnEscrow, relayAccount, runOnOutlayer } from "./near.ts";
+import { type Config, loadConfig } from "./config.ts";
+import { sha256Hex } from "./hash.ts";
+import { getJob, type Job, relayAccount, type RunKind, secretsProfile, triggerRun } from "./near.ts";
 import { deleteSecret, storeSecret } from "./secret.ts";
-import { challengeCall, verdictCall } from "./verdict.ts";
 
-type Mode = "challenge" | "verify";
 const USAGE = `usage:
-  relay challenge <job_id> <check.json> <reference.json> [--public] [--no-post]
-  relay verify    <job_id> <check.json> <deliverable.json> [--public] [--no-post]
-  Files stay private (relay-owned OutLayer secret, hashes only on chain) unless --public is given.`;
+  relay challenge <job_id> <check.json> <reference.json> [--pin-only]
+  relay verify    <job_id> <check.json> <deliverable.json> [--pin-only]
+  relay audit     <job_id> challenge|verify
+  relay unpin     <job_id> challenge|verify`;
 
 function usage(): never {
   console.error(USAGE);
   process.exit(2);
 }
 
-function parseArgs(argv: string[]): { mode: Mode; jobId: number; files: [string, string]; isPublic: boolean; noPost: boolean } {
-  const flags = ["--no-post", "--public"];
-  const rest = argv.filter((a) => !flags.includes(a));
-  if (rest.some((a) => a.startsWith("--"))) usage();
-  const [mode, jobArg, check, other, ...extra] = rest;
-  const jobId = Number(jobArg);
-  if ((mode !== "challenge" && mode !== "verify") || !Number.isSafeInteger(jobId) || jobId < 0 || !check || !other || extra.length) usage();
-  return { mode, jobId, files: [check, other], isPublic: argv.includes("--public"), noPost: argv.includes("--no-post") };
+function jobNumber(text: string | undefined): number {
+  const jobId = Number(text);
+  if (!text || !Number.isSafeInteger(jobId) || jobId < 0) usage();
+  return jobId;
 }
 
-async function main(): Promise<void> {
-  const { mode, jobId, files, isPublic, noPost } = parseArgs(process.argv.slice(2));
+function kindOf(word: string | undefined): RunKind {
+  if (word === "challenge") return "Challenge";
+  if (word === "verify") return "Verify";
+  usage();
+}
+
+/** The exact public input the contract builds for a run: its keys in the contract's order. */
+export function runInput(job: Job, jobId: number, kind: RunKind, escrow: string): string {
+  return JSON.stringify(
+    kind === "Challenge"
+      ? { mode: "challenge", escrow, job: jobId, check_hash: job.spec_hash, reference_hash: job.fakes_hash }
+      : { mode: "verify", escrow, job: jobId, check_hash: job.spec_hash, deliverable_hash: job.deliverable_hash },
+  );
+}
+
+/** Checks a recorded result's attestation against the job. Returns the summary for the evidence. */
+async function audit(config: Config, job: Job, jobId: number, kind: RunKind) {
+  const requestId = kind === "Challenge" ? job.challenge_request_id : job.verdict_request_id;
+  const reportHash = kind === "Challenge" ? job.challenge_report_hash : job.report_hash;
+  if (!requestId || !reportHash) throw new Error(`job ${jobId} has no recorded ${kind} result (state ${job.state})`);
+  const record = await fetchAttestation(config.outlayerApi, Number(requestId));
+  const taskHash = checkAttestation(record, {
+    wasmHash: job.verifier_hash,
+    inputText: runInput(job, jobId, kind, config.escrowContract),
+    outputHash: reportHash,
+    secretsRef: `${job.secrets_owner}/${secretsProfile(job, jobId, kind)}`,
+  });
+  return {
+    request_id: requestId,
+    task_id: record.task_id,
+    attestation: `${config.outlayerApi}/attestations/by-request/${requestId}`,
+    transaction_hash: record.transaction_hash,
+    caller: record.caller_account_id,
+    wasm_hash: record.wasm_hash,
+    task_hash: taskHash,
+    worker_measurement: record.worker_measurement,
+    checked: ["wasm hash = job's verifier", "input hash = job's hashes", "output hash = recorded report hash", "secret = job's secret", "quote report_data = task hash", "quote RTMR3 = worker measurement"],
+    not_checked: ["Intel signature chain", "on-chain approval of the worker measurements"],
+  };
+}
+
+async function pinAndRun(kind: RunKind, jobId: number, checkPath: string, otherPath: string, pinOnly: boolean): Promise<void> {
   const config = loadConfig();
   const account = relayAccount(config);
   const job = await getJob(account, config, jobId);
 
   // 1. The job must be in the right state, and the files exactly the ones it is fixed to.
-  const expectState = mode === "challenge" ? "Draft" : "Delivered";
+  const expectState = kind === "Challenge" ? "Draft" : "Delivered";
   if (job.state !== expectState) throw new Error(`job ${jobId} is ${job.state}, expected ${expectState}`);
-  const [checkText, otherText] = files.map((f) => readFileSync(f, "utf8"));
+  if (job.secrets_owner !== account.accountId) throw new Error(`job ${jobId} reads secrets of ${job.secrets_owner}, not ${account.accountId}`);
+  const checkText = readFileSync(checkPath, "utf8");
+  const otherText = readFileSync(otherPath, "utf8");
   if (sha256Hex(checkText) !== job.spec_hash) throw new Error("the check file does not match the job's spec_hash");
-  const otherHash = sha256Hex(otherText);
-  if (mode === "challenge" && otherHash !== job.fakes_hash) throw new Error("the reference does not match the job's fakes_hash");
-  if (mode === "verify" && otherHash !== job.deliverable_hash) throw new Error("the deliverable does not match the delivered hash");
+  const expectedOther = kind === "Challenge" ? job.fakes_hash : job.deliverable_hash;
+  if (sha256Hex(otherText) !== expectedOther) throw new Error(`the ${kind === "Challenge" ? "reference" : "deliverable"} does not match the job's hash`);
   const checkVerifier = JSON.parse(checkText).verifier;
-  if (checkVerifier !== config.verifierWasmHash) throw new Error(`the check is written for verifier ${checkVerifier}, but the relay runs ${config.verifierWasmHash}`);
+  if (checkVerifier !== job.verifier_hash) throw new Error(`the check is written for verifier ${checkVerifier}, but the job pins ${job.verifier_hash}`);
 
-  const otherField = mode === "challenge" ? "reference" : "deliverable";
-  let input: string;
-  let secret: { profile: string; account_id: string } | undefined;
-  if (isPublic) {
-    input = JSON.stringify({ mode, check: checkText, [otherField]: otherText });
-  } else {
-    // Private: the texts go into a relay-owned secret; the public input carries only hashes, and
-    // the verifier refuses the secret unless it matches them.
-    const profile = `${mode === "challenge" ? "c" : "v"}${jobId}-${otherHash.slice(0, 12)}`;
-    const variables = { PROVEN_CHECK: checkText, [mode === "challenge" ? "PROVEN_REFERENCE" : "PROVEN_DELIVERABLE"]: otherText };
-    const stored = await storeSecret(account, config, profile, variables);
-    console.error(`job ${jobId}: stored relay-owned secret ${profile} (${stored.ciphertextBytes} bytes of ciphertext, tx ${stored.transactionHash})`);
-    secret = { profile, account_id: account.accountId };
-    input = JSON.stringify({ mode, check_hash: job.spec_hash, [`${otherField}_hash`]: otherHash });
+  // 2. Pin the texts as a secret only this job's verifier build can read, through the escrow.
+  const profile = secretsProfile(job, jobId, kind);
+  const variables = { PROVEN_CHECK: checkText, [kind === "Challenge" ? "PROVEN_REFERENCE" : "PROVEN_DELIVERABLE"]: otherText };
+  const stored = await storeSecret(account, config, job.verifier_hash, profile, variables);
+  console.error(`job ${jobId}: pinned secret ${profile} (${stored.ciphertextBytes} bytes of ciphertext, tx ${stored.transactionHash})`);
+  if (pinOnly) {
+    console.log(JSON.stringify({ job_id: jobId, pinned: profile, transaction_hash: stored.transactionHash }, null, 2));
+    return;
   }
 
-  // 2. Run the verifier on OutLayer.
-  console.error(`job ${jobId}: running ${mode} on OutLayer (${input.length} bytes of public input${secret ? `, secret ${secret.profile}@${secret.account_id}` : ""})...`);
-  const run = await runOnOutlayer(account, config, input, secret);
-  const outputText = canonicalJson(run.output);
-  const outputHash = sha256Hex(outputText);
-  const verdict = run.output as Record<string, unknown>;
-
-  // 3. Check the attestation against what we sent and received.
-  const record = await fetchAttestation(config.outlayerApi, run.requestId);
-  const attestationHash = checkAttestation(record, {
-    wasmHash: config.verifierWasmHash,
-    inputText: input,
-    outputHash,
-    caller: config.relayAccountId,
-    transactionHash: run.transactionHash,
-  });
-
-  // 4. The verifier's output must name this job's exact files.
-  if (verdict.error !== null) throw new Error(`the verifier reported an error: ${verdict.error}`);
-  if (verdict.mode !== mode || verdict.spec_hash !== job.spec_hash) throw new Error("the verifier output is for a different check");
-  if (mode === "challenge" && verdict.fakes_hash !== job.fakes_hash) throw new Error("the verifier output is for a different reference");
-  if (mode === "verify" && verdict.deliverable_hash !== job.deliverable_hash) throw new Error("the verifier output is for a different deliverable");
-
-  // 5. Build the escrow call from the verifier's output only, after checking its types.
-  const common = { job_id: jobId, spec_hash: job.spec_hash, report_hash: outputHash, attestation_hash: attestationHash };
-  const [method, escrowArgs] = mode === "challenge" ? challengeCall(verdict, job, common) : verdictCall(verdict, job, common);
-
-  // 6. Keep the evidence before posting, so a refused or failed post still leaves a record.
+  // 3. Trigger the run, like anyone can, and read what the contract recorded.
+  console.error(`job ${jobId}: asking the escrow to run the ${kind}...`);
+  const triggerTx = await triggerRun(account, config, jobId, kind);
+  const after = await getJob(account, config, jobId);
+  const recorded = kind === "Challenge" ? after.challenge_request_id : after.verdict_request_id;
   const evidence: Record<string, unknown> = {
     job_id: jobId,
-    mode,
+    kind,
     escrow: config.escrowContract,
-    outlayer: { transaction_hash: run.transactionHash, request_id: run.requestId, task_id: record.task_id },
-    verifier: { wasm_hash: config.verifierWasmHash, url: config.verifierWasmUrl },
-    privacy: secret ? { relay_owned_secret: secret, public_input_has: "hashes only" } : "public: texts sent in transaction input",
-    verdict,
-    output_hash: outputHash,
-    attestation: {
-      task_hash: attestationHash,
-      worker_measurement: record.worker_measurement,
-      checked_by_relay: ["wasm hash", "input hash", "output hash", "caller", "transaction", "quote report_data = task hash", "quote RTMR3 = worker measurement"],
-      not_checked_by_relay: ["Intel signature chain", "on-chain approval of the worker measurements"],
-    },
-    escrow_call: noPost ? "skipped (--no-post)" : { method, args: escrowArgs, status: "pending" },
+    trigger_transaction: triggerTx,
+    secret: { profile, owner: account.accountId, stored_in: stored.transactionHash },
+    state_after: after.state,
+    fakes: kind === "Challenge" ? { total: after.fakes_total, caught: after.fakes_caught } : undefined,
+    failed_rule: after.failed_rule,
   };
-  mkdirSync("../runs/relay", { recursive: true });
-  const file = `../runs/relay/job-${jobId}-${mode}-${Date.now()}.json`;
-  const save = () => writeFileSync(file, JSON.stringify(evidence, null, 2) + "\n");
-  save();
 
-  // 7. Record it on the escrow.
-  if (!noPost) {
-    try {
-      evidence.escrow_call = { method, args: escrowArgs, transaction_hash: await recordOnEscrow(account, config, method, escrowArgs) };
-    } catch (error) {
-      evidence.escrow_call = { method, args: escrowArgs, error: (error as Error).message };
-      save();
-      throw error;
-    }
-    save();
+  // 4. Audit the attestation, if a result was recorded. A failed audit is reported, not hidden.
+  if (recorded) {
+    evidence.audit = await audit(config, after, jobId, kind).catch((error: Error) => ({ failed: error.message }));
+  } else {
+    evidence.no_result = "the contract recorded nothing; the job can be run again";
   }
-  if (secret) {
-    // The run is over and its result recorded: return the storage deposit.
-    evidence.secret_deleted = await deleteSecret(account, config, secret.profile).catch((error: Error) => `failed: ${error.message}`);
-    save();
-  }
-  console.log(JSON.stringify({ job_id: jobId, mode, verdict, escrow_call: evidence.escrow_call, evidence: file }, null, 2));
+
+  // 5. The run is over: return the storage deposit. A retry pins the texts again.
+  evidence.secret_deleted = await deleteSecret(account, config, job.verifier_hash, profile).catch((error: Error) => `failed: ${error.message}`);
+  mkdirSync("../runs/relay", { recursive: true });
+  const file = `../runs/relay/job-${jobId}-${kind.toLowerCase()}-${Date.now()}.json`;
+  writeFileSync(file, JSON.stringify(evidence, null, 2) + "\n");
+  console.log(JSON.stringify({ ...evidence, evidence: file }, null, 2));
+  if (!recorded) process.exitCode = 1;
 }
 
-main().catch((error: Error) => {
-  console.error(`relay: ${error.message}`);
-  process.exit(1);
-});
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const pinOnly = args.includes("--pin-only");
+  const [command, jobArg, first, second, ...extra] = args.filter((a) => a !== "--pin-only");
+  if (extra.length || args.some((a) => a.startsWith("--") && a !== "--pin-only")) usage();
+  const jobId = jobNumber(jobArg);
+  if (command === "challenge" || command === "verify") {
+    if (!first || !second) usage();
+    return pinAndRun(command === "challenge" ? "Challenge" : "Verify", jobId, first, second, pinOnly);
+  }
+  if (second) usage();
+  const kind = kindOf(first);
+  const config = loadConfig();
+  const account = relayAccount(config);
+  const job = await getJob(account, config, jobId);
+  if (command === "audit") {
+    console.log(JSON.stringify(await audit(config, job, jobId, kind), null, 2));
+  } else if (command === "unpin") {
+    const profile = secretsProfile(job, jobId, kind);
+    console.log(JSON.stringify({ deleted: profile, transaction_hash: await deleteSecret(account, config, job.verifier_hash, profile) }));
+  } else {
+    usage();
+  }
+}
+
+if (import.meta.main) {
+  main().catch((error: Error) => {
+    console.error(`relay: ${error.message}`);
+    process.exit(1);
+  });
+}

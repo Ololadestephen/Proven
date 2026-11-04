@@ -3,13 +3,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { type AttestationRecord, checkAttestation, taskHash } from "./attestation.ts";
+import { type AttestationRecord, checkAttestation, type Expected, taskHash } from "./attestation.ts";
 import { canonicalJson, sha256Hex } from "./hash.ts";
 
 const record: AttestationRecord = JSON.parse(readFileSync("test-fixtures/outlayer-job-15385.json", "utf8"));
 const input = readFileSync("test-fixtures/outlayer-job-15385-input.json", "utf8");
 const output = { pass: true, reason: "lines sum to the total", input_sha256: "f06dc0af1a86408e280f92aa9de11aa16209d617eba2f115a21a17ceb0e7fd44" };
-const expected = {
+const expected: Expected = {
   wasmHash: "4398d9236325ecb5b2c99a00a9fc4c076603145f5f2ae39f3b6810f644ae3af2",
   inputText: input,
   outputHash: sha256Hex(canonicalJson(output)),
@@ -31,12 +31,13 @@ test("a genuine attestation passes every relay check", () => {
 });
 
 test("tampering with what was run or returned is caught", () => {
-  const cases: Array<[string, Partial<typeof expected>, RegExp]> = [
+  const cases: Array<[string, Partial<Expected>, RegExp]> = [
     ["another verifier build", { wasmHash: "0".repeat(64) }, /wasm_hash/],
     ["another input", { inputText: input + " " }, /input_hash/],
     ["another output", { outputHash: sha256Hex("{}") }, /output_hash/],
     ["another caller", { caller: "someone.testnet" }, /caller/],
     ["another transaction", { transactionHash: "x" }, /transaction/],
+    ["another secret", { secretsRef: "someone.testnet/profile" }, /secrets_ref/],
   ];
   for (const [name, change, error] of cases) {
     assert.throws(() => checkAttestation(record, { ...expected, ...change }), error, name);
@@ -49,4 +50,13 @@ test("a record whose fields were edited no longer matches the quote", () => {
   const quote = Buffer.from(record.tdx_quote, "base64");
   quote[520] ^= 0xff;
   assert.throws(() => checkAttestation({ ...record, tdx_quote: quote.toString("base64") }, expected), /RTMR3/);
+});
+
+test("the relay rebuilds exactly the input the contract sent to OutLayer", async () => {
+  const { runInput } = await import("./cli.ts");
+  // The real input of escrow-v2 job 0 (OutLayer request 8667), whose attested input_hash is below.
+  const job = { spec_hash: "fee7502fb427d36f939abba0a6be20039b2b5351ff854389208716fa51f3c47f", fakes_hash: "9c0cb42926c605d11c696e52e821793097358176d5ac6d5a833bb91fa14418dc", deliverable_hash: "c".repeat(64) } as Parameters<typeof runInput>[0];
+  const input = runInput(job, 0, "Challenge", "escrow-v2.proven.testnet");
+  assert.equal(sha256Hex(input), "0b1ac1173baef271678141e9366be6295ce1f66c8d7140d29dd10d6c12956a87");
+  assert.equal(runInput(job, 7, "Verify", "e.testnet"), `{"mode":"verify","escrow":"e.testnet","job":7,"check_hash":"${job.spec_hash}","deliverable_hash":"${"c".repeat(64)}"}`);
 });

@@ -1,9 +1,12 @@
-// NEAR calls the relay makes: running the verifier on OutLayer, reading jobs, recording results.
+// NEAR calls the relay makes. It has no special power on the escrow: `request_challenge` and
+// `request_verification` are open to anyone, and only the contract's own callback records a result.
 
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner, parseNearAmount } from "near-api-js";
 import type { Config } from "./config.ts";
 
 const TGAS = 1_000_000_000_000n;
+
+export type RunKind = "Challenge" | "Verify";
 
 export interface Job {
   buyer: string;
@@ -11,13 +14,17 @@ export interface Job {
   state: string;
   spec_hash: string;
   fakes_hash: string;
+  verifier_url: string;
+  verifier_hash: string;
+  secrets_owner: string;
   deliverable_hash: string | null;
-}
-
-export interface OutlayerRun {
-  transactionHash: string;
-  requestId: number;
-  output: unknown;
+  fakes_total: number;
+  fakes_caught: number;
+  challenge_report_hash: string | null;
+  challenge_request_id: string | null;
+  report_hash: string | null;
+  verdict_request_id: string | null;
+  failed_rule: string | null;
 }
 
 export function relayAccount(config: Config): Account {
@@ -32,42 +39,20 @@ export async function getJob(account: Account, config: Config, jobId: number): P
   return job as unknown as Job;
 }
 
-/** Runs the verifier on OutLayer from the relay account and returns its output. */
-export async function runOnOutlayer(account: Account, config: Config, input: string, secretsRef?: { profile: string; account_id: string }): Promise<OutlayerRun> {
+export function secretsProfile(job: Job, jobId: number, kind: RunKind): string {
+  return kind === "Challenge" ? `c${jobId}-${job.fakes_hash.slice(0, 12)}` : `v${jobId}-${(job.deliverable_hash ?? "").slice(0, 12)}`;
+}
+
+/** Asks the escrow to run the verifier. Returns the transaction hash once it has settled. */
+export async function triggerRun(account: Account, config: Config, jobId: number, kind: RunKind): Promise<string> {
   const response = await account.callFunctionRaw({
-    contractId: config.outlayerContract,
-    methodName: "request_execution",
-    args: {
-      source: { WasmUrl: { url: config.verifierWasmUrl, hash: config.verifierWasmHash, build_target: "wasm32-wasip1" } },
-      input_data: input,
-      resource_limits: { max_instructions: 50_000_000_000, max_memory_mb: 128, max_execution_seconds: 60 },
-      response_format: "Json",
-      ...(secretsRef ? { secrets_ref: secretsRef } : {}),
-    },
+    contractId: config.escrowContract,
+    methodName: kind === "Challenge" ? "request_challenge" : "request_verification",
+    args: { job_id: jobId },
     deposit: parseNearAmount("0.1") ?? "0",
-    gas: 300n * TGAS,
+    gas: 200n * TGAS,
   });
   const status = response.status as { SuccessValue?: string; Failure?: unknown };
-  if (status.SuccessValue === undefined) throw new Error(`OutLayer run failed: ${JSON.stringify(status.Failure ?? status)}`);
-  const output = JSON.parse(Buffer.from(status.SuccessValue, "base64").toString("utf8"));
-  return { transactionHash: response.transaction.hash, requestId: requestIdFrom(response.receipts_outcome), output };
-}
-
-function requestIdFrom(receipts: Array<{ outcome: { logs: string[] } }>): number {
-  for (const log of receipts.flatMap((r) => r.outcome.logs)) {
-    if (!log.startsWith("EVENT_JSON:")) continue;
-    const event = JSON.parse(log.slice("EVENT_JSON:".length));
-    if (event.standard === "near-outlayer" && event.event === "execution_requested") {
-      return JSON.parse(event.data[0].request_data).request_id;
-    }
-  }
-  throw new Error("OutLayer did not log execution_requested");
-}
-
-/** Records a result on the escrow. Throws if the contract refuses it. */
-export async function recordOnEscrow(account: Account, config: Config, method: "record_challenge" | "record_verdict", args: Record<string, unknown>): Promise<string> {
-  const response = await account.callFunctionRaw({ contractId: config.escrowContract, methodName: method, args, gas: 30n * TGAS });
-  const status = response.status as { SuccessValue?: string; Failure?: unknown };
-  if (status.SuccessValue === undefined) throw new Error(`${method} was refused: ${JSON.stringify(status.Failure ?? status)}`);
+  if (status.SuccessValue === undefined) throw new Error(`the run was refused or failed: ${JSON.stringify(status.Failure ?? status)}`);
   return response.transaction.hash;
 }

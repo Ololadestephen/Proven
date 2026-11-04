@@ -1,11 +1,8 @@
-// OutLayer secrets owned by the relay. The check, the reference and the deliverable are
-// encrypted on this machine to the OutLayer keystore key for one exact verifier build (a
-// WASM-hash-bound secret), stored on chain as ciphertext with `store_secrets`, and readable only by
-// that build inside the TEE, only when the relay account calls it. The relay owns them, so no buyer
-// or worker can change or delete them after handing them over.
-//
-//   npm run secret -- store <profile> <check.json> [reference.json]
-//   npm run secret -- delete <profile>          (returns the 0.1 NEAR storage deposit)
+// OutLayer secrets holding a job's private texts. They are encrypted on this machine to the
+// OutLayer keystore key for one exact verifier build (a WASM-hash-bound secret), stored on chain as
+// ciphertext with `store_secrets`, and readable only by that build inside the TEE, only for runs
+// requested through the escrow contract. The account storing them is the job's `secrets_owner`, so
+// no buyer or worker can change or delete them after handing them over.
 //
 // Encryption is OutLayer's ECIES v1, matching out-layer/outlayer-cli src/crypto.rs: X25519 ECDH,
 // HKDF-SHA256 with info "outlayer-keystore-v1", ChaCha20-Poly1305, wire format
@@ -14,12 +11,9 @@
 // trusted as OutLayer's TEE key; it is not attested here.
 
 import { createCipheriv, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
 import type { Account } from "near-api-js";
 import { parseNearAmount } from "near-api-js";
-import { type Config, loadConfig } from "./config.ts";
-import { sha256Hex } from "./hash.ts";
-import { relayAccount } from "./near.ts";
+import type { Config } from "./config.ts";
 
 const HKDF_INFO = Buffer.from("outlayer-keystore-v1");
 /// DER prefix of an X25519 SubjectPublicKeyInfo; the raw 32-byte key follows it.
@@ -57,20 +51,22 @@ function settled(response: { status: unknown; transaction: { hash: string } }, w
   return response.transaction.hash;
 }
 
-/** Stores `variables` as a secret owned by the relay, readable only by the configured verifier
- * build when the relay calls it. Returns the transaction hash and the ciphertext size. */
-export async function storeSecret(account: Account, config: Config, profile: string, variables: Record<string, string>): Promise<{ transactionHash: string; ciphertextBytes: number }> {
+/** Stores `variables` as a secret owned by `account`, readable only by the given verifier build
+ * in runs requested through the escrow contract, whoever triggers them. */
+export async function storeSecret(account: Account, config: Config, verifierHash: string, profile: string, variables: Record<string, string>): Promise<{ transactionHash: string; ciphertextBytes: number }> {
   if (!PROFILE_PATTERN.test(profile)) throw new Error("profile: 1 to 48 of a-z, 0-9, _ and -");
-  const publicKey = await keystoreKey(config.outlayerApi, config.verifierWasmHash, account.accountId, profile);
+  const publicKey = await keystoreKey(config.outlayerApi, verifierHash, account.accountId, profile);
   const encrypted = encryptForKeystore(publicKey, JSON.stringify(variables));
   const response = await account.callFunctionRaw({
     contractId: config.outlayerContract,
     methodName: "store_secrets",
     args: {
-      accessor: { WasmHash: { hash: config.verifierWasmHash } },
+      accessor: { WasmHash: { hash: verifierHash } },
       profile,
       encrypted_secrets_base64: encrypted,
-      access: { Whitelist: { accounts: [account.accountId] } },
+      // Judged on the contract calling OutLayer, not on who signed: anyone may trigger a run
+      // through the escrow, and nobody can read this secret by calling OutLayer another way.
+      access: { Predecessor: { condition: { Whitelist: { accounts: [config.escrowContract] } } } },
       vault_id: null,
     },
     deposit: parseNearAmount("0.1") ?? "0",
@@ -79,38 +75,13 @@ export async function storeSecret(account: Account, config: Config, profile: str
   return { transactionHash: settled(response, "store_secrets"), ciphertextBytes: Buffer.from(encrypted, "base64").length };
 }
 
-/** Deletes a relay-owned secret and returns its storage deposit. */
-export async function deleteSecret(account: Account, config: Config, profile: string): Promise<string> {
+/** Deletes a secret and returns its storage deposit. */
+export async function deleteSecret(account: Account, config: Config, verifierHash: string, profile: string): Promise<string> {
   const response = await account.callFunctionRaw({
     contractId: config.outlayerContract,
     methodName: "delete_secrets",
-    args: { accessor: { WasmHash: { hash: config.verifierWasmHash } }, profile },
+    args: { accessor: { WasmHash: { hash: verifierHash } }, profile },
     gas: 50_000_000_000_000n,
   });
   return settled(response, "delete_secrets");
-}
-
-async function main(): Promise<void> {
-  const [command, profile, checkPath, referencePath] = process.argv.slice(2);
-  const config = loadConfig();
-  const account = relayAccount(config);
-  if (command === "delete" && profile) {
-    console.log(JSON.stringify({ deleted: profile, transaction_hash: await deleteSecret(account, config, profile) }));
-    return;
-  }
-  if (command !== "store" || !profile || !checkPath) {
-    console.error("usage: secret store <profile> <check.json> [reference.json] | secret delete <profile>");
-    process.exit(2);
-  }
-  const variables: Record<string, string> = { PROVEN_CHECK: readFileSync(checkPath, "utf8") };
-  if (referencePath) variables.PROVEN_REFERENCE = readFileSync(referencePath, "utf8");
-  const stored = await storeSecret(account, config, profile, variables);
-  console.log(JSON.stringify({ profile, owner: account.accountId, secrets_ref: { profile, account_id: account.accountId }, bound_to_verifier: config.verifierWasmHash, ...stored }, null, 2));
-}
-
-if (import.meta.main) {
-  main().catch((error: Error) => {
-    console.error(`secret: ${error.message}`);
-    process.exit(1);
-  });
 }

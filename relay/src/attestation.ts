@@ -1,10 +1,12 @@
-// Checks an OutLayer attestation record against what the relay itself sent and received.
+// Audits an OutLayer attestation record against a job on the escrow. Anyone can run this: it
+// needs no key, only the chain and OutLayer's public attestation API.
 //
-// What is checked here: the record names our WASM, our exact input, the exact output, the relay as
-// caller and our transaction; the task hash recomputed from those values equals the commitment
-// inside the TDX quote (report_data); and RTMR3 in the quote equals the recorded worker measurement.
+// What is checked here: the record names the job's verifier build, the exact input the contract
+// builds from the job's hashes, the output hash the contract recorded and the job's secret; the task
+// hash recomputed from those values equals the commitment inside the TDX quote (report_data); and
+// RTMR3 in the quote equals the recorded worker measurement.
 // What is NOT checked here: Intel's signature chain over the quote and the on-chain approval of the
-// worker's measurements. Those are checked by OutLayer's verifier (dashboard or `outlayer-verify`).
+// worker's measurements. `outlayer-verify` or OutLayer's dashboard check those.
 
 import { sha256Hex } from "./hash.ts";
 
@@ -34,8 +36,11 @@ export interface Expected {
   wasmHash: string;
   inputText: string;
   outputHash: string;
-  caller: string;
-  transactionHash: string;
+  /** `owner/profile`, when the run used a secret. */
+  secretsRef?: string;
+  /** Checked only when the caller knows them. */
+  caller?: string;
+  transactionHash?: string;
 }
 
 /** report_data starts at byte 568 of a TDX v4 quote; RTMR3 is the 48 bytes before it. */
@@ -82,12 +87,13 @@ export function checkAttestation(r: AttestationRecord, expected: Expected): stri
     throw new Error(`attestation check failed: ${what}`);
   };
   if (r.task_type !== "execute") fail("task type is not execute");
-  if (r.wasm_hash !== expected.wasmHash) fail("wasm_hash is not our verifier build");
-  if (r.executed_wasm_sha256 !== undefined && r.executed_wasm_sha256 !== expected.wasmHash) fail("executed WASM is not our verifier build");
-  if (r.input_hash !== sha256Hex(expected.inputText)) fail("input_hash is not the hash of our input");
-  if (r.output_hash !== expected.outputHash) fail("output_hash is not the hash of the output we received");
-  if (r.caller_account_id !== expected.caller) fail("caller is not the relay");
-  if (r.transaction_hash !== expected.transactionHash) fail("transaction hash is not ours");
+  if (r.wasm_hash !== expected.wasmHash) fail("wasm_hash is not the job's verifier build");
+  if (r.executed_wasm_sha256 !== undefined && r.executed_wasm_sha256 !== expected.wasmHash) fail("executed WASM is not the job's verifier build");
+  if (r.input_hash !== sha256Hex(expected.inputText)) fail("input_hash is not the hash of the job's input");
+  if (r.output_hash !== expected.outputHash) fail("output_hash is not the recorded report hash");
+  if (expected.secretsRef !== undefined && r.secrets_ref !== expected.secretsRef) fail("secrets_ref is not the job's secret");
+  if (expected.caller !== undefined && r.caller_account_id !== expected.caller) fail("caller is not the expected account");
+  if (expected.transactionHash !== undefined && r.transaction_hash !== expected.transactionHash) fail("transaction hash is not the expected one");
 
   const quote = Buffer.from(r.tdx_quote, "base64");
   if (quote.length < REPORT_DATA_OFFSET + 32) fail("quote is too short");
