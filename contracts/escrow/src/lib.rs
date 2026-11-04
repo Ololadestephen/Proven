@@ -50,11 +50,13 @@ const MAX_DEADLINE_NANOS: u64 = 30 * 24 * 60 * 60 * NANOS_PER_SEC;
 /// Long enough for a stale run and one retry: see `RUN_TIMEOUT_NANOS`.
 const MIN_VERDICT_WINDOW_SECS: u32 = 30 * 60;
 const MAX_VERDICT_WINDOW_SECS: u32 = 7 * 24 * 60 * 60;
-/// After this long with no callback, a run is stale. Longer than OutLayer's own stale-request
-/// timeout (10 minutes), so a run that can still resolve normally is not raced.
+/// After this long with no callback, a run is stale. A real run resolves within NEAR's yield timeout
+/// (200 blocks), which delivers `null`; this is reached only if the callback itself is lost.
 const RUN_TIMEOUT_NANOS: u64 = 15 * 60 * NANOS_PER_SEC;
 const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
-const GAS_FOR_PAYOUT_CALLBACK: Gas = Gas::from_tgas(10);
+const GAS_FOR_PAYOUT_CALLBACK: Gas = Gas::from_tgas(20);
+/// A payout's callback must always run: a lost one would leave the job in a pending state.
+const MIN_PREPAID_GAS_FOR_PAYOUT: Gas = Gas::from_tgas(50);
 /// Gas reserved for OutLayer's `request_execution`, which itself reserves 50 Tgas for settlement.
 /// It also receives whatever the caller's prepaid gas leaves unused.
 const GAS_FOR_OUTLAYER: Gas = Gas::from_tgas(100);
@@ -390,7 +392,8 @@ impl Escrow {
     // ---- Buyer ----
 
     /// Records a job. The caller attaches enough NEAR to pay for the job's storage at its
-    /// largest; any excess is returned.
+    /// largest; any excess is returned. `verifier_hash` is the build the buyer expects: if the
+    /// contract's setting differs (it may have just changed), the job is refused.
     #[payable]
     #[allow(clippy::too_many_arguments)]
     pub fn create_job(
@@ -402,11 +405,13 @@ impl Escrow {
         token: Option<AccountId>,
         deadline: U64,
         verdict_window_secs: u32,
+        verifier_hash: String,
     ) -> JobId {
         let buyer = env::predecessor_account_id();
         let now = env::block_timestamp();
         require_hash(&spec_hash, "spec_hash");
         require_hash(&fakes_hash, "fakes_hash");
+        require!(verifier_hash == self.verifier_hash, "verifier_hash is not the build this contract runs");
         require!(worker != buyer, "the worker cannot be the buyer");
         require!(amount.0 > 0, "amount must be greater than zero");
         if let Some(token) = &token {
@@ -431,7 +436,7 @@ impl Escrow {
             spec_hash,
             fakes_hash,
             verifier_url: self.verifier_url.clone(),
-            verifier_hash: self.verifier_hash.clone(),
+            verifier_hash,
             secrets_owner: self.secrets_owner.clone(),
             deadline,
             verdict_window_secs,
@@ -740,6 +745,7 @@ impl Escrow {
         done: JobState,
         to_worker: bool,
     ) -> Promise {
+        require!(env::prepaid_gas() >= MIN_PREPAID_GAS_FOR_PAYOUT, "attach at least 50 Tgas");
         let job = self.job_mut(job_id);
         require!(
             job.state == from,

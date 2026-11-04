@@ -8,9 +8,9 @@
 //   npm run relay -- audit     <job_id> challenge|verify
 //   npm run relay -- unpin     <job_id> challenge|verify
 //
-// `challenge` and `verify` check the files against the job's hashes, pin them, trigger the run,
-// audit the attestation and delete the secret. With `--pin-only` they stop after pinning, so any
-// account can trigger the run. Every run writes an evidence file to runs/relay/.
+// `challenge` and `verify` check the files against the job's hashes, pin them, run until a result
+// is recorded (waiting out anyone else's run), audit the attestation and delete the secret. With
+// `--pin-only` they stop after pinning, so any account can trigger the run. Every run writes an evidence file to runs/relay/.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { checkAttestation, fetchAttestation } from "./attestation.ts";
@@ -24,6 +24,9 @@ const USAGE = `usage:
   relay verify    <job_id> <check.json> <deliverable.json> [--pin-only]
   relay audit     <job_id> challenge|verify
   relay unpin     <job_id> challenge|verify`;
+
+const MAX_ROUNDS = 12;
+const WAIT_MS = 20_000;
 
 function usage(): never {
   console.error(USAGE);
@@ -51,9 +54,13 @@ export function runInput(job: Job, jobId: number, kind: RunKind, escrow: string)
   );
 }
 
+function resultOf(job: Job, kind: RunKind): string | null {
+  return kind === "Challenge" ? job.challenge_request_id : job.verdict_request_id;
+}
+
 /** Checks a recorded result's attestation against the job. Returns the summary for the evidence. */
 async function audit(config: Config, job: Job, jobId: number, kind: RunKind) {
-  const requestId = kind === "Challenge" ? job.challenge_request_id : job.verdict_request_id;
+  const requestId = resultOf(job, kind);
   const reportHash = kind === "Challenge" ? job.challenge_report_hash : job.report_hash;
   if (!requestId || !reportHash) throw new Error(`job ${jobId} has no recorded ${kind} result (state ${job.state})`);
   const record = await fetchAttestation(config.outlayerApi, Number(requestId));
@@ -82,9 +89,10 @@ async function pinAndRun(kind: RunKind, jobId: number, checkPath: string, otherP
   const account = relayAccount(config);
   const job = await getJob(account, config, jobId);
 
-  // 1. The job must be in the right state, and the files exactly the ones it is fixed to.
-  const expectState = kind === "Challenge" ? "Draft" : "Delivered";
-  if (job.state !== expectState) throw new Error(`job ${jobId} is ${job.state}, expected ${expectState}`);
+  // 1. The files must be exactly the ones the job is fixed to. A run someone else started does not
+  // stop us pinning: once the texts are pinned, anyone's run produces the true result.
+  const [ready, running] = kind === "Challenge" ? ["Draft", "Challenging"] : ["Delivered", "Verifying"];
+  if (job.state !== ready && job.state !== running) throw new Error(`job ${jobId} is ${job.state}, expected ${ready} or ${running}`);
   if (job.secrets_owner !== account.accountId) throw new Error(`job ${jobId} reads secrets of ${job.secrets_owner}, not ${account.accountId}`);
   const checkText = readFileSync(checkPath, "utf8");
   const otherText = readFileSync(otherPath, "utf8");
@@ -104,36 +112,47 @@ async function pinAndRun(kind: RunKind, jobId: number, checkPath: string, otherP
     return;
   }
 
-  // 3. Trigger the run, like anyone can, and read what the contract recorded.
-  console.error(`job ${jobId}: asking the escrow to run the ${kind}...`);
-  const triggerTx = await triggerRun(account, config, jobId, kind);
-  const after = await getJob(account, config, jobId);
-  const recorded = kind === "Challenge" ? after.challenge_request_id : after.verdict_request_id;
+  // 3. Run until a result is recorded. Someone else's run counts: wait for it. A run that found no
+  // result (say it started before the texts were pinned) is simply run again.
+  const triggers: string[] = [];
+  let after = job;
+  for (let round = 0; round < MAX_ROUNDS && !resultOf(after, kind); round++) {
+    if (after.state === ready) {
+      console.error(`job ${jobId}: asking the escrow to run the ${kind}...`);
+      await triggerRun(account, config, jobId, kind).then((tx) => triggers.push(tx)).catch((error: Error) => console.error(`job ${jobId}: trigger refused: ${error.message}`));
+    } else if (after.state === running) {
+      console.error(`job ${jobId}: a run is in flight; waiting...`);
+      await new Promise((resolve) => setTimeout(resolve, WAIT_MS));
+    } else {
+      break;
+    }
+    after = await getJob(account, config, jobId);
+  }
+  const recorded = resultOf(after, kind);
   const evidence: Record<string, unknown> = {
     job_id: jobId,
     kind,
     escrow: config.escrowContract,
-    trigger_transaction: triggerTx,
+    trigger_transactions: triggers,
     secret: { profile, owner: account.accountId, stored_in: stored.transactionHash },
     state_after: after.state,
     fakes: kind === "Challenge" ? { total: after.fakes_total, caught: after.fakes_caught } : undefined,
     failed_rule: after.failed_rule,
   };
 
-  // 4. Audit the attestation, if a result was recorded. A failed audit is reported, not hidden.
+  // 4. Audit the attestation and return the storage deposit. The secret stays pinned until a result
+  // is recorded, so that a later run, by anyone, can still reach one.
   if (recorded) {
     evidence.audit = await audit(config, after, jobId, kind).catch((error: Error) => ({ failed: error.message }));
+    evidence.secret_deleted = await deleteSecret(account, config, job.verifier_hash, profile).catch((error: Error) => `failed: ${error.message}`);
   } else {
-    evidence.no_result = "the contract recorded nothing; the job can be run again";
+    evidence.no_result = "no result yet; the secret stays pinned and anyone can run the job again";
+    process.exitCode = 1;
   }
-
-  // 5. The run is over: return the storage deposit. A retry pins the texts again.
-  evidence.secret_deleted = await deleteSecret(account, config, job.verifier_hash, profile).catch((error: Error) => `failed: ${error.message}`);
   mkdirSync("../runs/relay", { recursive: true });
   const file = `../runs/relay/job-${jobId}-${kind.toLowerCase()}-${Date.now()}.json`;
   writeFileSync(file, JSON.stringify(evidence, null, 2) + "\n");
   console.log(JSON.stringify({ ...evidence, evidence: file }, null, 2));
-  if (!recorded) process.exitCode = 1;
 }
 
 async function main(): Promise<void> {

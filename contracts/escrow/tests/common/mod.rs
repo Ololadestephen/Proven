@@ -111,7 +111,7 @@ pub async fn create_job(env: &Env, token: bool, deadline_secs: u64, amount: u128
     let args = json!({
         "worker": env.worker.id(), "spec_hash": SPEC, "fakes_hash": FAKES,
         "amount": amount.to_string(), "token": if token { Some(env.token.id()) } else { None },
-        "deadline": deadline.to_string(), "verdict_window_secs": WINDOW_SECS,
+        "deadline": deadline.to_string(), "verdict_window_secs": WINDOW_SECS, "verifier_hash": VERIFIER,
     });
     Ok(call(env, &env.buyer, "create_job", args, NearToken::from_millinear(50)).await?.into_result()?.json()?)
 }

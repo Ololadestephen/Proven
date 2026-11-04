@@ -163,9 +163,12 @@ async fn unused_deposit_goes_back_to_the_caller_and_job_money_is_never_touched()
 
     // An outright refusal at admission strands the deposit in the contract (a known, capped gap):
     // the job's money is still all there and still pays out exactly.
+    let escrow_before = near_balance(env.escrow.as_account()).await?;
     behave(&env, "panic").await?;
     let _ = verify(&env, id).await?;
     assert_eq!(state(&env, id).await?, "Delivered");
+    let gained = near_balance(env.escrow.as_account()).await? - escrow_before;
+    assert!(gained >= RUN_DEPOSIT.as_yoctonear(), "the refused deposit was not returned to the escrow: {gained}");
     behave(&env, "pass").await?;
     verify(&env, id).await?.into_result()?;
     let before = near_balance(&env.worker).await?;
@@ -323,5 +326,35 @@ async fn failed_token_payout_keeps_the_money_and_can_be_retried() -> anyhow::Res
     assert!(paid);
     assert_eq!(token_balance(&env, env.worker.id()).await?, TOKEN_AMOUNT);
     assert_eq!(state(&env, id).await?, "Released");
+    Ok(())
+}
+
+#[tokio::test]
+async fn payouts_at_the_minimum_gas_settle_and_a_failed_token_transfer_still_reverts() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let floor = near_workspaces::types::Gas::from_tgas(50);
+
+    let id = delivered_near_job(&env, 3_600).await?;
+    behave(&env, "pass").await?;
+    verify(&env, id).await?.into_result()?;
+    let release = env.stranger.call(env.escrow.id(), "release").args_json(json!({ "job_id": id })).gas(floor).transact().await?;
+    assert!(release.into_result()?.json::<bool>()?);
+    assert_eq!(state(&env, id).await?, "Released");
+
+    // The worker is not registered with the token, so this transfer fails and the callback reverts.
+    let id = create_job(&env, true, 3_600, TOKEN_AMOUNT).await?;
+    behave(&env, "strong_check").await?;
+    challenge(&env, id).await?.into_result()?;
+    fund_token(&env, id, TOKEN_AMOUNT).await?.into_result()?;
+    deliver(&env, &env.worker, id).await?.into_result()?;
+    behave(&env, "pass").await?;
+    verify(&env, id).await?.into_result()?;
+    let release = env.stranger.call(env.escrow.id(), "release").args_json(json!({ "job_id": id })).gas(floor).transact().await?;
+    assert!(!release.json::<bool>()?);
+    assert_eq!(state(&env, id).await?, "Passed");
+    assert_eq!(token_balance(&env, env.escrow.id()).await?, TOKEN_AMOUNT);
+
+    let low = env.stranger.call(env.escrow.id(), "release").args_json(json!({ "job_id": id })).gas(near_workspaces::types::Gas::from_tgas(49)).transact().await?;
+    assert_refused(&low, "attach at least 50 Tgas");
     Ok(())
 }

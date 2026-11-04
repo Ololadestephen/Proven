@@ -58,7 +58,7 @@ fn escrow() -> Escrow {
 
 fn create(escrow: &mut Escrow, token: Option<AccountId>) -> JobId {
     call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(one_near().as_yoctonear()), token, U64(DEADLINE), WINDOW_SECS)
+    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(one_near().as_yoctonear()), token, U64(DEADLINE), WINDOW_SECS, VERIFIER.into())
 }
 
 fn challenge_output(id: JobId, reference_passed: bool, total: u32, caught: u32) -> serde_json::Value {
@@ -273,6 +273,43 @@ fn output_without_a_boolean_pass_is_no_verdict() {
 }
 
 #[test]
+fn output_shape_tricks_are_no_verdict() {
+    // A duplicate key, as JSON the serialiser would never produce.
+    let mut text = verify_output(0, false).to_string();
+    text.pop();
+    text.push_str(",\"pass\":true}");
+    assert_no_verdict(PromiseResult::Successful(text.into_bytes()));
+    assert_no_verdict(with(0, "job", json!("0")));
+    assert_no_verdict(with(0, "job", json!(0.5)));
+    assert_no_verdict(with(0, "request_id", json!("701")));
+    assert_no_verdict(with(0, "request_id", json!(-1)));
+    assert_no_verdict(with(0, "request_id", json!(1.5)));
+    assert_no_verdict(with(0, "pass", json!(1)));
+}
+
+#[test]
+fn extra_output_fields_change_nothing_and_large_request_ids_are_kept_exactly() {
+    let (mut escrow, id, attempt) = verifying();
+    let mut output = verify_output(id, true);
+    output["request_id"] = json!(u64::MAX);
+    output["accepted"] = json!(false);
+    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &output, TRIGGERED_AT));
+    let job = escrow.get_job(id).unwrap();
+    assert_eq!((job.state, job.verdict_request_id), (JobState::Passed, Some(U64(u64::MAX))));
+}
+
+#[test]
+fn a_challenge_records_counts_and_ignores_the_outputs_own_accepted_field() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow, None);
+    challenging(&mut escrow, id);
+    let mut output = challenge_output(id, true, 13, 4);
+    output["accepted"] = json!(true);
+    assert!(returned_json(&mut escrow, id, 1, RunKind::Challenge, &output, START));
+    assert_eq!(state(&escrow, id), JobState::CheckRejected);
+}
+
+#[test]
 fn an_oversized_failed_rule_is_no_verdict() {
     let mut output = verify_output(0, false);
     output["failed_rule"] = json!("x".repeat(MAX_FAILED_RULE_LEN + 1));
@@ -436,6 +473,20 @@ fn a_failed_expiry_transfer_leaves_the_job_expirable() {
     call(stranger(), zero(), late + SEC);
     let _ = escrow.expire(id);
     assert_eq!(state(&escrow, id), JobState::Expiring);
+}
+
+#[test]
+fn a_genuine_late_verdict_after_a_failed_expiry_is_recorded_once() {
+    let (mut escrow, id, attempt) = verifying();
+    let late = WINDOW_END + RUN_TIMEOUT_NANOS + 1;
+    call(stranger(), zero(), late);
+    let _ = escrow.expire(id);
+    callback_context(PromiseResult::Failed, late);
+    assert!(!escrow.on_payout(id, JobState::Expired, JobState::Verifying));
+    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), late));
+    assert_eq!(state(&escrow, id), JobState::Passed);
+    assert!(!returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, false), late));
+    assert_eq!(state(&escrow, id), JobState::Passed);
 }
 
 // ---- Triggering ----
@@ -692,7 +743,7 @@ fn create_job_charges_storage_and_records_it() {
 fn create_job_without_storage_deposit_is_refused() {
     let mut escrow = escrow();
     call(buyer(), zero(), START);
-    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), WINDOW_SECS);
+    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), WINDOW_SECS, VERIFIER.into());
 }
 
 #[test]
@@ -700,7 +751,7 @@ fn create_job_without_storage_deposit_is_refused() {
 fn buyer_cannot_name_itself_as_worker() {
     let mut escrow = escrow();
     call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(buyer(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), WINDOW_SECS);
+    escrow.create_job(buyer(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), WINDOW_SECS, VERIFIER.into());
 }
 
 #[test]
@@ -715,7 +766,7 @@ fn unknown_token_is_refused() {
 fn past_deadline_is_refused() {
     let mut escrow = escrow();
     call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(START), WINDOW_SECS);
+    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(START), WINDOW_SECS, VERIFIER.into());
 }
 
 #[test]
@@ -723,7 +774,7 @@ fn past_deadline_is_refused() {
 fn a_verdict_window_too_short_for_a_retry_is_refused() {
     let mut escrow = escrow();
     call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), 1_799);
+    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), 1_799, VERIFIER.into());
 }
 
 #[test]
@@ -791,6 +842,23 @@ fn late_delivery_is_refused() {
     let (mut escrow, id) = funded();
     call(worker(), zero(), DEADLINE + 1);
     escrow.deliver(id, DELIVERABLE.into());
+}
+
+#[test]
+#[should_panic(expected = "attach at least 50 Tgas")]
+fn a_payout_needs_enough_gas_to_guarantee_its_callback() {
+    let (mut escrow, id, attempt) = verifying();
+    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), TRIGGERED_AT));
+    testing_env!(context(stranger(), zero(), TRIGGERED_AT).prepaid_gas(Gas::from_tgas(49)).build());
+    let _ = escrow.release(id);
+}
+
+#[test]
+#[should_panic(expected = "verifier_hash is not the build this contract runs")]
+fn a_buyer_who_expects_another_verifier_build_is_refused() {
+    let mut escrow = escrow();
+    call(buyer(), NearToken::from_millinear(50), START);
+    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), WINDOW_SECS, OTHER_HASH.into());
 }
 
 #[test]
