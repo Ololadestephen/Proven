@@ -1,0 +1,24 @@
+# Private planning and agent files: never committed or deployed
+CLAUDE.md
+AGENTS.md
+RULES.md
+TASKS.md
+PLAN.md
+KICKOFF.md
+FACTS.md
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local state and generated output
+.desloppify/
+runs/
+target/
+node_modules/
+dist/
+.DS_Store
+
+# Local agent tooling (for example the Desloppify skill)
+.claude/
