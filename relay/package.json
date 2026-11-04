@@ -8,6 +8,7 @@
   "engines": { "node": ">=22.18" },
   "scripts": {
     "relay": "node --env-file=../.env src/cli.ts",
+    "handoff": "node --env-file=../.env src/handoff.ts",
     "publish-verifier": "node --env-file=../.env src/publish.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test src/*.test.ts"

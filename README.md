@@ -72,6 +72,14 @@ To audit a recorded result after configuring `.env`, run `cd relay` and `npm run
 
 ## Layout
 
+The P4 interface lives in `agent/`; see [agent instructions](agent/skill.md) for tool arguments, signer limits and the local private handoff. From `agent/`, `npm ci`, `npm run proven -- --help` and `npm run mcp` start the CLI and MCP interface. The owner-only custody setup requires explicit approval before registration or funding. Agent tools accept custody credentials or scoped worker keys, never a full-access buyer key. The current custody policy supports native-NEAR jobs only; token funding would call a contract outside its escrow-only allowlist.
+
+After owner setup, start `cd relay && npm run handoff`, then run `cd agent && npm run demo` in another terminal. This is a scripted demo, not a model-driven agent. Use `npm run demo -- --dry-run` to construct creation plans without chain or service writes; local evidence files are still saved. Private data travels over an owner-only local Unix socket and stays available to the relay operator; no public relay API is deployed. If a live run stops, inspect the recorded job and wallet history before using `npm run demo -- --resume <absolute-evidence-file>`; a confirmed job id is reused rather than posted again.
+
+The native-call custody policy limits direct targets and attached deposits. It has no method-name allowlist and does not understand a job's intended worker. Escrow authorization and state checks still apply. Custody depends on OutLayer's keystore and policy enforcement; its cumulative daily counter is best effort under concurrency. None of this changes the escrow's verdict trust described above.
+
+The P4 terminal check passed on November 4: job 11 paid the honest worker exactly [0.01 testnet NEAR](https://testnet.nearblocks.io/txns/LkRgmoW5yt5uFtiR2Zofuf9n1nLLYVs3rmfsbTaNjne), and job 12 refunded the buyer exactly [0.01 testnet NEAR](https://testnet.nearblocks.io/txns/FSWa78WDpFJY9wuY9Ky3P4xaQQLHhbsqMG1WpUPVXepU). Verdict attestations are [request 8815](https://testnet-api.outlayer.ai/attestations/by-request/8815) and [request 8817](https://testnet-api.outlayer.ai/attestations/by-request/8817). Their hash bindings were audited; these new quotes were not independently signature-checked. The run required explicit resume after asynchronous custody responses and gas-reserve checks; it is not a two-minute unattended demo. The custody policy rejected a call outside escrow with HTTP 403 before a transaction was created.
+
 | Path | What |
 |---|---|
 | `contracts/escrow/` | NEAR escrow contract (Rust, `near-sdk`) |

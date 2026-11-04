@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "transaction_types": ["call"],
+    "allowed_tokens": ["native"],
+    "addresses": { "mode": "whitelist", "list": ["escrow-v2.proven.testnet"] },
+    "limits": {
+      "per_transaction": { "native": "100000000000000000000000" },
+      "daily": { "native": "1000000000000000000000000" }
+    }
+  },
+  "capabilities": {
+    "raw_sign": { "allowed": false },
+    "sign_message": { "allowed": false },
+    "evm_sign": { "allowed": false, "raw_tx": false },
+    "solana_sign": { "allowed": false, "raw_tx": false },
+    "swap": { "allowed": false },
+    "cross_chain_withdraw": { "allowed": false },
+    "limit_order": { "allowed": false },
+    "confidential": { "allowed": false },
+    "payment_check": { "allowed": false }
+  }
+}

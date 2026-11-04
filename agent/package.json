@@ -1,0 +1,27 @@
+{
+  "name": "proven-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "proven": "node src/cli.ts",
+    "mcp": "node src/mcp.ts",
+    "demo": "node src/demo.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/*.test.ts",
+    "format": "prettier --write src scripts",
+    "format:check": "prettier --check src scripts"
+  },
+  "dependencies": {
+    "near-api-js": "7.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3"
+  }
+}

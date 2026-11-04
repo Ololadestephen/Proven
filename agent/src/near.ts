@@ -1,0 +1,139 @@
+import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
+import type { Config } from "./config.ts";
+import { PublicError } from "./errors.ts";
+import { custodyCall } from "./custody.ts";
+import { handoff } from "./handoff.ts";
+import type { CallPlan, CallResult, Runtime } from "./types.ts";
+
+const WORKER_METHODS = new Set([
+  "deliver",
+  "release",
+  "refund",
+  "expire",
+  "cancel_stale_outlayer_execution",
+]);
+
+export async function scopedWorker(
+  config: Config,
+  provider: JsonRpcProvider,
+  method: string,
+  deposit: string,
+): Promise<Account> {
+  if (!config.key || !config.account)
+    throw new PublicError("Worker scoped credentials are missing.");
+  if (deposit !== "0" || !WORKER_METHODS.has(method))
+    throw new PublicError(
+      "Worker function-call keys cannot attach deposits or perform this operation. Use buyer custody for payable calls.",
+    );
+  const key = KeyPair.fromString(config.key as `ed25519:${string}`);
+  const account = new Account(config.account, provider, new KeyPairSigner(key));
+  const access = await account.getAccessKey(key.getPublicKey());
+  const permission = access.permission;
+  if (
+    permission === "FullAccess" ||
+    !permission?.FunctionCall ||
+    permission.FunctionCall.receiver_id !== config.escrow ||
+    !permission.FunctionCall.method_names.length ||
+    permission.FunctionCall.method_names.some((m) => !WORKER_METHODS.has(m)) ||
+    !permission.FunctionCall.method_names.includes(method)
+  ) {
+    throw new PublicError(
+      "Worker key must be a function-call key scoped to this escrow and permitted zero-deposit worker methods.",
+    );
+  }
+  return account;
+}
+
+/** Reads settlement without rebroadcasting a write. Unknown status is returned as pending. */
+export async function transactionResult(
+  provider: JsonRpcProvider,
+  tx: string,
+  account: string,
+): Promise<CallResult> {
+  try {
+    const response = await provider.viewTransactionStatus({
+      txHash: tx,
+      accountId: account,
+      waitUntil: "EXECUTED",
+    });
+    const status = response.status;
+    if (typeof status === "object" && "SuccessValue" in status) {
+      const bytes = Buffer.from(status.SuccessValue, "base64").toString("utf8");
+      let result: unknown = null;
+      try {
+        result = JSON.parse(bytes);
+      } catch {
+        /* Methods with no return value. */
+      }
+      return { transaction_hash: tx, result };
+    }
+    if (typeof status === "object" && "Failure" in status)
+      return { transaction_hash: tx, failed: true };
+  } catch {
+    /* The transaction may still be running. Do not retry a write. */
+  }
+  return { transaction_hash: tx, pending: true };
+}
+
+export function createRuntime(config: Config): Runtime {
+  const provider = new JsonRpcProvider({ url: config.rpc });
+  return {
+    actor: config.actor,
+    identity: config.account ?? null,
+    escrow: config.escrow,
+    async view<T>(method: string, args: Record<string, unknown>): Promise<T> {
+      return (await provider.callFunction({
+        contractId: config.escrow,
+        method,
+        args,
+      })) as T;
+    },
+    async now() {
+      const block = await provider.viewBlock({ finality: "final" });
+      return BigInt(block.header.timestamp_nanosec);
+    },
+    async submit(plan: CallPlan) {
+      if (plan.receiver_id !== config.escrow)
+        throw new PublicError("Only this escrow may receive agent calls.");
+      if (config.actor === "buyer") {
+        if (!config.custodyKey || !config.account)
+          throw new PublicError(
+            "Buyer custody credentials are missing. Full-access buyer keys are never accepted by this interface.",
+          );
+        const tx = await custodyCall(
+          config.custodyApi,
+          config.custodyKey,
+          config.account,
+          config.escrow,
+          plan,
+        );
+        return transactionResult(provider, tx, config.account);
+      }
+      const worker = await scopedWorker(
+        config,
+        provider,
+        plan.method_name,
+        plan.deposit,
+      );
+      const response = await worker
+        .callFunctionRaw({
+          contractId: config.escrow,
+          methodName: plan.method_name,
+          args: plan.args,
+          deposit: "0",
+          gas: BigInt(plan.gas),
+        })
+        .catch(() => {
+          throw new PublicError(
+            "Worker submission outcome is unknown. Inspect job status and account history before retrying; no automatic retry was made.",
+          );
+        });
+      return transactionResult(
+        provider,
+        response.transaction.hash,
+        worker.accountId,
+      );
+    },
+    handoff: (request) => handoff(config.socket, request),
+  };
+}
