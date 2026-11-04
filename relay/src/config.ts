@@ -22,7 +22,7 @@ export function loadConfig(): Config {
   const key = required("RELAY_PRIVATE_KEY", "NEAR_PRIVATE_KEY");
   if (!key.startsWith("ed25519:")) throw new Error("RELAY_PRIVATE_KEY must be an ed25519 key");
   return {
-    rpcUrl: process.env.NEAR_RPC_URL || "https://rpc.testnet.near.org",
+    rpcUrl: process.env.NEAR_RPC_URL || "https://test.rpc.fastnear.com",
     relayAccountId: required("RELAY_ACCOUNT_ID", "NEAR_ACCOUNT_ID"),
     relayPrivateKey: key as KeyPairString,
     escrowContract: process.env.ESCROW_CONTRACT || "escrow-v2.proven.testnet",

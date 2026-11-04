@@ -16,14 +16,30 @@ const DELIVERED_AT: u64 = START + 60 * SEC;
 const WINDOW_END: u64 = DELIVERED_AT + WINDOW_SECS as u64 * SEC;
 const RUN_DEPOSIT: NearToken = NearToken::from_millinear(100);
 
-fn owner() -> AccountId { accounts(0) }
-fn relay() -> AccountId { accounts(1) }
-fn buyer() -> AccountId { accounts(2) }
-fn worker() -> AccountId { accounts(3) }
-fn stranger() -> AccountId { accounts(4) }
-fn this_contract() -> AccountId { accounts(5) }
-fn token() -> AccountId { "usd.token.near".parse().unwrap() }
-fn outlayer() -> AccountId { "outlayer.testnet".parse().unwrap() }
+fn owner() -> AccountId {
+    accounts(0)
+}
+fn relay() -> AccountId {
+    accounts(1)
+}
+fn buyer() -> AccountId {
+    accounts(2)
+}
+fn worker() -> AccountId {
+    accounts(3)
+}
+fn stranger() -> AccountId {
+    accounts(4)
+}
+fn this_contract() -> AccountId {
+    accounts(5)
+}
+fn token() -> AccountId {
+    "usd.token.near".parse().unwrap()
+}
+fn outlayer() -> AccountId {
+    "outlayer.testnet".parse().unwrap()
+}
 
 fn context(who: AccountId, deposit: NearToken, at: u64) -> VMContextBuilder {
     let mut builder = VMContextBuilder::new();
@@ -43,25 +59,55 @@ fn call(who: AccountId, deposit: NearToken, at: u64) {
 /// The callback of the escrow's own promise, seeing `result`.
 fn callback_context(result: PromiseResult, at: u64) {
     let built = context(this_contract(), zero(), at).build();
-    testing_env!(built, near_sdk::test_vm_config(), RuntimeFeesConfig::test(), Default::default(), vec![result]);
+    testing_env!(
+        built,
+        near_sdk::test_vm_config(),
+        RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![result]
+    );
 }
 
-fn zero() -> NearToken { NearToken::from_yoctonear(0) }
-fn one_near() -> NearToken { NearToken::from_near(1) }
+fn zero() -> NearToken {
+    NearToken::from_yoctonear(0)
+}
+fn one_near() -> NearToken {
+    NearToken::from_near(1)
+}
 
 fn escrow() -> Escrow {
     call(owner(), zero(), START);
-    let mut escrow = Escrow::new(owner(), outlayer(), VERIFIER_URL.into(), VERIFIER.into(), relay());
+    let mut escrow = Escrow::new(
+        owner(),
+        outlayer(),
+        VERIFIER_URL.into(),
+        VERIFIER.into(),
+        relay(),
+    );
     escrow.add_token(token());
     escrow
 }
 
 fn create(escrow: &mut Escrow, token: Option<AccountId>) -> JobId {
     call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(one_near().as_yoctonear()), token, U64(DEADLINE), WINDOW_SECS, VERIFIER.into())
+    escrow.create_job(
+        worker(),
+        SPEC.into(),
+        FAKES.into(),
+        U128(one_near().as_yoctonear()),
+        token,
+        U64(DEADLINE),
+        WINDOW_SECS,
+        VERIFIER.into(),
+    )
 }
 
-fn challenge_output(id: JobId, reference_passed: bool, total: u32, caught: u32) -> serde_json::Value {
+fn challenge_output(
+    id: JobId,
+    reference_passed: bool,
+    total: u32,
+    caught: u32,
+) -> serde_json::Value {
     json!({
         "v": 1, "mode": "challenge", "error": null, "escrow": this_contract(), "job": id, "request_id": 700,
         "spec_hash": SPEC, "fakes_hash": FAKES, "reference_passed": reference_passed,
@@ -77,13 +123,34 @@ fn verify_output(id: JobId, pass: bool) -> serde_json::Value {
     })
 }
 
-fn returned(escrow: &mut Escrow, id: JobId, attempt: u32, kind: RunKind, result: PromiseResult, at: u64) -> bool {
+fn returned(
+    escrow: &mut Escrow,
+    id: JobId,
+    attempt: u32,
+    kind: RunKind,
+    result: PromiseResult,
+    at: u64,
+) -> bool {
     callback_context(result, at);
     escrow.on_run_result(id, attempt, kind)
 }
 
-fn returned_json(escrow: &mut Escrow, id: JobId, attempt: u32, kind: RunKind, output: &serde_json::Value, at: u64) -> bool {
-    returned(escrow, id, attempt, kind, PromiseResult::Successful(output.to_string().into_bytes()), at)
+fn returned_json(
+    escrow: &mut Escrow,
+    id: JobId,
+    attempt: u32,
+    kind: RunKind,
+    output: &serde_json::Value,
+    at: u64,
+) -> bool {
+    returned(
+        escrow,
+        id,
+        attempt,
+        kind,
+        PromiseResult::Successful(output.to_string().into_bytes()),
+        at,
+    )
 }
 
 fn challenging(escrow: &mut Escrow, id: JobId) {
@@ -91,10 +158,23 @@ fn challenging(escrow: &mut Escrow, id: JobId) {
     let _ = escrow.request_challenge(id);
 }
 
-fn challenge(escrow: &mut Escrow, id: JobId, reference_passed: bool, total: u32, caught: u32) -> bool {
+fn challenge(
+    escrow: &mut Escrow,
+    id: JobId,
+    reference_passed: bool,
+    total: u32,
+    caught: u32,
+) -> bool {
     challenging(escrow, id);
     let attempt = escrow.get_job(id).unwrap().attempt;
-    returned_json(escrow, id, attempt, RunKind::Challenge, &challenge_output(id, reference_passed, total, caught), START)
+    returned_json(
+        escrow,
+        id,
+        attempt,
+        RunKind::Challenge,
+        &challenge_output(id, reference_passed, total, caught),
+        START,
+    )
 }
 
 fn funded() -> (Escrow, JobId) {
@@ -133,14 +213,28 @@ fn state(escrow: &Escrow, id: JobId) -> JobState {
 fn a_callback_for_a_job_not_waiting_for_a_run_records_nothing() {
     let (mut escrow, id) = delivered();
     let attempt = escrow.get_job(id).unwrap().attempt;
-    assert!(!returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), TRIGGERED_AT));
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        TRIGGERED_AT
+    ));
     assert_eq!(state(&escrow, id), JobState::Delivered);
 }
 
 #[test]
 fn a_callback_of_the_wrong_kind_records_nothing() {
     let (mut escrow, id, attempt) = verifying();
-    assert!(!returned_json(&mut escrow, id, attempt, RunKind::Challenge, &challenge_output(id, true, 6, 6), TRIGGERED_AT));
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Challenge,
+        &challenge_output(id, true, 6, 6),
+        TRIGGERED_AT
+    ));
     assert_eq!(state(&escrow, id), JobState::Verifying);
 }
 
@@ -150,11 +244,21 @@ fn a_callback_of_the_wrong_kind_records_nothing() {
 fn a_pass_is_recorded_with_its_request_id_and_report_hash_and_pays_the_worker() {
     let (mut escrow, id, attempt) = verifying();
     let output = verify_output(id, true);
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &output, TRIGGERED_AT));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &output,
+        TRIGGERED_AT
+    ));
     let job = escrow.get_job(id).unwrap();
     assert_eq!(job.state, JobState::Passed);
     assert_eq!(job.verdict_request_id, Some(U64(701)));
-    assert_eq!(job.report_hash, Some(sha256_hex(output.to_string().as_bytes())));
+    assert_eq!(
+        job.report_hash,
+        Some(sha256_hex(output.to_string().as_bytes()))
+    );
     assert_eq!(job.run_started_at, None);
     call(stranger(), zero(), TRIGGERED_AT);
     let _ = escrow.release(id);
@@ -164,7 +268,14 @@ fn a_pass_is_recorded_with_its_request_id_and_report_hash_and_pays_the_worker() 
 #[test]
 fn a_fail_is_recorded_with_its_rule_and_refunds_the_buyer() {
     let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, false), TRIGGERED_AT));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, false),
+        TRIGGERED_AT
+    ));
     let job = escrow.get_job(id).unwrap();
     assert_eq!(job.state, JobState::Failed);
     assert_eq!(job.failed_rule.as_deref(), Some("grand_total"));
@@ -176,10 +287,20 @@ fn a_fail_is_recorded_with_its_rule_and_refunds_the_buyer() {
 /// Every way a run can fail to give a result: no verdict, retriable, and never a pass or a fail.
 fn assert_no_verdict(result: PromiseResult) {
     let (mut escrow, id, attempt) = verifying();
-    assert!(!returned(&mut escrow, id, attempt, RunKind::Verify, result, TRIGGERED_AT));
+    assert!(!returned(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        result,
+        TRIGGERED_AT
+    ));
     let job = escrow.get_job(id).unwrap();
     assert_eq!(job.state, JobState::Delivered);
-    assert_eq!((job.report_hash, job.verdict_request_id, job.failed_rule), (None, None, None));
+    assert_eq!(
+        (job.report_hash, job.verdict_request_id, job.failed_rule),
+        (None, None, None)
+    );
     assert_eq!(job.run_started_at, None);
     // And it can be tried again.
     call(stranger(), RUN_DEPOSIT, TRIGGERED_AT + SEC);
@@ -231,7 +352,9 @@ fn output_too_large_is_no_verdict() {
 #[test]
 fn a_verifier_error_is_no_verdict() {
     assert_no_verdict(with(0, "error", json!("secret_missing")));
-    assert_no_verdict(PromiseResult::Successful(br#"{"v":1,"mode":"verify","error":"secret_mismatch"}"#.to_vec()));
+    assert_no_verdict(PromiseResult::Successful(
+        br#"{"v":1,"mode":"verify","error":"secret_mismatch"}"#.to_vec(),
+    ));
 }
 
 #[test]
@@ -293,9 +416,19 @@ fn extra_output_fields_change_nothing_and_large_request_ids_are_kept_exactly() {
     let mut output = verify_output(id, true);
     output["request_id"] = json!(u64::MAX);
     output["accepted"] = json!(false);
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &output, TRIGGERED_AT));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &output,
+        TRIGGERED_AT
+    ));
     let job = escrow.get_job(id).unwrap();
-    assert_eq!((job.state, job.verdict_request_id), (JobState::Passed, Some(U64(u64::MAX))));
+    assert_eq!(
+        (job.state, job.verdict_request_id),
+        (JobState::Passed, Some(U64(u64::MAX)))
+    );
 }
 
 #[test]
@@ -305,7 +438,14 @@ fn a_challenge_records_counts_and_ignores_the_outputs_own_accepted_field() {
     challenging(&mut escrow, id);
     let mut output = challenge_output(id, true, 13, 4);
     output["accepted"] = json!(true);
-    assert!(returned_json(&mut escrow, id, 1, RunKind::Challenge, &output, START));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        1,
+        RunKind::Challenge,
+        &output,
+        START
+    ));
     assert_eq!(state(&escrow, id), JobState::CheckRejected);
 }
 
@@ -329,8 +469,22 @@ fn a_second_trigger_while_a_run_is_in_flight_is_refused() {
 #[test]
 fn a_second_callback_changes_nothing() {
     let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, false), TRIGGERED_AT));
-    assert!(!returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), TRIGGERED_AT));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, false),
+        TRIGGERED_AT
+    ));
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        TRIGGERED_AT
+    ));
     assert_eq!(state(&escrow, id), JobState::Failed);
 }
 
@@ -338,7 +492,14 @@ fn a_second_callback_changes_nothing() {
 #[should_panic(expected = "job is not awaiting verification")]
 fn a_trigger_after_a_verdict_is_refused() {
     let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), TRIGGERED_AT));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        TRIGGERED_AT
+    ));
     call(stranger(), RUN_DEPOSIT, TRIGGERED_AT + SEC);
     let _ = escrow.request_verification(id);
 }
@@ -353,9 +514,23 @@ fn a_run_whose_callback_never_came_can_be_triggered_again_and_the_late_callback_
     let second = escrow.get_job(id).unwrap().attempt;
     assert_eq!(second, first + 1);
     // A late callback from the first run records nothing and leaves the second in flight.
-    assert!(!returned_json(&mut escrow, id, first, RunKind::Verify, &verify_output(id, true), stale));
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        first,
+        RunKind::Verify,
+        &verify_output(id, true),
+        stale
+    ));
     assert_eq!(state(&escrow, id), JobState::Verifying);
-    assert!(returned_json(&mut escrow, id, second, RunKind::Verify, &verify_output(id, false), stale));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        second,
+        RunKind::Verify,
+        &verify_output(id, false),
+        stale
+    ));
     assert_eq!(state(&escrow, id), JobState::Failed);
 }
 
@@ -391,7 +566,14 @@ fn a_result_for_a_run_started_in_the_window_counts_even_if_it_lands_after_it() {
     call(stranger(), RUN_DEPOSIT, WINDOW_END);
     let _ = escrow.request_verification(id);
     let attempt = escrow.get_job(id).unwrap().attempt;
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), WINDOW_END + 5 * SEC));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        WINDOW_END + 5 * SEC
+    ));
     assert_eq!(state(&escrow, id), JobState::Passed);
 }
 
@@ -412,11 +594,25 @@ fn a_stale_run_after_the_window_expires_to_the_buyer_and_its_late_callback_is_ig
     call(stranger(), zero(), late);
     let _ = escrow.expire(id);
     assert_eq!(state(&escrow, id), JobState::Expiring);
-    assert!(!returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), late));
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        late
+    ));
     assert_eq!(state(&escrow, id), JobState::Expiring);
     callback_context(PromiseResult::Successful(vec![]), late);
     assert!(escrow.on_payout(id, JobState::Expired, JobState::Verifying));
-    assert!(!returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), late));
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        late
+    ));
     assert_eq!(state(&escrow, id), JobState::Expired);
 }
 
@@ -456,7 +652,14 @@ fn funded_job_expires_after_deadline() {
 #[should_panic(expected = "job has not expired")]
 fn passed_job_cannot_expire() {
     let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), TRIGGERED_AT));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        TRIGGERED_AT
+    ));
     call(stranger(), zero(), DEADLINE + 10_000 * SEC);
     let _ = escrow.expire(id);
 }
@@ -476,17 +679,76 @@ fn a_failed_expiry_transfer_leaves_the_job_expirable() {
 }
 
 #[test]
-fn a_genuine_late_verdict_after_a_failed_expiry_is_recorded_once() {
+fn a_stale_verdict_after_a_failed_expiry_is_no_verdict() {
     let (mut escrow, id, attempt) = verifying();
     let late = WINDOW_END + RUN_TIMEOUT_NANOS + 1;
     call(stranger(), zero(), late);
     let _ = escrow.expire(id);
     callback_context(PromiseResult::Failed, late);
     assert!(!escrow.on_payout(id, JobState::Expired, JobState::Verifying));
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), late));
-    assert_eq!(state(&escrow, id), JobState::Passed);
-    assert!(!returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, false), late));
-    assert_eq!(state(&escrow, id), JobState::Passed);
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        late
+    ));
+    assert_eq!(state(&escrow, id), JobState::Delivered);
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, false),
+        late
+    ));
+    assert_eq!(state(&escrow, id), JobState::Delivered);
+    call(stranger(), zero(), late);
+    let _ = escrow.expire(id);
+    assert_eq!(state(&escrow, id), JobState::Expiring);
+}
+
+#[test]
+fn a_callback_is_accepted_at_the_timeout_boundary_but_not_after_it() {
+    for (offset, expected) in [(RUN_TIMEOUT_NANOS, true), (RUN_TIMEOUT_NANOS + 1, false)] {
+        let (mut escrow, id, attempt) = verifying();
+        assert_eq!(
+            returned_json(
+                &mut escrow,
+                id,
+                attempt,
+                RunKind::Verify,
+                &verify_output(id, true),
+                TRIGGERED_AT + offset
+            ),
+            expected
+        );
+        assert_eq!(
+            state(&escrow, id),
+            if expected {
+                JobState::Passed
+            } else {
+                JobState::Delivered
+            }
+        );
+    }
+}
+
+#[test]
+fn a_stale_challenge_callback_cannot_accept_or_reject_the_check() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow, None);
+    challenging(&mut escrow, id);
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        1,
+        RunKind::Challenge,
+        &challenge_output(id, true, 13, 13),
+        START + RUN_TIMEOUT_NANOS + 1
+    ));
+    assert_eq!(state(&escrow, id), JobState::Draft);
 }
 
 // ---- Triggering ----
@@ -519,7 +781,9 @@ fn a_run_refuses_more_than_the_maximum_deposit() {
 #[should_panic(expected = "attach at least 150 Tgas")]
 fn a_run_needs_enough_gas_to_guarantee_its_callback() {
     let (mut escrow, id) = delivered();
-    testing_env!(context(stranger(), RUN_DEPOSIT, TRIGGERED_AT).prepaid_gas(Gas::from_tgas(149)).build());
+    testing_env!(context(stranger(), RUN_DEPOSIT, TRIGGERED_AT)
+        .prepaid_gas(Gas::from_tgas(149))
+        .build());
     let _ = escrow.request_verification(id);
 }
 
@@ -535,12 +799,26 @@ fn a_job_with_no_delivery_cannot_be_verified() {
 fn the_run_input_is_only_hashes_and_the_job_binding() {
     let (escrow, id, _) = verifying();
     let job = escrow.get_job(id).unwrap();
-    let input: serde_json::Value = serde_json::from_str(&job.run_input(id, RunKind::Verify, &this_contract())).unwrap();
-    assert_eq!(input, json!({ "mode": "verify", "escrow": this_contract(), "job": id, "check_hash": SPEC, "deliverable_hash": DELIVERABLE }));
-    let input: serde_json::Value = serde_json::from_str(&job.run_input(id, RunKind::Challenge, &this_contract())).unwrap();
-    assert_eq!(input, json!({ "mode": "challenge", "escrow": this_contract(), "job": id, "check_hash": SPEC, "reference_hash": FAKES }));
-    assert_eq!(job.secrets_profile(id, RunKind::Verify), format!("v{id}-{}", &DELIVERABLE[..12]));
-    assert_eq!(job.secrets_profile(id, RunKind::Challenge), format!("c{id}-{}", &FAKES[..12]));
+    let input: serde_json::Value =
+        serde_json::from_str(&job.run_input(id, RunKind::Verify, &this_contract())).unwrap();
+    assert_eq!(
+        input,
+        json!({ "mode": "verify", "escrow": this_contract(), "job": id, "check_hash": SPEC, "deliverable_hash": DELIVERABLE })
+    );
+    let input: serde_json::Value =
+        serde_json::from_str(&job.run_input(id, RunKind::Challenge, &this_contract())).unwrap();
+    assert_eq!(
+        input,
+        json!({ "mode": "challenge", "escrow": this_contract(), "job": id, "check_hash": SPEC, "reference_hash": FAKES })
+    );
+    assert_eq!(
+        job.secrets_profile(id, RunKind::Verify),
+        format!("v{id}-{}", &DELIVERABLE[..12])
+    );
+    assert_eq!(
+        job.secrets_profile(id, RunKind::Challenge),
+        format!("c{id}-{}", &FAKES[..12])
+    );
 }
 
 #[test]
@@ -550,9 +828,19 @@ fn a_job_keeps_the_verifier_and_secrets_owner_it_was_created_with() {
     escrow.set_verifier("https://example.test/other.wasm".into(), OTHER_HASH.into());
     escrow.set_secrets_owner(stranger());
     let job = escrow.get_job(id).unwrap();
-    assert_eq!((job.verifier_hash.as_str(), job.verifier_url.as_str(), &job.secrets_owner), (VERIFIER, VERIFIER_URL, &relay()));
+    assert_eq!(
+        (
+            job.verifier_hash.as_str(),
+            job.verifier_url.as_str(),
+            &job.secrets_owner
+        ),
+        (VERIFIER, VERIFIER_URL, &relay())
+    );
     let config = escrow.get_config();
-    assert_eq!((config.verifier_hash.as_str(), &config.secrets_owner), (OTHER_HASH, &stranger()));
+    assert_eq!(
+        (config.verifier_hash.as_str(), &config.secrets_owner),
+        (OTHER_HASH, &stranger())
+    );
 }
 
 #[test]
@@ -595,7 +883,10 @@ fn a_strong_check_is_challenged_with_its_request_id() {
     let id = create(&mut escrow, None);
     assert!(challenge(&mut escrow, id, true, 13, 13));
     let job = escrow.get_job(id).unwrap();
-    assert_eq!((job.state, job.fakes_total, job.fakes_caught), (JobState::Challenged, 13, 13));
+    assert_eq!(
+        (job.state, job.fakes_total, job.fakes_caught),
+        (JobState::Challenged, 13, 13)
+    );
     assert_eq!(job.challenge_request_id, Some(U64(700)));
     assert!(job.challenge_report_hash.is_some());
 }
@@ -621,7 +912,13 @@ fn a_check_that_fails_the_reference_is_rejected() {
 fn a_check_that_faced_too_few_fakes_is_rejected() {
     let mut escrow = escrow();
     let id = create(&mut escrow, None);
-    assert!(challenge(&mut escrow, id, true, MIN_FAKES - 1, MIN_FAKES - 1));
+    assert!(challenge(
+        &mut escrow,
+        id,
+        true,
+        MIN_FAKES - 1,
+        MIN_FAKES - 1
+    ));
     assert_eq!(state(&escrow, id), JobState::CheckRejected);
 }
 
@@ -630,10 +927,24 @@ fn a_challenge_failure_is_no_result_and_can_be_retried() {
     let mut escrow = escrow();
     let id = create(&mut escrow, None);
     challenging(&mut escrow, id);
-    assert!(!returned(&mut escrow, id, 1, RunKind::Challenge, PromiseResult::Successful(b"null".to_vec()), START));
+    assert!(!returned(
+        &mut escrow,
+        id,
+        1,
+        RunKind::Challenge,
+        PromiseResult::Successful(b"null".to_vec()),
+        START
+    ));
     assert_eq!(state(&escrow, id), JobState::Draft);
     challenging(&mut escrow, id);
-    assert!(!returned(&mut escrow, id, 2, RunKind::Challenge, PromiseResult::Failed, START));
+    assert!(!returned(
+        &mut escrow,
+        id,
+        2,
+        RunKind::Challenge,
+        PromiseResult::Failed,
+        START
+    ));
     assert_eq!(state(&escrow, id), JobState::Draft);
 }
 
@@ -653,7 +964,10 @@ fn a_challenge_output_that_does_not_match_the_job_is_no_result() {
         challenging(&mut escrow, id);
         let mut output = challenge_output(id, true, 6, 6);
         output[field] = value;
-        assert!(!returned_json(&mut escrow, id, 1, RunKind::Challenge, &output, START), "{field}");
+        assert!(
+            !returned_json(&mut escrow, id, 1, RunKind::Challenge, &output, START),
+            "{field}"
+        );
         assert_eq!(state(&escrow, id), JobState::Draft, "{field}");
     }
 }
@@ -723,7 +1037,14 @@ fn a_stale_challenge_can_be_cancelled_and_its_late_callback_is_ignored() {
     let late = START + RUN_TIMEOUT_NANOS + 1;
     call(buyer(), zero(), late);
     let _ = escrow.cancel(id);
-    assert!(!returned_json(&mut escrow, id, 1, RunKind::Challenge, &challenge_output(id, true, 6, 6), late));
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        1,
+        RunKind::Challenge,
+        &challenge_output(id, true, 6, 6),
+        late
+    ));
     assert!(escrow.get_job(id).is_none());
 }
 
@@ -743,7 +1064,16 @@ fn create_job_charges_storage_and_records_it() {
 fn create_job_without_storage_deposit_is_refused() {
     let mut escrow = escrow();
     call(buyer(), zero(), START);
-    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), WINDOW_SECS, VERIFIER.into());
+    escrow.create_job(
+        worker(),
+        SPEC.into(),
+        FAKES.into(),
+        U128(1),
+        None,
+        U64(DEADLINE),
+        WINDOW_SECS,
+        VERIFIER.into(),
+    );
 }
 
 #[test]
@@ -751,7 +1081,16 @@ fn create_job_without_storage_deposit_is_refused() {
 fn buyer_cannot_name_itself_as_worker() {
     let mut escrow = escrow();
     call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(buyer(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), WINDOW_SECS, VERIFIER.into());
+    escrow.create_job(
+        buyer(),
+        SPEC.into(),
+        FAKES.into(),
+        U128(1),
+        None,
+        U64(DEADLINE),
+        WINDOW_SECS,
+        VERIFIER.into(),
+    );
 }
 
 #[test]
@@ -766,7 +1105,16 @@ fn unknown_token_is_refused() {
 fn past_deadline_is_refused() {
     let mut escrow = escrow();
     call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(START), WINDOW_SECS, VERIFIER.into());
+    escrow.create_job(
+        worker(),
+        SPEC.into(),
+        FAKES.into(),
+        U128(1),
+        None,
+        U64(START),
+        WINDOW_SECS,
+        VERIFIER.into(),
+    );
 }
 
 #[test]
@@ -774,7 +1122,16 @@ fn past_deadline_is_refused() {
 fn a_verdict_window_too_short_for_a_retry_is_refused() {
     let mut escrow = escrow();
     call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), 1_799, VERIFIER.into());
+    escrow.create_job(
+        worker(),
+        SPEC.into(),
+        FAKES.into(),
+        U128(1),
+        None,
+        U64(DEADLINE),
+        1_799,
+        VERIFIER.into(),
+    );
 }
 
 #[test]
@@ -848,8 +1205,17 @@ fn late_delivery_is_refused() {
 #[should_panic(expected = "attach at least 50 Tgas")]
 fn a_payout_needs_enough_gas_to_guarantee_its_callback() {
     let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), TRIGGERED_AT));
-    testing_env!(context(stranger(), zero(), TRIGGERED_AT).prepaid_gas(Gas::from_tgas(49)).build());
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        TRIGGERED_AT
+    ));
+    testing_env!(context(stranger(), zero(), TRIGGERED_AT)
+        .prepaid_gas(Gas::from_tgas(49))
+        .build());
     let _ = escrow.release(id);
 }
 
@@ -858,7 +1224,16 @@ fn a_payout_needs_enough_gas_to_guarantee_its_callback() {
 fn a_buyer_who_expects_another_verifier_build_is_refused() {
     let mut escrow = escrow();
     call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(worker(), SPEC.into(), FAKES.into(), U128(1), None, U64(DEADLINE), WINDOW_SECS, OTHER_HASH.into());
+    escrow.create_job(
+        worker(),
+        SPEC.into(),
+        FAKES.into(),
+        U128(1),
+        None,
+        U64(DEADLINE),
+        WINDOW_SECS,
+        OTHER_HASH.into(),
+    );
 }
 
 #[test]
@@ -879,7 +1254,14 @@ fn release_while_verifying_is_refused() {
 #[should_panic(expected = "job has not passed")]
 fn second_release_while_paying_is_refused() {
     let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), TRIGGERED_AT));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        TRIGGERED_AT
+    ));
     call(stranger(), zero(), TRIGGERED_AT);
     let _ = escrow.release(id);
     let _ = escrow.release(id);
@@ -888,7 +1270,14 @@ fn second_release_while_paying_is_refused() {
 #[test]
 fn successful_payout_settles_the_job() {
     let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), TRIGGERED_AT));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        TRIGGERED_AT
+    ));
     call(stranger(), zero(), TRIGGERED_AT);
     let _ = escrow.release(id);
     callback_context(PromiseResult::Successful(vec![]), TRIGGERED_AT);
@@ -899,7 +1288,14 @@ fn successful_payout_settles_the_job() {
 #[test]
 fn failed_payout_returns_the_job_for_a_retry() {
     let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(&mut escrow, id, attempt, RunKind::Verify, &verify_output(id, true), TRIGGERED_AT));
+    assert!(returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, true),
+        TRIGGERED_AT
+    ));
     call(stranger(), zero(), TRIGGERED_AT);
     let _ = escrow.release(id);
     callback_context(PromiseResult::Failed, TRIGGERED_AT);

@@ -2,14 +2,14 @@
 name = "proven-escrow"
 version = "0.1.0"
 edition = "2021"
-description = "Proven escrow: pays a worker only after the verifier relay records a passing verdict"
+description = "Proven escrow: pays a worker after its OutLayer callback records a passing verdict"
 license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-near-sdk = "5.30"
+near-sdk = { version = "5.30", features = ["deterministic-account-ids"] }
 
 [dev-dependencies]
 near-sdk = { version = "5.30", features = ["unit-testing"] }

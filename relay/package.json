@@ -1,7 +1,7 @@
 {
   "name": "proven-relay",
   "version": "0.1.0",
-  "description": "Runs the Proven verifier on OutLayer, checks the attestation, and records the result in the escrow",
+  "description": "Pins private inputs, triggers escrow calls to OutLayer, and audits recorded attestations",
   "license": "MIT",
   "private": true,
   "type": "module",

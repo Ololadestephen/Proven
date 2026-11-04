@@ -63,7 +63,7 @@ const GAS_FOR_OUTLAYER: Gas = Gas::from_tgas(100);
 const GAS_FOR_RUN_CALLBACK: Gas = Gas::from_tgas(30);
 const MIN_PREPAID_GAS_FOR_RUN: Gas = Gas::from_tgas(150);
 /// OutLayer's deposit for one run, paid by whoever triggers it. Unused NEAR comes back to them
-/// from OutLayer. The cap bounds what can be stranded if OutLayer refuses the call outright.
+/// from OutLayer. Protocol-level admission refunds also go to that caller.
 const MIN_RUN_DEPOSIT: NearToken = NearToken::from_millinear(100);
 const MAX_RUN_DEPOSIT: NearToken = NearToken::from_near(1);
 const RUN_MAX_INSTRUCTIONS: u64 = 50_000_000_000;
@@ -71,7 +71,7 @@ const RUN_MAX_MEMORY_MB: u32 = 128;
 const RUN_MAX_SECONDS: u32 = 60;
 const BUILD_TARGET: &str = "wasm32-wasip1";
 /// The verifier's output never exceeds 900 bytes; anything longer is not its output.
-const MAX_RESULT_BYTES: usize = 1024;
+const MAX_RESULT_BYTES: usize = 900;
 const MAX_URL_LEN: usize = 256;
 const MAX_FAILED_RULE_LEN: usize = 32;
 const VERIFIER_OUTPUT_VERSION: u32 = 1;
@@ -176,14 +176,18 @@ impl Job {
 
     /// True if a run was started and its callback is overdue.
     fn run_is_stale(&self, now: u64) -> bool {
-        self.run_started_at.is_some_and(|t| now > t.0.saturating_add(RUN_TIMEOUT_NANOS))
+        self.run_started_at
+            .is_some_and(|t| now > t.0.saturating_add(RUN_TIMEOUT_NANOS))
     }
 
     /// The OutLayer secret profile holding the private texts of one run.
     fn secrets_profile(&self, job_id: JobId, kind: RunKind) -> String {
         match kind {
             RunKind::Challenge => format!("c{job_id}-{}", &self.fakes_hash[..12]),
-            RunKind::Verify => format!("v{job_id}-{}", &self.deliverable_hash.as_deref().unwrap_or(FULL_HASH)[..12]),
+            RunKind::Verify => format!(
+                "v{job_id}-{}",
+                &self.deliverable_hash.as_deref().unwrap_or(FULL_HASH)[..12]
+            ),
         }
     }
 
@@ -204,7 +208,9 @@ impl Job {
 
     /// Records a challenge output if it is exactly for this job. False means no result.
     fn apply_challenge(&mut self, bytes: &[u8], job_id: JobId, escrow: &AccountId) -> bool {
-        let Ok(output) = serde_json::from_slice::<ChallengeOutput>(bytes) else { return false };
+        let Ok(output) = serde_json::from_slice::<ChallengeOutput>(bytes) else {
+            return false;
+        };
         let valid = output.v == VERIFIER_OUTPUT_VERSION
             && output.mode == "challenge"
             && output.error.is_none()
@@ -220,15 +226,26 @@ impl Job {
         self.fakes_caught = output.fakes_caught;
         self.challenge_report_hash = Some(sha256_hex(bytes));
         self.challenge_request_id = Some(U64(output.request_id));
-        let accepted = output.reference_passed && output.fakes_total >= MIN_FAKES && output.fakes_caught == output.fakes_total;
-        self.state = if accepted { JobState::Challenged } else { JobState::CheckRejected };
+        let accepted = output.reference_passed
+            && output.fakes_total >= MIN_FAKES
+            && output.fakes_caught == output.fakes_total;
+        self.state = if accepted {
+            JobState::Challenged
+        } else {
+            JobState::CheckRejected
+        };
         true
     }
 
     /// Records a verify output if it is exactly for this job and delivery. False means no result.
     fn apply_verdict(&mut self, bytes: &[u8], job_id: JobId, escrow: &AccountId) -> bool {
-        let Ok(output) = serde_json::from_slice::<VerifyOutput>(bytes) else { return false };
-        let failed_rule_fits = output.failed_rule.as_ref().is_none_or(|r| r.len() <= MAX_FAILED_RULE_LEN);
+        let Ok(output) = serde_json::from_slice::<VerifyOutput>(bytes) else {
+            return false;
+        };
+        let failed_rule_fits = output
+            .failed_rule
+            .as_ref()
+            .is_none_or(|r| r.len() <= MAX_FAILED_RULE_LEN);
         let valid = output.v == VERIFIER_OUTPUT_VERSION
             && output.mode == "verify"
             && output.error.is_none()
@@ -242,8 +259,16 @@ impl Job {
         }
         self.report_hash = Some(sha256_hex(bytes));
         self.verdict_request_id = Some(U64(output.request_id));
-        self.state = if output.pass { JobState::Passed } else { JobState::Failed };
-        self.failed_rule = if output.pass { None } else { output.failed_rule };
+        self.state = if output.pass {
+            JobState::Passed
+        } else {
+            JobState::Failed
+        };
+        self.failed_rule = if output.pass {
+            None
+        } else {
+            output.failed_rule
+        };
         true
     }
 }
@@ -320,20 +345,32 @@ pub struct Escrow {
 }
 
 fn is_hash(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 fn require_hash(value: &str, name: &str) {
-    require!(is_hash(value), format!("{name} must be 64 lowercase hex characters"));
+    require!(
+        is_hash(value),
+        format!("{name} must be 64 lowercase hex characters")
+    );
 }
 
 fn require_verifier(url: &str, hash: &str) {
     require_hash(hash, "verifier_hash");
-    require!(url.starts_with("https://") && url.len() <= MAX_URL_LEN, "verifier_url must be https and at most 256 characters");
+    require!(
+        url.starts_with("https://") && url.len() <= MAX_URL_LEN,
+        "verifier_url must be https and at most 256 characters"
+    );
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    env::sha256(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    env::sha256(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn emit(event: &str, job_id: JobId) {
@@ -349,7 +386,13 @@ fn emit(event: &str, job_id: JobId) {
 #[near]
 impl Escrow {
     #[init]
-    pub fn new(owner: AccountId, outlayer: AccountId, verifier_url: String, verifier_hash: String, secrets_owner: AccountId) -> Self {
+    pub fn new(
+        owner: AccountId,
+        outlayer: AccountId,
+        verifier_url: String,
+        verifier_hash: String,
+        secrets_owner: AccountId,
+    ) -> Self {
         require_verifier(&verifier_url, &verifier_hash);
         Self {
             owner,
@@ -411,7 +454,10 @@ impl Escrow {
         let now = env::block_timestamp();
         require_hash(&spec_hash, "spec_hash");
         require_hash(&fakes_hash, "fakes_hash");
-        require!(verifier_hash == self.verifier_hash, "verifier_hash is not the build this contract runs");
+        require!(
+            verifier_hash == self.verifier_hash,
+            "verifier_hash is not the build this contract runs"
+        );
         require!(worker != buyer, "the worker cannot be the buyer");
         require!(amount.0 > 0, "amount must be greater than zero");
         if let Some(token) = &token {
@@ -462,7 +508,10 @@ impl Escrow {
         let storage_cost = env::storage_byte_cost()
             .saturating_mul(u128::from(env::storage_usage() - storage_before));
         let attached = env::attached_deposit();
-        require!(attached >= storage_cost, format!("attach at least {storage_cost} for storage"));
+        require!(
+            attached >= storage_cost,
+            format!("attach at least {storage_cost} for storage")
+        );
         job.storage_deposit = storage_cost;
         self.jobs.insert(id, job);
 
@@ -479,7 +528,10 @@ impl Escrow {
     pub fn cancel(&mut self, job_id: JobId) -> Promise {
         let job = self.job(job_id).clone();
         let now = env::block_timestamp();
-        require!(env::predecessor_account_id() == job.buyer, "only the buyer can cancel");
+        require!(
+            env::predecessor_account_id() == job.buyer,
+            "only the buyer can cancel"
+        );
         let cancellable = match job.state {
             JobState::Draft | JobState::CheckRejected | JobState::Challenged => true,
             JobState::Challenging => job.run_is_stale(now),
@@ -500,10 +552,18 @@ impl Escrow {
 
     /// NEP-141 receiver: funds a token job. `msg` is the job id.
     /// A panic here makes the token contract return the tokens to the sender.
-    pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> PromiseOrValue<U128> {
+    pub fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> PromiseOrValue<U128> {
         let token = env::predecessor_account_id();
         require!(self.tokens.contains(&token), "token is not accepted");
-        let job_id: JobId = msg.trim().parse().unwrap_or_else(|_| env::panic_str("msg must be the job id"));
+        let job_id: JobId = msg
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| env::panic_str("msg must be the job id"));
         self.lock_payment(job_id, &sender_id, Some(&token), amount.0);
         PromiseOrValue::Value(U128(0))
     }
@@ -517,7 +577,10 @@ impl Escrow {
         let caller = env::predecessor_account_id();
         let job = self.job_mut(job_id);
         require!(caller == job.worker, "only the job's worker can deliver");
-        require!(job.state == JobState::Funded, "job is not awaiting delivery");
+        require!(
+            job.state == JobState::Funded,
+            "job is not awaiting delivery"
+        );
         require!(now <= job.deadline.0, "the delivery deadline has passed");
         job.deliverable_hash = Some(deliverable_hash);
         job.delivered_at = Some(U64(now));
@@ -555,7 +618,10 @@ impl Escrow {
             _ => false,
         };
         require!(ready, "job is not awaiting verification");
-        require!(now <= job.verdict_deadline(), "the verdict window has closed");
+        require!(
+            now <= job.verdict_deadline(),
+            "the verdict window has closed"
+        );
         self.start_run(job_id, RunKind::Verify, JobState::Verifying)
     }
 
@@ -578,8 +644,10 @@ impl Escrow {
             emit("run_ignored", job_id);
             return false;
         }
+        let stale = job.run_is_stale(env::block_timestamp());
         job.run_started_at = None;
         let recorded = match (&result, kind) {
+            _ if stale => false,
             (Ok(bytes), RunKind::Challenge) => job.apply_challenge(bytes, job_id, &escrow),
             (Ok(bytes), RunKind::Verify) => job.apply_verdict(bytes, job_id, &escrow),
             // A failed promise, or a result too long to be the verifier's.
@@ -599,16 +667,47 @@ impl Escrow {
         recorded
     }
 
+    /// Recovers unused compute deposits when OutLayer's own settlement callback failed. The
+    /// request id is public in OutLayer's execution_requested event. OutLayer checks that this
+    /// contract requested it, that it is stale, and that it has not already settled; its refund
+    /// goes to the original payer. This never reimburses anyone from job funds.
+    pub fn cancel_stale_outlayer_execution(&self, request_id: U64) -> Promise {
+        require!(
+            env::prepaid_gas() >= Gas::from_tgas(70),
+            "attach at least 70 Tgas"
+        );
+        Promise::new(self.outlayer.clone()).function_call(
+            "cancel_stale_execution".to_string(),
+            json!({ "request_id": request_id.0 })
+                .to_string()
+                .into_bytes(),
+            NearToken::from_yoctonear(0),
+            Gas::from_tgas(50),
+        )
+    }
+
     // ---- Anyone: move the money ----
 
     /// Pays the worker after a passing verdict.
     pub fn release(&mut self, job_id: JobId) -> Promise {
-        self.start_payout(job_id, JobState::Passed, JobState::Releasing, JobState::Released, true)
+        self.start_payout(
+            job_id,
+            JobState::Passed,
+            JobState::Releasing,
+            JobState::Released,
+            true,
+        )
     }
 
     /// Refunds the buyer after a failing verdict.
     pub fn refund(&mut self, job_id: JobId) -> Promise {
-        self.start_payout(job_id, JobState::Failed, JobState::Refunding, JobState::Refunded, false)
+        self.start_payout(
+            job_id,
+            JobState::Failed,
+            JobState::Refunding,
+            JobState::Refunded,
+            false,
+        )
     }
 
     /// Refunds the buyer when the worker missed the deadline, or no verdict was recorded in the
@@ -649,7 +748,9 @@ impl Escrow {
     /// Jobs with ids from `from_id`, at most `limit` (capped at 50). Cancelled jobs are skipped.
     pub fn get_jobs(&self, from_id: JobId, limit: u64) -> Vec<(JobId, Job)> {
         let end = from_id.saturating_add(limit.min(50)).min(self.next_id);
-        (from_id..end).filter_map(|id| self.jobs.get(&id).map(|job| (id, job.clone()))).collect()
+        (from_id..end)
+            .filter_map(|id| self.jobs.get(&id).map(|job| (id, job.clone())))
+            .collect()
     }
 
     /// The secret profile a run of this job will read, so whoever holds the texts can pin them.
@@ -672,23 +773,39 @@ impl Escrow {
 
 impl Escrow {
     fn require_owner(&self) {
-        require!(env::predecessor_account_id() == self.owner, "only the owner can do this");
+        require!(
+            env::predecessor_account_id() == self.owner,
+            "only the owner can do this"
+        );
     }
 
     fn job(&self, job_id: JobId) -> &Job {
-        self.jobs.get(&job_id).unwrap_or_else(|| env::panic_str("job not found"))
+        self.jobs
+            .get(&job_id)
+            .unwrap_or_else(|| env::panic_str("job not found"))
     }
 
     fn job_mut(&mut self, job_id: JobId) -> &mut Job {
-        self.jobs.get_mut(&job_id).unwrap_or_else(|| env::panic_str("job not found"))
+        self.jobs
+            .get_mut(&job_id)
+            .unwrap_or_else(|| env::panic_str("job not found"))
     }
 
-    fn lock_payment(&mut self, job_id: JobId, payer: &AccountId, token: Option<&AccountId>, amount: u128) {
+    fn lock_payment(
+        &mut self,
+        job_id: JobId,
+        payer: &AccountId,
+        token: Option<&AccountId>,
+        amount: u128,
+    ) {
         let now = env::block_timestamp();
         let job = self.job_mut(job_id);
         require!(*payer == job.buyer, "only the buyer can fund");
         require!(job.token.as_ref() == token, "pay in the job's token");
-        require!(job.state == JobState::Challenged, "job is not ready to fund: the check must pass its challenge first");
+        require!(
+            job.state == JobState::Challenged,
+            "job is not ready to fund: the check must pass its challenge first"
+        );
         require!(amount == job.amount.0, "pay exactly the job amount");
         require!(now < job.deadline.0, "the delivery deadline has passed");
         job.state = JobState::Funded;
@@ -703,7 +820,10 @@ impl Escrow {
             deposit >= MIN_RUN_DEPOSIT && deposit <= MAX_RUN_DEPOSIT,
             "attach between 0.1 and 1 NEAR for OutLayer; the unused part comes back"
         );
-        require!(env::prepaid_gas() >= MIN_PREPAID_GAS_FOR_RUN, "attach at least 150 Tgas");
+        require!(
+            env::prepaid_gas() >= MIN_PREPAID_GAS_FOR_RUN,
+            "attach at least 150 Tgas"
+        );
         let now = env::block_timestamp();
         let escrow = env::current_account_id();
         let payer = env::predecessor_account_id();
@@ -728,7 +848,14 @@ impl Escrow {
         });
         emit("run_started", job_id);
         Promise::new(outlayer)
-            .function_call_weight("request_execution", args.to_string().into_bytes(), deposit, GAS_FOR_OUTLAYER, GasWeight(1))
+            .refund_to(payer)
+            .function_call_weight(
+                "request_execution",
+                args.to_string().into_bytes(),
+                deposit,
+                GAS_FOR_OUTLAYER,
+                GasWeight(1),
+            )
             .then(
                 Self::ext(escrow)
                     .with_static_gas(GAS_FOR_RUN_CALLBACK)
@@ -745,7 +872,10 @@ impl Escrow {
         done: JobState,
         to_worker: bool,
     ) -> Promise {
-        require!(env::prepaid_gas() >= MIN_PREPAID_GAS_FOR_PAYOUT, "attach at least 50 Tgas");
+        require!(
+            env::prepaid_gas() >= MIN_PREPAID_GAS_FOR_PAYOUT,
+            "attach at least 50 Tgas"
+        );
         let job = self.job_mut(job_id);
         require!(
             job.state == from,
@@ -756,7 +886,11 @@ impl Escrow {
             }
         );
         job.state = pending;
-        let receiver = if to_worker { job.worker.clone() } else { job.buyer.clone() };
+        let receiver = if to_worker {
+            job.worker.clone()
+        } else {
+            job.buyer.clone()
+        };
         let transfer = match job.token.clone() {
             None => Promise::new(receiver).transfer(NearToken::from_yoctonear(job.amount.0)),
             Some(token) => ext_ft::ext(token)

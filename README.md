@@ -8,7 +8,7 @@ Status: in development for NEAR HACKATHON (October to November 2026). Setup step
 
 ## Who decides a verdict, and what you have to trust
 
-No account can set a pass or a fail: not the buyer, the worker, the contract's owner or the relay. A result is recorded only by a private callback of the escrow's own call to the OutLayer contract, and only if the output names this escrow, this job, this check and this deliverable. Anyone can trigger a run. If OutLayer fails, times out or returns anything else, there is no verdict: the run can be tried again, and if no verdict arrives in the job's window, the buyer is refunded.
+The buyer, worker, escrow owner and relay have no method for posting a pass or fail. A result is recorded only by a private callback of the escrow's own call to the OutLayer contract, and only if the output names this escrow, this job, this check and this deliverable. Anyone can trigger a run. If OutLayer fails, times out or returns anything else, there is no verdict: the run can be tried again, and if no verdict arrives in the job's window, the buyer is refunded.
 
 This does not remove trust. You are trusting:
 
@@ -21,7 +21,48 @@ This does not remove trust. You are trusting:
 
 A worker or buyer can also lose money in one case with no verdict involved: if the receiving account of a payout was deleted, or a token account can never accept the transfer, the payout can only be retried. Nobody can redirect it, by design.
 
-Each recorded verdict stores its OutLayer request id and the hash of its output, so anyone can fetch the attestation and compare it. On chain you see only hashes, counts, rule ids and encrypted secrets.
+Each recorded verdict stores its OutLayer request id and the hash of its output, so anyone can fetch the attestation and compare it. Public execution input contains hashes and the job binding. Outputs also expose counts, failed-rule ids and missed-fake names; stored secrets expose ciphertext lengths. Low-entropy private text may be guessed from its public hash.
+
+The Intel signature chain has been checked through OutLayer's dashboard only. Independent command-line verification with `outlayer-verify` or `dcap-qvl` has **not** been run. The relay checks hash bindings and quote fields; that is not a signature verification.
+
+## Calls, refunds and limits
+
+Both `request_challenge(job_id)` and `request_verification(job_id)` are permissionless. The triggerer attaches 0.1 to 1 NEAR and at least 150 Tgas. OutLayer's `payer_account_id` returns unused compute deposits to that triggerer. NEAR's protocol-level `refund_to` sends an admission-rejection refund to the same account, even if the refund arrives after the callback. Escrow never reimburses a failed compute request from job payment.
+
+If OutLayer's settlement callback itself fails, anyone can call `cancel_stale_outlayer_execution(request_id)` with at least 70 Tgas after OutLayer's ten-minute timeout. OutLayer enforces request ownership and single settlement, and refunds its stored payer. The request id for an unsuccessful run is in OutLayer's `execution_requested` event; only successful recorded results have an id stored on the job. OutLayer cancellation cannot create a verdict or redirect its refund.
+
+The public input contains only the escrow account, job id, mode and committed hashes. Private check, reference and deliverable text is encrypted locally into WASM-bound OutLayer secrets, restricted by a `Predecessor` whitelist to this escrow. This supports anyone triggering a call without publishing the private text. Both the data and function examples use this path. Larger private payloads have not been tested; the function interpreter separately caps submitted modules at 64 KB. Runs request 50 billion instructions, 128 MB and 60 seconds. Verifier output is limited to 900 bytes and the callback rejects larger output before parsing it.
+
+One run may be in flight per job. A result arriving more than fifteen minutes after its trigger is no verdict, even if no one retried the job yet. A missing or exhausted callback can be retried after that timeout. After the verdict window closes, anyone can expire the job and return the payment to the buyer. A timely trigger has bounded callback grace within those fifteen minutes; a completed expiry always prevents a late verdict.
+
+## Local checks
+
+Use Rust with `wasm32-unknown-unknown` and `wasm32-wasip1`, `cargo-near`, and Node 22.18 or later. From the repository root:
+
+```sh
+(cd contracts/test-token && cargo near build non-reproducible-wasm)
+(cd contracts/mock-outlayer && cargo near build non-reproducible-wasm)
+(cd contracts/escrow && cargo near build non-reproducible-wasm && cargo test --lib && cargo test --test sandbox)
+(cd verifier && cargo test --release --features cli)
+(cd relay && npm ci && npm test && npm run typecheck)
+```
+
+Sandbox tests use a local test double for failure injection, including admission rejection, delayed settlement failure, malformed and oversized output, yield timeout and an actual exhausted callback. They are separate from the real OutLayer testnet evidence. Deposits use NEAR's custom refund receiver support (protocol 82 or newer; checked on testnet protocol 88).
+
+## Testnet evidence (November 4, 2026)
+
+Contract: `escrow-v2.proven.testnet`, [deployment](https://testnet.nearblocks.io/txns/6y7RWZSp5hDH2W3w11RgFfvYBQ7p284Y93nbikZwMZqh). The verifier build is `c3f3b90a9b6c0e4bca023465c69c8dbab476d0fa96fcdc50d808877b4010dafe`.
+
+| Job | Delivery | Recorded verdict attestation | Settlement |
+|---|---|---|---|
+| 6 | data, honest | [request 8700](https://testnet-api.outlayer.ai/attestations/by-request/8700) | [released 25 pUSD](https://testnet.nearblocks.io/txns/HWkZ6btQZMT2UKEbJiJVAji7Vvf6XDjxCdFa1jcgmVkS) |
+| 7 | data, fake | [request 8702](https://testnet-api.outlayer.ai/attestations/by-request/8702) | [refunded 25 pUSD](https://testnet.nearblocks.io/txns/5LMvQjvuV1qpPY67sdLtqaRbrdE7JWyLx1AZMWCgTTYd) |
+| 8 | function, honest | [request 8704](https://testnet-api.outlayer.ai/attestations/by-request/8704) | [released 25 pUSD](https://testnet.nearblocks.io/txns/5S8JoucdPk4z4vz9sofF4p2eYNG5dRdqxt8UZZuaW1qC) |
+| 9 | function, fake | [request 8706](https://testnet-api.outlayer.ai/attestations/by-request/8706) | [refunded 25 pUSD](https://testnet.nearblocks.io/txns/9m7ppv8ux87nRVzqonVY8Ds9qomejG2A9Mdo9iWMTGv7) |
+
+Each challenge was triggered by the fake-worker account, and each delivery verification by the named worker. Both data challenges caught 13 of 13 generated fakes; both function challenges caught 11 of 11, with one additional mutant unconfirmed. These counts describe mutations of the supplied reference; they do not establish check completeness. The strong checks were written with knowledge of the generator. Final token balances: honest worker 275 pUSD, fake worker 0, escrow 0. pUSD is a test token with no value.
+
+To audit a recorded result after configuring `.env`, run `cd relay` and `npm run relay -- audit 6 verify`. That audits hash bindings and quote fields only. Independent Intel signature verification is still pending.
 
 ## Layout
 
