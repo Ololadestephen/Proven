@@ -5,22 +5,33 @@ import { baseEncode, type Account } from "near-api-js";
 import type { Config } from "./config.ts";
 import { submitDemoRun } from "./near.ts";
 
-for (const uncertain of [false, true]) {
-  test(`operator journals signed hash before one broadcast, uncertain=${uncertain}`, async () => {
+for (const mode of [
+  "ack",
+  "unconfirmed",
+  "confirmed",
+  "optimistic",
+  "mismatched",
+]) {
+  const uncertain = mode !== "ack";
+  test(`operator journals once and reconciles nonce inclusion: ${mode}`, async () => {
     const bytes = Buffer.from("fixed unsigned transaction bytes");
     const expected = baseEncode(createHash("sha256").update(bytes).digest());
     let persisted = "",
       calls = 0,
-      suspended = false;
+      suspended = false,
+      reads = 0;
     const signed = {
+      encode: () => Buffer.from("immutable signed bytes"),
       transaction: {
         encode: () => bytes,
         signerId: "operator.testnet",
+        receiverId: "escrow.testnet",
         nonce: 7n,
         blockHash: new Uint8Array(32),
       },
     };
     const account = {
+      accountId: "operator.testnet",
       createSignedTransaction: async (input: Record<string, unknown>) => {
         assert.equal(input.receiverId, "escrow.testnet");
         const actions = input.actions as Array<{
@@ -39,10 +50,31 @@ for (const uncertain of [false, true]) {
         return signed;
       },
       provider: {
-        sendTransactionUntil: async (tx: unknown, wait: string) => {
+        viewTransactionStatus: async (input: Record<string, unknown>) => {
+          reads++;
+          assert.equal(input.waitUntil, "NONE");
+          assert.equal(input.txHash, expected);
+          if (mode === "unconfirmed") throw Error("Unknown");
+          return {
+            final_execution_status:
+              mode === "optimistic" || reads === 1
+                ? "EXECUTED_OPTIMISTIC"
+                : "FINAL",
+            transaction: {
+              hash: mode === "mismatched" ? "wrong" : expected,
+              signer_id: "operator.testnet",
+              receiver_id: "escrow.testnet",
+            },
+            status: { SuccessValue: "dHJ1ZQ==" },
+          };
+        },
+        sendJsonRpc: async (method: string, params: string[]) => {
           calls++;
-          assert.equal(tx, signed);
-          assert.equal(wait, "INCLUDED_FINAL");
+          assert.equal(method, "broadcast_tx_async");
+          assert.equal(
+            params[0],
+            Buffer.from("immutable signed bytes").toString("base64"),
+          );
           assert.equal(persisted, expected);
           if (uncertain) throw Error("Unknown transport outcome");
           return { status: "Started" };
@@ -64,11 +96,14 @@ for (const uncertain of [false, true]) {
         () => {
           suspended = true;
         },
+        undefined,
+        async () => {},
       ),
       expected,
     );
-    assert.equal(calls, 1);
-    assert.equal(suspended, uncertain);
+    assert.equal(calls, ["unconfirmed", "mismatched"].includes(mode) ? 3 : 1);
+    assert.equal(suspended, !["ack", "confirmed"].includes(mode));
+    assert.equal(reads, ["ack", "confirmed"].includes(mode) ? 2 : 20);
     await assert.rejects(
       submitDemoRun(
         account,
@@ -84,6 +119,6 @@ for (const uncertain of [false, true]) {
       ),
       /Disk failure/,
     );
-    assert.equal(calls, 1);
+    assert.equal(calls, ["unconfirmed", "mismatched"].includes(mode) ? 3 : 1);
   });
 }

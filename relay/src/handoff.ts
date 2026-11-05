@@ -17,6 +17,8 @@ import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isHash, sha256Hex } from "./hash.ts";
 import type { Job, RunKind } from "./near.ts";
+import type { TimingEvent, TimingSink } from "./timing.ts";
+import type { SecretJournal } from "./secret-call.ts";
 
 export const MAX_HANDOFF_BYTES = 512 * 1024;
 export const DEFAULT_SOCKET = fileURLToPath(
@@ -505,7 +507,7 @@ async function main(): Promise<void> {
   requireSafe(
     args.length === 0 || (args.length === 1 && args[0] === "--demo-compute"),
   );
-  const [{ loadConfig }, near, secret] = await Promise.all([
+  const [{ loadConfig, TESTNET_RPC_URLS }, near, secret] = await Promise.all([
     import("./config.ts"),
     import("./near.ts"),
     import("./secret.ts"),
@@ -516,14 +518,47 @@ async function main(): Promise<void> {
     !config.escrowContract.endsWith(".testnet") ||
     config.outlayerContract !== "outlayer.testnet" ||
     config.outlayerApi !== "https://testnet-api.outlayer.ai" ||
-    ![
-      "https://test.rpc.fastnear.com",
-      "https://rpc.testnet.near.org",
-      "https://archival-rpc.testnet.near.org",
-    ].includes(config.rpcUrl)
+    !TESTNET_RPC_URLS.includes(config.rpcUrl) ||
+    !TESTNET_RPC_URLS.includes(config.broadcastRpcUrl ?? config.rpcUrl)
   )
     throw new Refused();
-  const account = near.relayAccount(config);
+  let timing: TimingSink | undefined;
+  if (args[0] === "--demo-compute") {
+    const directory = dirname(DEFAULT_SOCKET);
+    await privateDirectory(directory);
+    const path = join(directory, `demo-timing-${randomUUID()}.json`);
+    const events: TimingEvent[] = [];
+    let recording = Promise.resolve();
+    timing = async (event) => {
+      events.push(event);
+      recording = recording.then(() =>
+        writePrivate(path, JSON.stringify(events)),
+      );
+      await recording;
+    };
+    process.stderr.write(`Private timing evidence: ${path}\n`);
+  }
+  const account = near.relayAccount(config, !!timing);
+  const secretJournal = (
+    profile: string,
+    operation: string,
+  ): SecretJournal | undefined =>
+    timing
+      ? async (transaction_hash, submission) => {
+          await writePrivate(
+            join(
+              dirname(DEFAULT_SOCKET),
+              `secret-submission-${randomUUID()}.json`,
+            ),
+            JSON.stringify({
+              profile,
+              operation,
+              transaction_hash,
+              submission,
+            }),
+          );
+        }
+      : undefined;
   let demoCompute: HandoffDependencies["demoCompute"];
   let signingSuspended = false;
   async function signing<T>(call: () => Promise<T>): Promise<T> {
@@ -562,19 +597,46 @@ async function main(): Promise<void> {
       referenceHash: sha256Hex(reference),
       verifierHash: parsed.verifier,
       trigger: (id, kind, beforeBroadcast) =>
-        near.submitDemoRun(account, config, id, kind, beforeBroadcast, () => {
-          signingSuspended = true;
-        }),
+        near.submitDemoRun(
+          account,
+          config,
+          id,
+          kind,
+          beforeBroadcast,
+          () => {
+            signingSuspended = true;
+          },
+          timing,
+        ),
     };
   }
   await startHandoffServer({
     accountId: account.accountId,
     escrow: config.escrowContract,
-    getJob: (jobId) => near.getJob(account, config, jobId),
+    getJob: (jobId) => near.getJob(account, config, jobId, timing),
     storeSecret: (hash, name, variables) =>
-      signing(() => secret.storeSecret(account, config, hash, name, variables)),
+      signing(() =>
+        secret.storeSecret(
+          account,
+          config,
+          hash,
+          name,
+          variables,
+          timing,
+          secretJournal(name, "store"),
+        ),
+      ),
     deleteSecret: (hash, name) =>
-      signing(() => secret.deleteSecret(account, config, hash, name)),
+      signing(() =>
+        secret.deleteSecret(
+          account,
+          config,
+          hash,
+          name,
+          timing,
+          secretJournal(name, "delete"),
+        ),
+      ),
     demoCompute,
     isSigningSuspended: () => signingSuspended,
   });

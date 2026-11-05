@@ -54,8 +54,10 @@ export async function transactionResult(
     const response = await provider.viewTransactionStatus({
       txHash: tx,
       accountId: account,
-      waitUntil: "EXECUTED",
+      waitUntil: "NONE",
     });
+    if (!["EXECUTED", "FINAL"].includes(response.final_execution_status))
+      return { transaction_hash: tx, pending: true };
     const status = response.status;
     if (typeof status === "object" && "SuccessValue" in status) {
       const bytes = Buffer.from(status.SuccessValue, "base64").toString("utf8");

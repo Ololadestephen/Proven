@@ -53,15 +53,23 @@ test("known custody transaction is followed with reads until its actual outcome"
     viewTransactionStatus: async (input: {
       txHash: string;
       accountId: string;
+      waitUntil: string;
     }) => {
       assert.deepEqual(
         [input.txHash, input.accountId],
         ["known-hash", "buyer.testnet"],
       );
       reads++;
+      assert.equal(input.waitUntil, "NONE");
       return reads === 1
-        ? { status: "Started" }
-        : { status: { SuccessValue: Buffer.from("42").toString("base64") } };
+        ? {
+            final_execution_status: "EXECUTED_OPTIMISTIC",
+            status: { SuccessValue: Buffer.from("999").toString("base64") },
+          }
+        : {
+            final_execution_status: "EXECUTED",
+            status: { SuccessValue: Buffer.from("42").toString("base64") },
+          };
     },
   } as unknown as JsonRpcProvider;
   const result = await waitTransactionResult(
@@ -77,6 +85,7 @@ test("known custody transaction is followed with reads until its actual outcome"
 test("failed and unresolved transaction reads never cause a write retry", async () => {
   const failed = {
     viewTransactionStatus: async () => ({
+      final_execution_status: "FINAL",
       status: { Failure: { error: "onchain" } },
     }),
   } as unknown as JsonRpcProvider;

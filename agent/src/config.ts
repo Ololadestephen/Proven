@@ -39,6 +39,8 @@ export function loadConfig(selected?: Actor): Config {
   if (
     ![
       "https://test.rpc.fastnear.com",
+      "https://near-testnet.drpc.org",
+      "https://testnet-rpc.intea.rs",
       "https://rpc.testnet.near.org",
       "https://archival-rpc.testnet.near.org",
     ].includes(rpc)

@@ -11,6 +11,9 @@ import {
   baseEncode,
 } from "near-api-js";
 import { createHash } from "node:crypto";
+import { timed, type TimingSink } from "./timing.ts";
+import { confirmTransaction } from "./admission.ts";
+import { DemoRpcProvider } from "./rpc.ts";
 import type { Config } from "./config.ts";
 
 const TGAS = 1_000_000_000_000n;
@@ -41,8 +44,10 @@ export interface Job {
   failed_rule: string | null;
 }
 
-export function relayAccount(config: Config): Account {
-  const provider = new JsonRpcProvider({ url: config.rpcUrl });
+export function relayAccount(config: Config, singleAttempt = false): Account {
+  const provider = singleAttempt
+    ? new DemoRpcProvider(config.rpcUrl, config.broadcastRpcUrl)
+    : new JsonRpcProvider({ url: config.rpcUrl });
   const signer = new KeyPairSigner(KeyPair.fromString(config.relayPrivateKey));
   return new Account(config.relayAccountId, provider, signer);
 }
@@ -51,12 +56,18 @@ export async function getJob(
   account: Account,
   config: Config,
   jobId: number,
+  timing?: TimingSink,
 ): Promise<Job> {
-  const job = await account.provider.callFunction({
-    contractId: config.escrowContract,
-    method: "get_job",
-    args: { job_id: jobId },
-  });
+  const job = await timed(
+    "job_read",
+    () =>
+      account.provider.callFunction({
+        contractId: config.escrowContract,
+        method: "get_job",
+        args: { job_id: jobId },
+      }),
+    timing,
+  );
   if (!job)
     throw new Error(`job ${jobId} not found on ${config.escrowContract}`);
   return job as unknown as Job;
@@ -94,7 +105,7 @@ export async function triggerRun(
   return response.transaction.hash;
 }
 
-/** Submit once, release the signer queue at nonce finality, then let the client read settlement. */
+/** Sign and journal once; release the signer queue only after final inclusion of that hash. */
 export async function submitDemoRun(
   account: Account,
   config: Config,
@@ -105,18 +116,25 @@ export async function submitDemoRun(
     metadata: SubmissionMetadata,
   ) => Promise<void>,
   onUncertain: () => void,
+  timing?: TimingSink,
+  wait = () => new Promise<void>((resolve) => setTimeout(resolve, 500)),
 ): Promise<string> {
-  const signed = await account.createSignedTransaction({
-    receiverId: config.escrowContract,
-    actions: [
-      actions.functionCall(
-        kind === "Challenge" ? "request_challenge" : "request_verification",
-        { job_id: jobId },
-        150n * TGAS,
-        100000000000000000000000n,
-      ),
-    ],
-  });
+  const signed = await timed(
+    "compute_sign",
+    () =>
+      account.createSignedTransaction({
+        receiverId: config.escrowContract,
+        actions: [
+          actions.functionCall(
+            kind === "Challenge" ? "request_challenge" : "request_verification",
+            { job_id: jobId },
+            150n * TGAS,
+            100000000000000000000000n,
+          ),
+        ],
+      }),
+    timing,
+  );
   const hash = baseEncode(
     createHash("sha256").update(signed.transaction.encode()).digest(),
   );
@@ -125,11 +143,15 @@ export async function submitDemoRun(
     nonce: signed.transaction.nonce.toString(),
     block_hash: baseEncode(signed.transaction.blockHash),
   });
-  try {
-    await account.provider.sendTransactionUntil(signed, "INCLUDED_FINAL");
-  } catch {
-    // The signed hash is durable. Only read its outcome; never sign or submit another call here.
-    onUncertain();
-  }
+  const outcome = await confirmTransaction(
+    account,
+    signed,
+    hash,
+    config.escrowContract,
+    "inclusion",
+    wait,
+    timing,
+  );
+  if (!outcome) onUncertain();
   return hash;
 }
