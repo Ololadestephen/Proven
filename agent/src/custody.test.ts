@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { assertPolicy, custodyCall } from "./custody.ts";
+import { assertPolicy, custodyCall, custodyTransaction } from "./custody.ts";
 import { publicMessage } from "./errors.ts";
 
 const escrow = "escrow-v2.proven.testnet";
@@ -249,6 +249,126 @@ test("pending custody responses retain nested transaction hashes but never-admit
       ),
       /never reached chain/,
     );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("processing custody call follows only its fixed request id using reads", async () => {
+  const original = globalThis.fetch,
+    id = "12345678-1234-1234-1234-123456789abc",
+    tx = "1".repeat(44);
+  let reads = 0;
+  globalThis.fetch = async (url, options) => {
+    assert.equal(
+      String(url),
+      `https://testnet-api.outlayer.ai/wallet/v1/requests/${id}`,
+    );
+    assert.equal(options?.method, undefined);
+    assert.equal(options?.redirect, "error");
+    reads++;
+    return Response.json({
+      request_id: id,
+      type: "call",
+      status: "processing",
+      result: reads === 1 ? {} : { tx_hash: tx },
+    });
+  };
+  try {
+    assert.equal(
+      await custodyTransaction(
+        "https://testnet-api.outlayer.ai",
+        "private-token",
+        { request_id: id, status: "processing" },
+        async () => {},
+      ),
+      tx,
+    );
+    assert.equal(reads, 2);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("custody polling is bounded and wrong requests or never-submitted results cannot be accepted", async () => {
+  const original = globalThis.fetch,
+    id = "12345678-1234-1234-1234-123456789abc";
+  let reads = 0;
+  globalThis.fetch = async () => {
+    reads++;
+    return Response.json({
+      request_id: id,
+      type: "call",
+      status: "processing",
+    });
+  };
+  try {
+    await assert.rejects(
+      custodyTransaction(
+        "https://testnet-api.outlayer.ai",
+        "private-token",
+        { request_id: id, status: "processing" },
+        async () => {},
+      ),
+      /Check wallet history/,
+    );
+    assert.equal(reads, 30);
+    globalThis.fetch = async () =>
+      Response.json({
+        request_id: "other",
+        type: "call",
+        result: { tx_hash: "1".repeat(44) },
+      });
+    await assert.rejects(
+      custodyTransaction(
+        "https://testnet-api.outlayer.ai",
+        "private-token",
+        { request_id: id },
+        async () => {},
+      ),
+      /does not match/,
+    );
+    await assert.rejects(
+      custodyTransaction(
+        "https://testnet-api.outlayer.ai",
+        "private-token",
+        { result: { tx_hash: "1".repeat(44), never_submitted: true } },
+        async () => {},
+      ),
+      /never reached chain/,
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("transient status-read failure is retried without submitting the call again", async () => {
+  const original = globalThis.fetch;
+  const id = "12345678-1234-1234-1234-123456789abc";
+  let reads = 0;
+  globalThis.fetch = async (url, options) => {
+    assert.ok(String(url).endsWith(`/requests/${id}`));
+    assert.equal(options?.method, undefined);
+    reads++;
+    if (reads === 1) return new Response("unavailable", { status: 503 });
+    return Response.json({
+      request_id: id,
+      type: "call",
+      status: "processing",
+      result: { tx_hash: "1".repeat(44) },
+    });
+  };
+  try {
+    assert.equal(
+      await custodyTransaction(
+        "https://testnet-api.outlayer.ai",
+        "private-token",
+        { request_id: id, status: "processing" },
+        async () => {},
+      ),
+      "1".repeat(44),
+    );
+    assert.equal(reads, 2);
   } finally {
     globalThis.fetch = original;
   }

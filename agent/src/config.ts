@@ -15,6 +15,7 @@ export interface Config {
   custodyKey?: string;
   account?: string;
   key?: string;
+  demoSession?: string;
 }
 export function loadConfig(selected?: Actor): Config {
   let file: Record<string, string | undefined> = {};
@@ -62,5 +63,6 @@ export function loadConfig(selected?: Actor): Config {
     custodyKey: actor === "buyer" ? get("PROVEN_BUYER_CUSTODY_KEY") : undefined,
     account,
     key: actor === "buyer" ? undefined : get(`${prefix}_PRIVATE_KEY`),
+    demoSession: process.env.PROVEN_DEMO_SESSION,
   };
 }

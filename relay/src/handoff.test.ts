@@ -95,6 +95,102 @@ function publicOnly(reply: HandoffReply) {
   }
 }
 
+test("operator sponsorship binds incoming sessions before pinning or spending", async () => {
+  const f = await fixture();
+  let triggers = 0;
+  try {
+    const original = f.job;
+    f.deps.getJob = async (id) => ({
+      ...original,
+      buyer: "buyer.testnet",
+      worker: id === 1 ? "honest.testnet" : "fake.testnet",
+      amount: "10000000000000000000000",
+      token: null,
+    });
+    f.deps.demoCompute = {
+      buyer: "buyer.testnet",
+      workers: ["honest.testnet", "fake.testnet"],
+      specHash: sha256Hex(check),
+      referenceHash: sha256Hex(reference),
+      verifierHash: verifier,
+      trigger: async () => {
+        triggers++;
+        return "1".repeat(44);
+      },
+    };
+    const handle = await createHandoffHandler(f.deps, f.directory);
+    const status = await handle({ action: "demo_status" });
+    assert.ok(status.ok);
+    const session = status.result.session_id;
+    assert.equal(
+      (
+        await handle({
+          action: "register_demo",
+          job_ids: [1, 2],
+          session_id: "old-session",
+        })
+      ).ok,
+      false,
+    );
+    assert.equal(
+      (
+        await handle({
+          action: "register_demo",
+          job_ids: [1, 2],
+          session_id: session,
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (await handle({ ...challenge(), session_id: "old-session" })).ok,
+      false,
+    );
+    assert.equal(f.stores.length, 0);
+    assert.equal(
+      (await handle({ ...challenge(), session_id: session })).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await handle({
+          action: "trigger",
+          job_id: 1,
+          kind: "Challenge",
+          session_id: "old-session",
+        })
+      ).ok,
+      false,
+    );
+    assert.equal(triggers, 0);
+    assert.equal(
+      (
+        await handle({
+          action: "trigger",
+          job_id: 1,
+          kind: "Challenge",
+          session_id: session,
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await handle({
+          action: "trigger",
+          job_id: 1,
+          kind: "Challenge",
+          session_id: session,
+        })
+      ).ok,
+      false,
+    );
+    assert.equal(triggers, 1);
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test("challenge pins only hash-matched private inputs and writes owner-only local state", async () => {
   const f = await fixture();
   try {
@@ -418,6 +514,35 @@ test("Unix framing rejects malformed, invalid UTF-8, oversized, and multiple req
     assert.equal(f.stores.length, 0);
   } finally {
     if (server) await close(server);
+    await f.cleanup();
+  }
+});
+
+test("suspended operator refuses every queued signing action while public status remains readable", async () => {
+  const f = await fixture();
+  try {
+    let suspended = false;
+    f.deps.isSigningSuspended = () => suspended;
+    const handle = await createHandoffHandler(f.deps, f.directory);
+    suspended = true;
+    const pin = await handle({
+      action: "challenge",
+      job_id: 1,
+      check,
+      reference,
+    });
+    assert.equal(pin.ok, false);
+    assert.equal(f.stores.length, 0);
+    f.job.challenge_request_id = "1";
+    const cleanup = await handle({
+      action: "cleanup",
+      job_id: 1,
+      kind: "Challenge",
+    });
+    assert.equal(cleanup.ok, false);
+    assert.equal(f.deletions.length, 0);
+    assert.equal((await handle({ action: "demo_status" })).ok, true);
+  } finally {
     await f.cleanup();
   }
 });

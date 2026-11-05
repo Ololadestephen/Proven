@@ -1,7 +1,16 @@
 // Private local transport only. The relay pins texts; it cannot decide a verdict.
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  open,
+  rename,
+  unlink,
+  readFile,
+} from "node:fs/promises";
+import { createDemoSponsor, type DemoCompute } from "./demo-sponsor.ts";
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
@@ -27,7 +36,13 @@ type HandoffJob = Pick<
   | "deliverable_hash"
   | "challenge_request_id"
   | "verdict_request_id"
-> & { run_started_at?: string | null };
+> & {
+  run_started_at?: string | null;
+  buyer?: string;
+  worker?: string;
+  token?: string | null;
+  amount?: string;
+};
 
 export interface HandoffDependencies {
   accountId: string;
@@ -39,6 +54,8 @@ export interface HandoffDependencies {
     variables: Record<string, string>,
   ): Promise<{ transactionHash: string; ciphertextBytes: number }>;
   deleteSecret(verifierHash: string, profile: string): Promise<string>;
+  demoCompute?: DemoCompute;
+  isSigningSuspended?: () => boolean;
 }
 
 type Request =
@@ -46,6 +63,7 @@ type Request =
   | { action: "deliver"; job_id: number; deliverable: string }
   | { action: "pin_verification"; job_id: number }
   | { action: "cleanup"; job_id: number; kind: RunKind };
+type DemoRequest = { action: "trigger"; job_id: number; kind: RunKind };
 export type HandoffReply =
   { ok: true; result: Record<string, unknown> } | { ok: false; error: string };
 const refused = (): HandoffReply => ({ ok: false, error: FAILURE });
@@ -57,7 +75,7 @@ function requireSafe(condition: unknown): asserts condition {
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function parseRequest(value: unknown): Request {
+function parseRequest(value: unknown): Request | DemoRequest {
   requireSafe(
     object(value) &&
       Number.isSafeInteger(value.job_id) &&
@@ -68,6 +86,7 @@ function parseRequest(value: unknown): Request {
     deliver: ["action", "job_id", "deliverable"],
     pin_verification: ["action", "job_id"],
     cleanup: ["action", "job_id", "kind"],
+    trigger: ["action", "job_id", "kind"],
   };
   requireSafe(
     typeof value.action === "string" && Object.hasOwn(fields, value.action),
@@ -83,10 +102,10 @@ function parseRequest(value: unknown): Request {
     );
   if (value.action === "deliver")
     requireSafe(typeof value.deliverable === "string");
-  if (value.action === "cleanup")
+  if (value.action === "cleanup" || value.action === "trigger")
     requireSafe(value.kind === "Challenge" || value.kind === "Verify");
   requireSafe(Buffer.byteLength(JSON.stringify(value)) <= MAX_HANDOFF_BYTES);
-  return value as Request;
+  return value as Request | DemoRequest;
 }
 
 /** Every path component is checked before traversal; the final directory is owner-only. */
@@ -201,10 +220,36 @@ export async function createHandoffHandler(
   const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
   await privateDirectory(records);
   const queues = new Map<number, Promise<unknown>>();
+  const pinned = new Set<string>();
+  let walletQueue = Promise.resolve<unknown>(undefined);
+  function wallet<T>(action: () => Promise<T>): Promise<T> {
+    const next = walletQueue
+      .catch(() => undefined)
+      .then(() => {
+        requireSafe(!deps.isSigningSuspended?.());
+        return action();
+      });
+    walletQueue = next;
+    return next;
+  }
+  const sponsor = createDemoSponsor(
+    deps.demoCompute,
+    deps.accountId,
+    deps.getJob,
+    wallet,
+    (record) =>
+      writePrivate(
+        join(directory, `demo-sponsor-${record.session_id}.json`),
+        JSON.stringify(record),
+      ),
+  );
   const path = (jobId: number, kind: "check" | "deliverable") =>
     join(records, `${jobId}.${kind}.json`);
 
-  async function perform(request: Request): Promise<Record<string, unknown>> {
+  async function perform(
+    request: Request | DemoRequest,
+    session?: string,
+  ): Promise<Record<string, unknown>> {
     const job = await deps.getJob(request.job_id);
     requireSafe(
       job &&
@@ -213,6 +258,11 @@ export async function createHandoffHandler(
         isHash(job.fakes_hash) &&
         isHash(job.verifier_hash),
     );
+    if (request.action === "trigger") {
+      return sponsor.trigger(request.job_id, request.kind, session ?? "", () =>
+        pinned.has(`${request.job_id}:${request.kind}`),
+      );
+    }
     if (request.action === "deliver") {
       requireSafe(
         ["Delivered", "Verifying"].includes(job.state) &&
@@ -240,7 +290,16 @@ export async function createHandoffHandler(
       );
       if (request.kind === "Verify") requireSafe(isHash(job.deliverable_hash));
       const name = profile(job, request.job_id, request.kind);
-      const transactionHash = await deps.deleteSecret(job.verifier_hash, name);
+      const transactionHash = await wallet(async () => {
+        const fresh = await deps.getJob(request.job_id);
+        requireSafe(
+          fresh &&
+            !["Challenging", "Verifying"].includes(fresh.state) &&
+            fresh.run_started_at == null,
+        );
+        return deps.deleteSecret(job.verifier_hash, name);
+      });
+      pinned.delete(`${request.job_id}:${request.kind}`);
       if (terminal) {
         for (const kind of ["check", "deliverable"] as const) {
           const file = path(request.job_id, kind);
@@ -272,10 +331,21 @@ export async function createHandoffHandler(
       request.job_id,
       challenge ? "Challenge" : "Verify",
     );
-    const stored = await deps.storeSecret(job.verifier_hash, name, {
-      PROVEN_CHECK: check,
-      [challenge ? "PROVEN_REFERENCE" : "PROVEN_DELIVERABLE"]: other,
+    const stored = await wallet(async () => {
+      const fresh = await deps.getJob(request.job_id);
+      requireSafe(
+        fresh &&
+          (challenge
+            ? ["Draft", "Challenging"]
+            : ["Delivered", "Verifying"]
+          ).includes(fresh.state),
+      );
+      return deps.storeSecret(job.verifier_hash, name, {
+        PROVEN_CHECK: check,
+        [challenge ? "PROVEN_REFERENCE" : "PROVEN_DELIVERABLE"]: other,
+      });
     });
+    pinned.add(`${request.job_id}:${challenge ? "Challenge" : "Verify"}`);
     return {
       profile: name,
       transaction_hash: stored.transactionHash,
@@ -286,16 +356,46 @@ export async function createHandoffHandler(
   }
 
   return async (value) => {
-    let request: Request;
+    if (
+      object(value) &&
+      value.action === "demo_status" &&
+      Object.keys(value).length === 1
+    )
+      return { ok: true, result: { ...sponsor.status(), escrow: deps.escrow } };
+    let session: string | undefined;
+    if (deps.demoCompute) {
+      if (!object(value) || value.session_id !== sponsor.status().session_id)
+        return refused();
+      session = value.session_id as string;
+      const { session_id: _session, ...payload } = value;
+      value = payload;
+    }
+    if (
+      object(value) &&
+      value.action === "register_demo" &&
+      Object.keys(value).length === 2 &&
+      "job_ids" in value
+    ) {
+      try {
+        await sponsor.register(value.job_ids, session ?? "");
+        return { ok: true, result: sponsor.status() };
+      } catch {
+        return refused();
+      }
+    }
+    let request: Request | DemoRequest;
     try {
       request = parseRequest(value);
+      requireSafe(
+        !deps.demoCompute || sponsor.status().jobs.includes(request.job_id),
+      );
     } catch {
       return refused();
     }
     const previous = queues.get(request.job_id) ?? Promise.resolve();
     const pending = previous
       .catch(() => undefined)
-      .then(() => perform(request));
+      .then(() => perform(request, session));
     queues.set(request.job_id, pending);
     try {
       return { ok: true, result: await pending };
@@ -401,6 +501,10 @@ export async function startHandoffServer(
 }
 
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  requireSafe(
+    args.length === 0 || (args.length === 1 && args[0] === "--demo-compute"),
+  );
   const [{ loadConfig }, near, secret] = await Promise.all([
     import("./config.ts"),
     import("./near.ts"),
@@ -420,14 +524,59 @@ async function main(): Promise<void> {
   )
     throw new Refused();
   const account = near.relayAccount(config);
+  let demoCompute: HandoffDependencies["demoCompute"];
+  let signingSuspended = false;
+  async function signing<T>(call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (error) {
+      signingSuspended = true;
+      throw error;
+    }
+  }
+  if (args[0] === "--demo-compute") {
+    const buyer = process.env.PROVEN_BUYER_ACCOUNT_ID;
+    const workers = [
+      process.env.PROVEN_HONEST_ACCOUNT_ID,
+      process.env.PROVEN_FAKE_ACCOUNT_ID,
+    ];
+    requireSafe(
+      buyer && workers.every((id) => id && /^[a-z0-9._-]{2,64}$/.test(id)),
+    );
+    const balance = await account.provider.viewAccount({
+      accountId: account.accountId,
+      blockQuery: { finality: "final" },
+    });
+    requireSafe(balance.amount >= 500000000000000000000000n);
+    const example = fileURLToPath(
+      new URL("../../examples/data-job/", import.meta.url),
+    );
+    const check = await readFile(join(example, "check-strong.json"), "utf8");
+    const reference = await readFile(join(example, "reference.json"), "utf8");
+    const parsed: unknown = JSON.parse(check);
+    requireSafe(object(parsed) && isHash(parsed.verifier));
+    demoCompute = {
+      buyer,
+      workers: workers as string[],
+      specHash: sha256Hex(check),
+      referenceHash: sha256Hex(reference),
+      verifierHash: parsed.verifier,
+      trigger: (id, kind, beforeBroadcast) =>
+        near.submitDemoRun(account, config, id, kind, beforeBroadcast, () => {
+          signingSuspended = true;
+        }),
+    };
+  }
   await startHandoffServer({
     accountId: account.accountId,
     escrow: config.escrowContract,
     getJob: (jobId) => near.getJob(account, config, jobId),
     storeSecret: (hash, name, variables) =>
-      secret.storeSecret(account, config, hash, name, variables),
+      signing(() => secret.storeSecret(account, config, hash, name, variables)),
     deleteSecret: (hash, name) =>
-      secret.deleteSecret(account, config, hash, name),
+      signing(() => secret.deleteSecret(account, config, hash, name)),
+    demoCompute,
+    isSigningSuspended: () => signingSuspended,
   });
 }
 

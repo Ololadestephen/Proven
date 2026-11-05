@@ -39,6 +39,7 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
         amount_near: string,
         deadline_seconds: { type: "integer", minimum: 600 },
         verdict_window_secs: { type: "integer", minimum: 1800 },
+        storage_deposit_near: string,
       },
       ["worker", "check", "reference", "amount_near"],
     ],
@@ -250,8 +251,12 @@ export function createService(runtime: Runtime) {
           ),
           verifier_hash: cfg.verifier_hash,
         },
-        "50000000000000000000000",
+        args.storage_deposit_near === undefined
+          ? "50000000000000000000000"
+          : yocto(text(args, "storage_deposit_near", 30)),
       );
+      if (BigInt(call.deposit) > 50000000000000000000000n)
+        throw new PublicError("Job storage deposit cannot exceed 0.05 NEAR.");
       return submit(call, dry);
     }
     const jobId = integer(args, "job_id", 0, Number.MAX_SAFE_INTEGER);

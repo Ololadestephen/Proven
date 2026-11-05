@@ -75,6 +75,21 @@ export async function transactionResult(
   return { transaction_hash: tx, pending: true };
 }
 
+/** Follow a known transaction only. A timeout remains pending and never rebroadcasts. */
+export async function waitTransactionResult(
+  provider: JsonRpcProvider,
+  tx: string,
+  account: string,
+  wait = () => new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+): Promise<CallResult> {
+  for (let read = 0; read < 45; read++) {
+    const result = await transactionResult(provider, tx, account);
+    if (!result.pending) return result;
+    if (read < 44) await wait();
+  }
+  return { transaction_hash: tx, pending: true };
+}
+
 export function createRuntime(config: Config): Runtime {
   const provider = new JsonRpcProvider({ url: config.rpc });
   return {
@@ -107,7 +122,7 @@ export function createRuntime(config: Config): Runtime {
           config.escrow,
           plan,
         );
-        return transactionResult(provider, tx, config.account);
+        return waitTransactionResult(provider, tx, config.account);
       }
       const worker = await scopedWorker(
         config,
@@ -134,6 +149,10 @@ export function createRuntime(config: Config): Runtime {
         worker.accountId,
       );
     },
-    handoff: (request) => handoff(config.socket, request),
+    handoff: (request) =>
+      handoff(config.socket, {
+        ...request,
+        ...(config.demoSession ? { session_id: config.demoSession } : {}),
+      }),
   };
 }

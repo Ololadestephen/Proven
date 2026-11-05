@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { KeyPair, type JsonRpcProvider } from "near-api-js";
-import { scopedWorker } from "./near.ts";
+import { scopedWorker, waitTransactionResult } from "./near.ts";
 import type { Config } from "./config.ts";
 
 test("worker signer refuses full-access, other targets, unrestricted methods and deposits", async () => {
@@ -45,4 +45,66 @@ test("worker signer refuses full-access, other targets, unrestricted methods and
   } as unknown as JsonRpcProvider;
   await assert.rejects(scopedWorker(config, provider, "deliver", "1"));
   await assert.doesNotReject(scopedWorker(config, provider, "deliver", "0"));
+});
+
+test("known custody transaction is followed with reads until its actual outcome", async () => {
+  let reads = 0;
+  const provider = {
+    viewTransactionStatus: async (input: {
+      txHash: string;
+      accountId: string;
+    }) => {
+      assert.deepEqual(
+        [input.txHash, input.accountId],
+        ["known-hash", "buyer.testnet"],
+      );
+      reads++;
+      return reads === 1
+        ? { status: "Started" }
+        : { status: { SuccessValue: Buffer.from("42").toString("base64") } };
+    },
+  } as unknown as JsonRpcProvider;
+  const result = await waitTransactionResult(
+    provider,
+    "known-hash",
+    "buyer.testnet",
+    async () => {},
+  );
+  assert.equal(result.result, 42);
+  assert.equal(reads, 2);
+});
+
+test("failed and unresolved transaction reads never cause a write retry", async () => {
+  const failed = {
+    viewTransactionStatus: async () => ({
+      status: { Failure: { error: "onchain" } },
+    }),
+  } as unknown as JsonRpcProvider;
+  assert.equal(
+    (
+      await waitTransactionResult(
+        failed,
+        "known",
+        "buyer.testnet",
+        async () => {},
+      )
+    ).failed,
+    true,
+  );
+  let reads = 0;
+  const pending = {
+    viewTransactionStatus: async () => {
+      reads++;
+      throw new Error("not ready");
+    },
+  } as unknown as JsonRpcProvider;
+  const result = await waitTransactionResult(
+    pending,
+    "known",
+    "buyer.testnet",
+    async () => {},
+  );
+  assert.equal(reads, 45);
+  assert.equal(result.pending, true);
+  assert.equal(result.transaction_hash, "known");
 });

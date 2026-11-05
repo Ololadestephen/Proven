@@ -247,3 +247,29 @@ test("settlement follows only the stored verdict or bounded expiry, never a call
     f.run("release_or_refund", { job_id: 1, payee: "attacker.testnet" }),
   );
 });
+
+test("explicit storage deposit reduces attachment without widening the custody cap", async () => {
+  const f = fixture("Draft");
+  const args = {
+    worker: "honest.testnet",
+    check,
+    reference,
+    amount_near: "0.01",
+  };
+  const custom = (await f.run(
+    "post_job",
+    { ...args, storage_deposit_near: "0.02" },
+    true,
+  )) as { call: CallPlan };
+  assert.equal(custom.call.deposit, "20000000000000000000000");
+  const defaults = (await f.run("post_job", args, true)) as { call: CallPlan };
+  assert.equal(defaults.call.deposit, "50000000000000000000000");
+  await assert.rejects(
+    f.run(
+      "post_job",
+      { ...args, storage_deposit_near: "0.050000000000000000000001" },
+      true,
+    ),
+  );
+  assert.equal(f.calls.length, 0);
+});

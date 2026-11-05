@@ -64,12 +64,86 @@ export async function custodyRead(
   const response = await fetch(`${api}${path}`, {
     headers: { authorization: `Bearer ${key}` },
     signal: AbortSignal.timeout(30000),
+    redirect: "error",
   });
   if (!response.ok)
     throw new PublicError(
       "Could not read the testnet custody wallet. Check its credential and policy.",
     );
   return response.json();
+}
+
+interface CustodyResponse {
+  request_id?: string;
+  type?: string;
+  status?: string;
+  tx_hash?: string;
+  result?: {
+    tx_hash?: string;
+    never_reached_chain?: boolean;
+    never_submitted?: boolean;
+    never_executed?: boolean;
+  };
+}
+const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 1000));
+
+/** Read the one submitted request; never submit it again, even when polling fails. */
+export async function custodyTransaction(
+  api: string,
+  key: string,
+  initial: CustodyResponse,
+  wait = pause,
+): Promise<string> {
+  let body = initial;
+  const id = initial.request_id;
+  for (let read = 0; read <= 30; read++) {
+    if (
+      body.result?.never_reached_chain ||
+      body.result?.never_executed ||
+      body.result?.never_submitted
+    )
+      throw new PublicError(
+        "Custody reports that this request never reached chain. Inspect its history before submitting a new request.",
+      );
+    const tx = body.tx_hash ?? body.result?.tx_hash;
+    if (typeof tx === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(tx))
+      return tx;
+    if (
+      ["pending_approval", "rejected", "cancelled", "needs_review"].includes(
+        body.status ?? "",
+      )
+    )
+      throw new PublicError(
+        "Custody requires owner review. No automatic retry was made.",
+      );
+    if (body.status === "failed" || body.status === "refunded")
+      throw new PublicError(
+        "Custody request ended without an admitted transaction hash. Reconcile its history; no automatic retry was made.",
+      );
+    if (!id || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(id))
+      break;
+    if (read === 30) break;
+    await wait();
+    let response: CustodyResponse;
+    try {
+      response = (await custodyRead(
+        api,
+        key,
+        `/wallet/v1/requests/${id}`,
+      )) as CustodyResponse;
+    } catch {
+      // Only repeat a status read. A transient read failure says nothing about admission.
+      continue;
+    }
+    if (response?.request_id !== id || response.type !== "call")
+      throw new PublicError(
+        "Custody status response does not match the submitted call. No automatic retry was made.",
+      );
+    body = response;
+  }
+  throw new PublicError(
+    `Custody did not return a transaction hash${id && /^[a-f0-9-]{36}$/i.test(id) ? ` for request ${id}` : ""}. Check wallet history before retrying; no automatic retry was made.`,
+  );
 }
 
 export async function custodyCall(
@@ -109,32 +183,21 @@ export async function custodyCall(
     },
     body: JSON.stringify(plan),
     signal: AbortSignal.timeout(180000),
+    redirect: "error",
   }).catch(() => {
     throw new PublicError(
       "Custody submission outcome is unknown. Inspect wallet history before retrying; no automatic retry was made.",
     );
   });
-  let body: {
-    tx_hash?: string;
-    status?: string;
-    result?: { tx_hash?: string; never_reached_chain?: boolean };
-  } = {};
+  let body: CustodyResponse = {};
   try {
     body = (await response.json()) as typeof body;
   } catch {
     /* Never print an upstream body. */
   }
-  const tx = body.tx_hash ?? body.result?.tx_hash;
-  if (body.result?.never_reached_chain === true)
+  if (!response.ok)
     throw new PublicError(
-      "Custody reports that this request never reached chain. Inspect its history before submitting a new request.",
+      "Custody refused the submitted call. Check its history; no automatic retry was made.",
     );
-  if (tx && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(tx)) return tx;
-  if (body.status === "pending_approval")
-    throw new PublicError(
-      "Custody requires owner approval. No automatic retry was made.",
-    );
-  throw new PublicError(
-    "Custody did not return a transaction hash. Check wallet history before retrying; no automatic retry was made.",
-  );
+  return custodyTransaction(api, key, body);
 }

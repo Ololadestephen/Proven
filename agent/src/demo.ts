@@ -1,25 +1,44 @@
 // Scripted agents using exactly the public CLI. Private inputs travel through stdin, never argv.
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  unlinkSync,
+  lstatSync,
+} from "node:fs";
+import { basename, dirname } from "node:path";
+import { randomUUID, createHash } from "node:crypto";
 import { JsonRpcProvider } from "near-api-js";
 import { ROOT, loadConfig } from "./config.ts";
 import { PublicError, publicMessage } from "./errors.ts";
-import type { Actor, Job } from "./types.ts";
+import type { Actor } from "./types.ts";
+import { runDemo, type DemoEvidence, type Outcome } from "./demo-runner.ts";
+import {
+  createOperatorDemoTools,
+  type OperatorStatus,
+} from "./demo-operator.ts";
+import { handoff } from "./handoff.ts";
+import { waitTransactionResult } from "./near.ts";
+import { nativePayoutProof } from "./payout-proof.ts";
+import { assertPolicy, custodyRead } from "./custody.ts";
 
-interface Outcome {
-  transaction_hash?: string;
-  result?: unknown;
-  failed?: boolean;
-  pending?: boolean;
-  private_handoff?: unknown;
-  job?: Job;
+function parseLocalJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new PublicError("Invalid local JSON. No transaction was sent.");
+  }
 }
+
 async function tool(
   actor: Actor,
   name: string,
   args: Record<string, unknown>,
   dry = false,
+  session?: string,
 ): Promise<Outcome> {
   return new Promise((resolve, reject) => {
     const cli = spawn(
@@ -31,7 +50,13 @@ async function tool(
         actor,
         ...(dry ? ["--dry-run"] : []),
       ],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          ...(session ? { PROVEN_DEMO_SESSION: session } : {}),
+        },
+      },
     );
     let output = "";
     const timer = setTimeout(() => {
@@ -71,36 +96,120 @@ async function tool(
 }
 
 async function main() {
-  const cliArgs = process.argv.slice(2);
+  const invocationStartedAt = new Date().toISOString();
+  const rawArgs = process.argv.slice(2);
+  const operator = rawArgs.includes("--operator-compute");
+  const cliArgs = rawArgs.filter((arg) => arg !== "--operator-compute");
+  if (rawArgs.filter((arg) => arg === "--operator-compute").length > 1)
+    throw new PublicError("Duplicate operator mode flag.");
   const dry = cliArgs.includes("--dry-run");
   const resume = cliArgs[0] === "--resume" ? cliArgs[1] : undefined;
   if (!(
     cliArgs.length === 0 ||
     (cliArgs.length === 1 && dry) ||
     (cliArgs.length === 2 &&
-      resume?.startsWith(`${ROOT}runs/p4-demo-`) &&
-      resume.endsWith(".json"))
+      resume &&
+      dirname(resume) === `${ROOT}runs` &&
+      /^p[46]-demo-[a-f0-9-]{36}\.json$/.test(basename(resume)))
   ))
     throw new PublicError(
-      "Usage: npm run demo -- [--dry-run | --resume <evidence-file>]",
+      "Usage: npm run demo -- [--operator-compute] [--dry-run | --resume <evidence-file>]",
     );
+  const evidence: DemoEvidence = resume
+    ? (parseLocalJson(readFileSync(resume, "utf8")) as DemoEvidence)
+    : {
+        scripted: true,
+        dry_run: dry,
+        cases: [],
+        started_at: invocationStartedAt,
+      };
+  if (resume && evidence.dry_run)
+    throw new PublicError("Cannot resume dry-run evidence as a live run.");
+  if (!evidence || evidence.scripted !== true || !Array.isArray(evidence.cases))
+    throw new PublicError("Invalid demo evidence. No transaction was sent.");
+  if (
+    resume &&
+    evidence.cases.some((entry) => entry.post_started && !entry.post)
+  )
+    throw new PublicError(
+      "Job creation has an unknown prior outcome. Reconcile custody history and record its id before resuming.",
+    );
+  if (
+    resume &&
+    (evidence.compute_mode ?? "custody") !== (operator ? "operator" : "custody")
+  )
+    throw new PublicError("Resume must preserve the saved compute payer mode.");
+  evidence.compute_mode = operator ? "operator" : "custody";
+  let sponsor: OperatorStatus | undefined;
   const base = `${ROOT}examples/data-job/`;
   const check = readFileSync(`${base}check-strong.json`, "utf8");
   const reference = readFileSync(`${base}reference.json`, "utf8");
+  const build = parseLocalJson(check) as { verifier?: unknown };
   const config = loadConfig("buyer");
   const provider = new JsonRpcProvider({ url: config.rpc });
-  const evidence: {
-    scripted: boolean;
-    dry_run: boolean;
-    cases: Array<Record<string, unknown>>;
-    completed?: string;
-  } = resume
-    ? JSON.parse(readFileSync(resume, "utf8"))
-    : { scripted: true, dry_run: dry, cases: [] };
-  if (resume && evidence.dry_run)
-    throw new PublicError("Cannot resume dry-run evidence as a live run.");
+  if (!dry) {
+    if (!config.account || !config.custodyKey)
+      throw new PublicError("Restricted custody buyer is not configured.");
+    assertPolicy(
+      await custodyRead(
+        config.custodyApi,
+        config.custodyKey,
+        "/wallet/v1/policy",
+      ),
+      config.escrow,
+    );
+    const socket = lstatSync(config.socket, { throwIfNoEntry: false });
+    if (
+      !socket?.isSocket() ||
+      (socket.mode & 0o077) !== 0 ||
+      socket.uid !== process.getuid?.()
+    )
+      throw new PublicError(
+        "Start the private relay handoff before running the demo.",
+      );
+    if (operator) {
+      sponsor = (await handoff(config.socket, {
+        action: "demo_status",
+      })) as OperatorStatus;
+      const hash = (value: string) =>
+        createHash("sha256").update(value).digest("hex");
+      const workers = [
+        loadConfig("honest").account,
+        loadConfig("fake").account,
+      ];
+      if (
+        !sponsor?.enabled ||
+        sponsor.escrow !== config.escrow ||
+        sponsor.buyer !== config.account ||
+        JSON.stringify(sponsor.workers) !== JSON.stringify(workers) ||
+        sponsor.spec_hash !== hash(check) ||
+        sponsor.reference_hash !== hash(reference) ||
+        sponsor.verifier_hash !== build.verifier ||
+        (!resume && (sponsor.remaining !== 4 || sponsor.jobs.length !== 0)) ||
+        (evidence.operator_session &&
+          evidence.operator_session !== sponsor.session_id)
+      )
+        throw new PublicError(
+          "Start the matching one-run private relay with --demo-compute before creating jobs; reconcile any changed session.",
+        );
+      evidence.operator_session = sponsor.session_id;
+    }
+    if (!resume) {
+      const wallet = await provider.viewAccount({
+        accountId: config.account,
+        blockQuery: { finality: "final" },
+      });
+      if (
+        wallet.amount <
+        (operator ? 150000000000000000000000n : 300000000000000000000000n)
+      )
+        throw new PublicError(
+          "Fresh demo has insufficient testnet NEAR for this mode's transient reserves (0.15 operator-sponsored, 0.3 custody compute). No job was created or funded.",
+        );
+    }
+  }
   mkdirSync(`${ROOT}runs`, { recursive: true });
-  const file = resume ?? `${ROOT}runs/p4-demo-${randomUUID()}.json`;
+  const file = resume ?? `${ROOT}runs/p6-demo-${randomUUID()}.json`;
   const save = () =>
     writeFileSync(file, JSON.stringify(evidence, null, 2) + "\n", {
       mode: 0o600,
@@ -112,143 +221,71 @@ async function main() {
         blockQuery: { finality: "final" },
       })
     ).amount;
-  for (const worker of ["honest", "fake"] as const) {
-    const identity = loadConfig(worker).account;
-    if (!identity)
-      throw new PublicError(
-        "Run the owner-approved testnet setup before the scripted demo.",
-      );
-    let entry = evidence.cases.find((c) => c.worker === worker);
-    if (!entry) {
-      entry = { worker, worker_account: identity };
-      evidence.cases.push(entry);
-    }
-    save();
-    if (!entry.post) {
-      if (entry.post_started)
-        throw new PublicError(
-          "Job creation has an unknown prior outcome. Reconcile custody history and record its id before resuming.",
-        );
-      entry.post_started = true;
-      save();
-      entry.post = await tool(
-        "buyer",
-        "post_job",
-        {
-          worker: identity,
-          check,
-          reference,
-          amount_near: "0.01",
-          deadline_seconds: 3600,
-          verdict_window_secs: 1800,
-        },
-        dry,
-      );
-    }
-    save();
-    if (dry) continue;
-    const created = entry.post as Outcome;
-    if (
-      created.failed ||
-      created.pending ||
-      !Number.isSafeInteger(created.result)
-    )
-      throw new PublicError(
-        "Job creation has no confirmed id. Inspect custody history before retrying.",
-      );
-    const jobId = created.result as number;
-    entry.job_id = jobId;
-    save();
-    console.error(`Scripted ${worker} case: job ${jobId}`);
-    let observed = (await tool("buyer", "job_status", {
-      job_id: jobId,
-    })) as unknown as Job;
-    if (observed.state === "Draft") {
-      entry.challenge = await tool("buyer", "challenge_check", {
-        job_id: jobId,
+  const lockPath = `${ROOT}runs/demo.lock`;
+  let lock: number;
+  try {
+    lock = openSync(lockPath, "wx", 0o600);
+  } catch {
+    throw new PublicError(
+      "Another demo or an unresolved prior run holds runs/demo.lock. Reconcile its evidence before removing the lock.",
+    );
+  }
+  try {
+    if (resume) evidence.resumed = true;
+    const operatorTools = sponsor
+      ? createOperatorDemoTools(
+          (actor, name, args, dry) =>
+            tool(actor, name, args, dry, evidence.operator_session),
+          (value) => handoff(config.socket, value),
+          evidence,
+          sponsor,
+          save,
+          (hash, payer) => waitTransactionResult(provider, hash, payer),
+        )
+      : undefined;
+    await runDemo({
+      evidence,
+      scenario: {
+        parallel: operator,
+        buyer: config.account!,
         check,
         reference,
-      });
-      save();
-    }
-    observed = (await tool("buyer", "job_status", {
-      job_id: jobId,
-    })) as unknown as Job;
-    if (observed.state === "Challenged") {
-      entry.fund = await tool("buyer", "fund_job", { job_id: jobId });
-      save();
-    }
-    const funded = await tool("buyer", "job_status", { job_id: jobId });
-    if (
-      (funded as unknown as Job).state === "Funded" ||
-      ((funded as unknown as Job).state === "Delivered" && !entry.delivery)
-    ) {
-      entry.delivery = await tool(worker, "deliver", {
-        job_id: jobId,
-        deliverable: readFileSync(`${base}deliverable-${worker}.json`, "utf8"),
-      });
-      save();
-    }
-    if ((entry.delivery as Outcome | undefined)?.private_handoff === false)
-      throw new PublicError(
-        "Delivery was committed but private handoff needs retry with identical bytes.",
-      );
-    observed = (await tool("buyer", "job_status", {
-      job_id: jobId,
-    })) as unknown as Job;
-    if (observed.state === "Delivered") {
-      entry.verification = await tool("buyer", "request_verification", {
-        job_id: jobId,
-      });
-      save();
-    }
-    observed = (await tool("buyer", "job_status", {
-      job_id: jobId,
-    })) as unknown as Job;
-    if (["Released", "Refunded"].includes(observed.state)) {
-      if (
-        observed.state !== (worker === "honest" ? "Released" : "Refunded") ||
-        !(entry.payout as Outcome | undefined)?.transaction_hash ||
-        typeof entry.balance_change !== "string" ||
-        BigInt(entry.balance_change) < 10000000000000000000000n
-      )
-        throw new PublicError(
-          "Terminal job needs the expected outcome and recorded payout evidence before completion. Reconcile receipts before resuming.",
-        );
-      entry.final = observed;
-      save();
-      continue;
-    }
-    const expected = worker === "honest" ? "Passed" : "Failed";
-    if (observed.state !== expected)
-      throw new PublicError(
-        "Verification did not reach the expected real verdict.",
-      );
-    const receiver = worker === "honest" ? identity : config.account!;
-    const before = await near(receiver);
-    entry.payout = await tool("fake", "release_or_refund", { job_id: jobId });
-    save();
-    const after = await near(receiver);
-    entry.receiver = receiver;
-    entry.balance_before = before.toString();
-    entry.balance_after = after.toString();
-    entry.balance_change = (after - before).toString();
-    entry.final = await tool("buyer", "job_status", { job_id: jobId });
-    save();
-    if (
-      (entry.final as unknown as Job).state !==
-      (worker === "honest" ? "Released" : "Refunded")
-    )
-      throw new PublicError("Payout did not settle.");
-    if (after - before < 10000000000000000000000n)
-      throw new PublicError(
-        "Receiver balance did not include the job payment. Inspect receipts.",
-      );
-    console.error(`Job ${jobId}: ${(entry.final as unknown as Job).state}`);
+        account(worker) {
+          const identity = loadConfig(worker).account;
+          if (!identity)
+            throw new PublicError(
+              "Run the owner-approved testnet setup before the scripted demo.",
+            );
+          return identity;
+        },
+        delivery: (worker) =>
+          readFileSync(`${base}deliverable-${worker}.json`, "utf8"),
+      },
+      io: {
+        tool: operatorTools?.tool ?? tool,
+        begin: operatorTools?.begin,
+        finish: operatorTools?.finish,
+        provePayout: (id, hash, receiver, amount) =>
+          nativePayoutProof(
+            provider,
+            id,
+            hash,
+            loadConfig("fake").account!,
+            config.escrow,
+            receiver,
+            amount,
+          ),
+        balance: near,
+        save,
+        event: (text) => console.error(text),
+        now: Date.now,
+      },
+    });
+    console.log(JSON.stringify({ ...evidence, evidence_file: file }, null, 2));
+  } finally {
+    closeSync(lock);
+    unlinkSync(lockPath);
   }
-  evidence.completed = new Date().toISOString();
-  save();
-  console.log(JSON.stringify({ ...evidence, evidence_file: file }, null, 2));
 }
 if (import.meta.main)
   main().catch((error) => {

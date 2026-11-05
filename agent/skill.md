@@ -10,7 +10,7 @@ Before live operations, the operator starts `cd relay && npm run handoff` in ano
 
 | Tool | Required arguments | Behavior |
 |---|---|---|
-| `post_job` | `worker`, `check`, `reference`, `amount_near` | Fixes check/reference hashes and expected verifier build. Optional `deadline_seconds` (600 to 2592000, default 3600) and `verdict_window_secs` (1800 to 604800). Creation attaches 0.05 NEAR for storage; escrow returns excess. |
+| `post_job` | `worker`, `check`, `reference`, `amount_near` | Fixes check/reference hashes and expected verifier build. Optional `deadline_seconds` (600 to 2592000, default 3600) and `verdict_window_secs` (1800 to 604800). `storage_deposit_near` defaults to 0.05 and may be reduced; its cap remains 0.05 NEAR. Escrow charges actual storage and returns excess; insufficient storage is refused on chain. The fixed demo uses 0.02. |
 | `challenge_check` | `job_id`, `check`, `reference` | Hands off private texts, pins the challenge, and triggers escrow. `pin_only:true` stops before triggering. |
 | `fund_job` | `job_id` | Buyer custody attaches exactly the recorded native amount. Funding requires ten minutes remaining before delivery deadline. |
 | `list_jobs` | none | Public page; optional `from_id` and `limit` (1 to 50). |
