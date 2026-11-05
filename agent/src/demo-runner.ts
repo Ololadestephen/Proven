@@ -38,6 +38,10 @@ export interface DemoEvidence {
   elapsed_ms?: number;
   completed?: string;
   resumed?: boolean;
+  internal_timer_under_two_minutes?: boolean;
+  wall_elapsed_ms?: number;
+  timing_assessment?: string;
+  // Set only by external full-command timing assessment, never inferred from this process timer.
   meets_two_minute_target?: boolean;
   compute_mode?: "custody" | "operator";
   operator_session?: string;
@@ -253,7 +257,8 @@ async function pay(ctx: DemoContext, entry: DemoCase) {
       );
     confirmed(entry, "verification");
     entry.receiver = receiver;
-    entry.balance_before = (await ctx.io.balance(receiver)).toString();
+    if (!ctx.io.provePayout)
+      entry.balance_before = (await ctx.io.balance(receiver)).toString();
     ctx.io.save();
     await operation(ctx, entry, "payout", "fake", "release_or_refund", {
       job_id: jobId,
@@ -272,20 +277,12 @@ async function confirmPayout(
   terminal: string,
   receiver: string,
 ) {
-  if (
-    !entry.payout?.transaction_hash ||
-    !entry.balance_before ||
-    entry.receiver !== receiver
-  )
+  if (!entry.payout?.transaction_hash || entry.receiver !== receiver)
     throw new PublicError(
-      "Terminal job needs its saved payout hash and receiver balance evidence before completion. Reconcile receipts before resuming.",
+      "Terminal job needs its saved payout hash and expected receiver before completion. Reconcile receipts before resuming.",
     );
-  entry.balance_after ??= (await ctx.io.balance(receiver)).toString();
-  entry.balance_change = (
-    BigInt(entry.balance_after) - BigInt(entry.balance_before)
-  ).toString();
   entry.final = await observe(ctx, entry.job_id!);
-  let proven = false;
+  let confirmedPayment = false;
   if (ctx.io.provePayout) {
     const proof = await ctx.io.provePayout(
       entry.job_id!,
@@ -303,13 +300,18 @@ async function confirmPayout(
         "Payout proof does not match this job and payment.",
       );
     entry.payout_proof = proof;
-    proven = true;
+    confirmedPayment = true;
+  } else {
+    if (entry.balance_before === undefined)
+      throw new PublicError("Legacy payout requires saved balance evidence.");
+    entry.balance_after ??= (await ctx.io.balance(receiver)).toString();
+    entry.balance_change = (
+      BigInt(entry.balance_after) - BigInt(entry.balance_before)
+    ).toString();
+    confirmedPayment = BigInt(entry.balance_change) >= PAYMENT;
   }
   ctx.io.save();
-  if (
-    entry.final.state !== terminal ||
-    (!proven && BigInt(entry.balance_change) < PAYMENT)
-  )
+  if (entry.final.state !== terminal || !confirmedPayment)
     throw new PublicError(
       "Payout state or receiver balance did not confirm the expected payment. Inspect receipts.",
     );
@@ -317,6 +319,10 @@ async function confirmPayout(
 }
 
 export async function runDemo(ctx: DemoContext) {
+  delete ctx.evidence.meets_two_minute_target;
+  delete ctx.evidence.wall_elapsed_ms;
+  delete ctx.evidence.timing_assessment;
+  delete ctx.evidence.internal_timer_under_two_minutes;
   if (
     ctx.scenario.parallel &&
     (ctx.evidence.compute_mode !== "operator" ||
@@ -348,19 +354,28 @@ export async function runDemo(ctx: DemoContext) {
       await completeCase(ctx, entry);
   }
   if (ctx.scenario.parallel && !ctx.evidence.dry_run) {
-    await ctx.io.begin?.(entries.map((entry) => entry.job_id!));
-    const outcomes = await Promise.allSettled(
-      entries.map((entry) => completeCase(ctx, entry)),
-    );
-    await ctx.io.finish?.();
-    const failed = outcomes.find((result) => result.status === "rejected");
-    if (failed?.status === "rejected") throw failed.reason;
+    await completeParallelCases(ctx, entries);
   } else {
     await ctx.io.finish?.();
   }
-  ctx.evidence.completed = new Date(ctx.io.now()).toISOString();
-  ctx.evidence.elapsed_ms = ctx.io.now() - Date.parse(ctx.evidence.started_at);
-  ctx.evidence.meets_two_minute_target =
+  return recordInternalCompletion(ctx);
+}
+
+async function completeParallelCases(ctx: DemoContext, entries: DemoCase[]) {
+  await ctx.io.begin?.(entries.map((entry) => entry.job_id!));
+  const outcomes = await Promise.allSettled(
+    entries.map((entry) => completeCase(ctx, entry)),
+  );
+  await ctx.io.finish?.();
+  const failed = outcomes.find((result) => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
+}
+
+function recordInternalCompletion(ctx: DemoContext) {
+  const completedAt = ctx.io.now();
+  ctx.evidence.completed = new Date(completedAt).toISOString();
+  ctx.evidence.elapsed_ms = completedAt - Date.parse(ctx.evidence.started_at!);
+  ctx.evidence.internal_timer_under_two_minutes =
     !ctx.evidence.dry_run &&
     !ctx.evidence.resumed &&
     ctx.evidence.elapsed_ms >= 0 &&

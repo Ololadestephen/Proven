@@ -92,8 +92,10 @@ export async function waitTransactionResult(
   return { transaction_hash: tx, pending: true };
 }
 
-export function createRuntime(config: Config): Runtime {
-  const provider = new JsonRpcProvider({ url: config.rpc });
+export function createRuntime(
+  config: Config,
+  provider = new JsonRpcProvider({ url: config.rpc }),
+): Runtime {
   return {
     actor: config.actor,
     identity: config.account ?? null,
@@ -145,7 +147,7 @@ export function createRuntime(config: Config): Runtime {
             "Worker submission outcome is unknown. Inspect job status and account history before retrying; no automatic retry was made.",
           );
         });
-      return transactionResult(
+      return waitTransactionResult(
         provider,
         response.transaction.hash,
         worker.accountId,

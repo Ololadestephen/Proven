@@ -123,14 +123,21 @@ test("one invocation settles honest and fake only from real recorded outcomes", 
     ctx.evidence.cases.map((c) => c.balance_change),
     [PAYMENT.toString(), PAYMENT.toString()],
   );
-  assert.equal(ctx.evidence.meets_two_minute_target, true);
+  assert.equal(ctx.evidence.internal_timer_under_two_minutes, true);
   assert.equal(writes.filter((name) => name === "post_job").length, 2);
+  assert.equal(ctx.evidence.meets_two_minute_target, undefined);
   // A terminal resume reads the same ids and evidence; it never resubmits writes.
+  ctx.evidence.wall_elapsed_ms = 120200;
+  ctx.evidence.timing_assessment = "Previous full-command result";
+  ctx.evidence.meets_two_minute_target = false;
   ctx.evidence.resumed = true;
   const before = writes.length;
   await runDemo(ctx);
   assert.equal(writes.length, before);
-  assert.equal(ctx.evidence.meets_two_minute_target, false);
+  assert.equal(ctx.evidence.wall_elapsed_ms, undefined);
+  assert.equal(ctx.evidence.timing_assessment, undefined);
+  assert.equal(ctx.evidence.meets_two_minute_target, undefined);
+  assert.equal(ctx.evidence.internal_timer_under_two_minutes, false);
 });
 
 test("uncertain create/fund outcomes are never automatically submitted again", async () => {
@@ -173,7 +180,7 @@ test("dry plans have no funding/delivery/compute/payout and cannot satisfy the t
   ctx.evidence.dry_run = true;
   await runDemo(ctx);
   assert.deepEqual(writes, ["post_job", "post_job"]);
-  assert.equal(ctx.evidence.meets_two_minute_target, false);
+  assert.equal(ctx.evidence.internal_timer_under_two_minutes, false);
   assert.ok(ctx.evidence.cases.every((c) => c.job_id === undefined));
 });
 
@@ -182,12 +189,14 @@ test("preflight time belongs to the fresh command's two-minute budget", async ()
   ctx.evidence.started_at = "2026-11-04T19:57:59Z";
   await runDemo(ctx);
   assert.ok(ctx.evidence.elapsed_ms! >= 121000);
-  assert.equal(ctx.evidence.meets_two_minute_target, false);
+  assert.equal(ctx.evidence.internal_timer_under_two_minutes, false);
 });
 
-test("successful transfer receipts confirm payment even when final-balance reads still lag", async () => {
+test("exact receipt proofs confirm payment without redundant balance requests", async () => {
   const { ctx } = fixture();
-  ctx.io.balance = async () => 0n;
+  ctx.io.balance = async () => {
+    throw new Error("Receipt mode must not fetch balance snapshots");
+  };
   ctx.io.provePayout = async (id, transaction, receiver, amount) => ({
     job_id: id,
     transaction_hash: transaction,
@@ -199,7 +208,9 @@ test("successful transfer receipts confirm payment even when final-balance reads
   assert.ok(
     ctx.evidence.cases.every(
       (entry) =>
-        entry.balance_change === "0" &&
+        entry.balance_before === undefined &&
+        entry.balance_after === undefined &&
+        entry.balance_change === undefined &&
         entry.payout_proof?.amount === PAYMENT.toString(),
     ),
   );
@@ -229,4 +240,18 @@ test("parallel operator cases await both outcomes before reporting a failure", a
   await assert.rejects(runDemo(ctx));
   assert.equal(jobs.get(101)?.state, "Refunded");
   assert.equal(ctx.evidence.completed, undefined);
+});
+
+test("invalid receipt proof cannot fall back to apparently sufficient balance changes", async () => {
+  const { ctx } = fixture();
+  ctx.io.provePayout = async (id, transaction, _receiver, amount) => ({
+    job_id: id,
+    transaction_hash: transaction,
+    receipt_id: "receipt",
+    receiver: "attacker.testnet",
+    amount,
+  });
+  await assert.rejects(runDemo(ctx), /does not match this job and payment/);
+  assert.equal(ctx.evidence.completed, undefined);
+  assert.equal(ctx.evidence.cases[0].payout_proof, undefined);
 });
