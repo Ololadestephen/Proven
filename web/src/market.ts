@@ -19,6 +19,7 @@ import {
   RelayVerifier,
   type RelayAuth,
 } from "../../relay/src/buyer-auth.ts";
+import { FallbackRpcProvider } from "../../relay/src/rpc.ts";
 import { ReadError } from "./model.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
@@ -41,7 +42,12 @@ const HANDOFF_ACTIONS = new Set([
   "collect",
 ]);
 
-const provider = new JsonRpcProvider({ url: RPC });
+// A rate limit from one public RPC moves to the next approved one, so a busy page keeps working.
+const provider = new FallbackRpcProvider(
+  NETWORK === "mainnet"
+    ? [RPC, "https://rpc.mainnet.near.org"]
+    : [RPC, "https://near-testnet.drpc.org", "https://testnet-rpc.intea.rs"],
+);
 const view = <T>(
   contractId: string,
   method: string,

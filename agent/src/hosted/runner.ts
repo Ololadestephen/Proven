@@ -32,6 +32,9 @@ export interface RunnerDeps {
 const sha256 = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 
+const VERIFY_RETRY_MS = 300_000;
+const lastVerifyTry = new Map<number, number>();
+
 export const spenderOf = (wallet: string) => `hosted:${wallet}`;
 
 function walletOf(agent: HostedAgent, config: Config): Wallet {
@@ -167,6 +170,7 @@ async function work(
     refusal: result.refusal,
     usd: result.costNanoUsd / 1e9,
     skills: result.skills,
+    format_checks: result.format_checks,
     inference: result.calls.map((call) => ({
       model: call.model,
       chat_id: call.chatId,
@@ -235,6 +239,11 @@ async function advance(
     case "Funded":
       return work(deps, agent, bid, bidId, jobId, job);
     case "Delivered": {
+      // A failed hand-over or run waits before trying again, so one stuck job cannot flood the relay
+      // or use up its signing allowance.
+      const now = Date.now();
+      if (now - (lastVerifyTry.get(jobId) ?? 0) < VERIFY_RETRY_MS) return;
+      lastVerifyTry.set(jobId, now);
       // A delivery the relay does not have yet goes first, or the run would have nothing to check.
       await handOver(deps, agent, jobId);
       const run = (await tool("request_verification", { job_id: jobId })) as {

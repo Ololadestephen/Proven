@@ -15,3 +15,34 @@ export class DemoRpcProvider extends JsonRpcProvider {
       ? this.writer.sendJsonRpc(method, params)
       : super.sendJsonRpc(method, params);
 }
+
+/** A public RPC can rate-limit a busy service, so a request it refuses that way goes to the next approved
+ * one. Only a rate limit moves on: a refusal means the request was not processed, so nothing is repeated
+ * that might already have taken effect, and a transaction goes out as the same signed bytes anyway. */
+export class FallbackRpcProvider extends JsonRpcProvider {
+  private readonly others: JsonRpcProvider[];
+  constructor(urls: readonly string[]) {
+    super({ url: urls[0]! });
+    this.others = urls.slice(1).map((url) => new JsonRpcProvider({ url }));
+  }
+  override async sendJsonRpc<T>(method: never, params: never): Promise<T> {
+    try {
+      return (await super.sendJsonRpc(method, params)) as T;
+    } catch (error) {
+      if (!isRateLimit(error)) throw error;
+      for (const [index, other] of this.others.entries()) {
+        try {
+          return (await other.sendJsonRpc(method, params)) as T;
+        } catch (next) {
+          if (!isRateLimit(next) || index === this.others.length - 1)
+            throw next;
+        }
+      }
+      throw error;
+    }
+  }
+}
+
+export function isRateLimit(error: unknown): boolean {
+  return /rate limit|429|too many requests/i.test(String(error));
+}

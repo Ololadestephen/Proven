@@ -12,7 +12,7 @@ import {
   type Skill,
 } from "./limits.ts";
 import { runCodeSkill, type SandboxCall } from "./sandbox.ts";
-import { runSkill } from "./skills.ts";
+import { jsonValidator, runSkill } from "./skills.ts";
 
 type Caller = Pick<ModelClient, "call">;
 
@@ -38,6 +38,8 @@ export interface HostedWork {
   refusal: string | null;
   calls: CallResult[];
   skills: SkillUse[];
+  /** What each answer's check against the public format found. Names only published fields. */
+  format_checks: string[];
   /** Inference cost plus skill uses, charged against the agent's budget. */
   costNanoUsd: number;
 }
@@ -88,6 +90,7 @@ export async function doHostedWork(
     refusal: "no_answer",
     calls: [],
     skills: [],
+    format_checks: [],
     costNanoUsd: 0,
   };
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -106,7 +109,30 @@ export async function doHostedWork(
     const request = parseSkillRequest(call.text);
     if (!request) {
       const parsed = parseDeliverable(call.text);
-      return { ...result, ...parsed };
+      // A delivery that does not fit the published format earns nothing, so the agent hears why and
+      // can correct it, while it still has rounds left. Only the verifier's verdict decides anything.
+      const fit = parsed.deliverable
+        ? jsonValidator(parsed.deliverable, task.format)
+        : (parsed.refusal ?? "Not a JSON object.");
+      result.format_checks.push(
+        fit.startsWith("Fits") || fit.includes("no rows to compare")
+          ? "fits"
+          : fit.slice(0, 300),
+      );
+      if (
+        (parsed.deliverable &&
+          (fit.startsWith("Fits") || fit.includes("no rows to compare"))) ||
+        round === MAX_ROUNDS - 1
+      )
+        return { ...result, ...parsed };
+      messages.push(
+        { role: "assistant", content: call.text.slice(0, 8_000) },
+        {
+          role: "user",
+          content: `That answer does not fit the public format, so it would fail: ${fit.slice(0, 500)}\nAnswer again with only the final JSON result, in exactly that format.`,
+        },
+      );
+      continue;
     }
     const isCode = (CODE_SKILLS as readonly string[]).includes(request.skill);
     const allowed =

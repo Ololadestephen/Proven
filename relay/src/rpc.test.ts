@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DemoRpcProvider } from "./rpc.ts";
+import { DemoRpcProvider, isRateLimit } from "./rpc.ts";
 
 const reader = "https://test.rpc.fastnear.com",
   writer = "https://testnet-rpc.intea.rs";
@@ -67,4 +67,15 @@ test("either non-testnet or unapproved endpoint is refused before any request", 
         () => new DemoRpcProvider(...(endpoints as [string, string])),
         /approved testnet/,
       );
+});
+
+test("only a rate limit counts as one", () => {
+  assert.equal(
+    isRateLimit(
+      new Error('{"code": -429, "message": "Rate limits exceeded."}'),
+    ),
+    true,
+  );
+  assert.equal(isRateLimit(new Error("Smart contract panicked")), false);
+  assert.equal(isRateLimit(new Error("timeout")), false);
 });

@@ -306,3 +306,48 @@ test("each alert goes out once a day, and nothing is sent without a bot set up",
   assert.equal(await notify([alert], 90_000_000), 1);
   assert.equal(sent.length, 2);
 });
+
+test("an answer outside the format gets one more chance, and the check is logged", async () => {
+  const format = JSON.stringify({ kind: "data", rows: { id: "string" } });
+  let round = 0;
+  const work = await doHostedWork(
+    {
+      call: async () => {
+        round += 1;
+        return call(
+          round === 1 ? '{"rows":[{"id":1}]}' : '{"rows":[{"id":"a"}]}',
+        );
+      },
+    },
+    profile,
+    { description: "d", format },
+    "run",
+    () => 1e12,
+    () => undefined,
+  );
+  assert.equal(work.deliverable, '{"rows":[{"id":"a"}]}');
+  assert.equal(work.calls.length, 2);
+  assert.match(work.format_checks[0]!, /must be string/);
+  assert.equal(work.format_checks[1], "fits");
+});
+
+test("a function job's format has no rows to compare, so it goes through as it is", async () => {
+  const work = await doHostedWork(
+    { call: async () => call('{"wasm_base64":"AAAA"}') },
+    profile,
+    {
+      description: "d",
+      format: JSON.stringify({
+        kind: "function",
+        export: "f",
+        arity: 1,
+        fuel: 1,
+      }),
+    },
+    "run",
+    () => 1e12,
+    () => undefined,
+  );
+  assert.equal(work.deliverable, '{"wasm_base64":"AAAA"}');
+  assert.equal(work.calls.length, 1);
+});

@@ -13,8 +13,8 @@ import {
 import { createHash } from "node:crypto";
 import { timed, type TimingSink } from "./timing.ts";
 import { confirmTransaction } from "./admission.ts";
-import { DemoRpcProvider } from "./rpc.ts";
-import type { Config } from "./config.ts";
+import { DemoRpcProvider, FallbackRpcProvider } from "./rpc.ts";
+import { MAINNET_RPC_URLS, TESTNET_RPC_URLS, type Config } from "./config.ts";
 
 const TGAS = 1_000_000_000_000n;
 
@@ -44,10 +44,21 @@ export interface Job {
   failed_rule: string | null;
 }
 
+function withFallback(config: Config) {
+  const others =
+    config.outlayerContract === "outlayer.near"
+      ? MAINNET_RPC_URLS
+      : TESTNET_RPC_URLS.slice(0, 3);
+  return new FallbackRpcProvider([
+    config.rpcUrl,
+    ...others.filter((url) => url !== config.rpcUrl),
+  ]);
+}
+
 export function relayAccount(config: Config, singleAttempt = false): Account {
   const provider = singleAttempt
     ? new DemoRpcProvider(config.rpcUrl, config.broadcastRpcUrl)
-    : new JsonRpcProvider({ url: config.rpcUrl });
+    : withFallback(config);
   const signer = new KeyPairSigner(KeyPair.fromString(config.relayPrivateKey));
   return new Account(config.relayAccountId, provider, signer);
 }
