@@ -1434,3 +1434,12 @@ fn a_failed_payout_keeps_the_buyer_allowance_counted() {
     assert!(!escrow.on_payout(first, JobState::Refunded, JobState::Failed));
     assert_eq!(escrow.held_by_buyer.get(&(buyer(), None)).copied(), Some(one));
 }
+
+#[test]
+#[should_panic(expected = "at least 30 minutes after funding")]
+fn funding_at_the_last_moment_cannot_use_up_a_workers_attempt() {
+    let mut escrow = escrow();
+    let id = challenged_job(&mut escrow);
+    call(buyer(), one_near(), DEADLINE - 60 * SEC);
+    escrow.fund(id);
+}

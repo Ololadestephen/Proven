@@ -225,7 +225,7 @@ export interface BuyerRecord {
   jobs_paid: number;
   jobs_refunded: number;
   jobs_expired: number;
-  /** Paid out of paid and refunded together, or null with no finished jobs yet. */
+  /** Paid out of paid, refunded and expired together, or null with no finished jobs yet. */
   paid_share: number | null;
   note: string;
 }
@@ -257,7 +257,8 @@ export async function buyerRecord(
     }
     if (page.length < 50) break;
   }
-  const finished = record.jobs_paid + record.jobs_refunded;
+  const finished =
+    record.jobs_paid + record.jobs_refunded + record.jobs_expired;
   return {
     buyer,
     ...record,

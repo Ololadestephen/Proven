@@ -28,8 +28,9 @@ pub(crate) fn fits_format(
             object.len() == fields.len() && fields.iter().all(|(name, ty)| has_type(object.get(name), *ty))
         })
     };
+    // An empty result fits any format, and earns no attempt fee.
     rows(deliverable).is_some_and(|rows| {
-        rows.iter().all(|row| {
+        !rows.is_empty() && rows.iter().all(|row| {
             exact(row, row_fields)
                 && item_fields.iter().all(|(array, fields)| {
                     row.get(array).and_then(Value::as_array).is_some_and(|list| list.iter().all(|item| exact(item, fields)))

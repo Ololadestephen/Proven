@@ -1,7 +1,7 @@
 {
  "kind": "function",
  "proven_check": 2,
- "verifier": "6fe5f4342012caecb9478cb75106efb471e5b3d1ad9fe05d4bce20fd57268f95",
+ "verifier": "b2f695f32f2e9233173758461c3c6868992c5270f8213efd0497e77f7dbdb174",
  "export": "vat",
  "arity": 2,
  "rules": [
@@ -144,5 +144,5 @@
    "max": 250000
   }
  ],
- "format": "{\"arity\":2,\"export\":\"vat\",\"kind\":\"function\"}"
+ "format": "{\"arity\":2,\"export\":\"vat\",\"fuel\":1000000,\"kind\":\"function\"}"
 }

@@ -49,9 +49,13 @@ pub(crate) enum Format {
         #[serde(default)]
         items: BTreeMap<String, BTreeMap<String, FieldType>>,
     },
+    /// A function delivery: a WebAssembly module with no imports, at most 64 KB and 16 MB of memory,
+    /// exporting `export`, taking `arity` i64 arguments and returning one i64, with `fuel` for each call.
+    /// The check must use the same values.
     Function {
         export: String,
         arity: usize,
+        fuel: u64,
     },
 }
 
@@ -197,7 +201,9 @@ impl Check {
                 let named = rows.keys().chain(items.values().flat_map(|fields| fields.keys()));
                 (!rows.is_empty() && items_declared && named.into_iter().all(|name| valid_name(name))).then_some(format)
             }
-            (Format::Function { export, arity }, Check::Function(c)) => (*export == c.export && *arity == c.arity).then_some(format),
+            (Format::Function { export, arity, fuel }, Check::Function(c)) => {
+                (*export == c.export && *arity == c.arity && *fuel == c.fuel).then_some(format)
+            }
             _ => None,
         }
     }
@@ -230,7 +236,19 @@ impl DataRuleKind {
             DataRuleKind::SumEquals { array, item_field, total_field } => {
                 item(array, item_field, FieldType::Integer) && row(total_field, FieldType::Integer)
             }
-            DataRuleKind::SpotCheck { key_field, field, .. } => row_any(key_field) && row_any(field),
+            // Only scalars of the published type: comparing a whole object or array would look inside a
+            // field the format leaves opaque.
+            DataRuleKind::SpotCheck { key_field, key, field, equals } => {
+                let scalar = |name: &String, value: &Value| {
+                    rows.get(name).is_some_and(|ty| match ty {
+                        FieldType::String => value.is_string(),
+                        FieldType::Integer => value.is_i64() || value.is_u64(),
+                        FieldType::Boolean => value.is_boolean(),
+                        FieldType::Array | FieldType::Object => false,
+                    })
+                };
+                scalar(key_field, key) && scalar(field, equals)
+            }
         }
     }
 

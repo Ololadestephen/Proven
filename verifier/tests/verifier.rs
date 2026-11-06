@@ -151,7 +151,7 @@ fn modules_with_imports_or_the_wrong_shape_are_refused() {
 #[test]
 fn memory_beyond_the_cap_is_refused() {
     let check = example("function-job/check-strong.json");
-    let greedy = wasm_deliverable(r#"(module (memory 64) (func (export "vat") (param i64 i64) (result i64) (i64.const 0)))"#);
+    let greedy = wasm_deliverable(r#"(module (memory 257) (func (export "vat") (param i64 i64) (result i64) (i64.const 0)))"#);
     assert_eq!(verify(&check, &greedy)["failed_rule"], "format");
 }
 
@@ -167,7 +167,10 @@ fn oversized_tables_and_extra_memories_are_refused() {
 #[test]
 fn a_function_that_burns_the_whole_budget_fails_instead_of_running_on() {
     // Each call spins on almost all of its fuel; the total budget runs out before the grid ends.
-    let check = example("function-job/check-strong.json").replace(r#""rules""#, r#""fuel": 10000000, "rules""#);
+    let mut value: Value = serde_json::from_str(&example("function-job/check-strong.json")).unwrap();
+    value["fuel"] = json!(10_000_000);
+    value["format"] = json!(r#"{"arity":2,"export":"vat","fuel":10000000,"kind":"function"}"#);
+    let check = value.to_string();
     let slow = wasm_deliverable(r#"(module (func (export "vat") (param i64 i64) (result i64) (local i64)
         (loop $l (local.set 2 (i64.add (local.get 2) (i64.const 1))) (br_if $l (i64.lt_s (local.get 2) (i64.const 300000))))
         (if (result i64) (i64.lt_s (local.get 0) (i64.const 100)) (then (i64.const 0))
@@ -384,4 +387,45 @@ fn every_output_still_fits_the_limit_with_the_format_hash() {
         "escrow": "a".repeat(64), "job": 18446744073709551615u64,
     }));
     assert!(v.to_string().len() <= proven_verifier::run::MAX_OUTPUT_BYTES, "{}", v.to_string().len());
+}
+
+#[test]
+fn an_empty_result_is_a_format_failure_and_earns_no_fee() {
+    let verdict = verify(&example("data-job/check-strong.json"), r#"{"rows":[]}"#);
+    assert_eq!(verdict["failed_rule"], json!("format"));
+}
+
+#[test]
+fn a_spot_check_cannot_look_inside_an_opaque_field() {
+    let check = with_rule(
+        &example("data-job/check-strong.json"),
+        json!({"id": "hidden", "type": "spot_check", "key_field": "invoice_id", "key": "x", "field": "lines", "equals": [{"hidden": 7}]}),
+    );
+    let verdict = challenge(&check, &example("data-job/reference.json"));
+    assert_eq!(verdict["format_refused"], json!(true));
+    let wrong_type = with_rule(
+        &example("data-job/check-strong.json"),
+        json!({"id": "t", "type": "spot_check", "key_field": "invoice_id", "key": 1, "field": "supplier", "equals": "x"}),
+    );
+    assert_eq!(challenge(&wrong_type, &example("data-job/reference.json"))["format_refused"], json!(true));
+}
+
+#[test]
+fn a_private_fuel_setting_cannot_turn_a_correct_module_into_a_format_failure() {
+    // The format now publishes the fuel, so a check with any other value is refused outright.
+    let mut value: Value = serde_json::from_str(&example("function-job/check-strong.json")).unwrap();
+    value["fuel"] = json!(5);
+    let verdict = verify(&value.to_string(), &example("function-job/honest.json"));
+    assert_eq!(verdict["error"], json!("invalid_check"));
+}
+
+#[test]
+fn a_module_with_a_large_memory_is_not_a_format_failure() {
+    // Two megabytes of declared memory, as an ordinary compiler's stack and statics would ask for.
+    let module = wasm_deliverable(
+        r#"(module (memory 32) (func (export "vat") (param i64 i64) (result i64) (i64.const 0)))"#,
+    );
+    let verdict = verify(&example("function-job/check-strong.json"), &module);
+    assert_ne!(verdict["failed_rule"], json!("format"));
+    assert_eq!(verdict["error"], Value::Null);
 }

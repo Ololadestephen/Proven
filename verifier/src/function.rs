@@ -9,8 +9,12 @@ use base64::Engine as _;
 use serde_json::Value;
 use wasmi::{Config, Engine, Func, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, Val, ValType};
 
-/// Linear memory a submitted module may use.
-const MAX_MEMORY_BYTES: usize = 1 << 20;
+/// Linear memory a submitted module may use. Ordinary compilers reserve more than a megabyte for the
+/// stack alone, so a smaller limit would fail correct work as a format problem.
+const MAX_MEMORY_BYTES: usize = 16 << 20;
+/// Fuel for a module's start function. Fixed, so a buyer's private check cannot turn a correct module into
+/// a format failure.
+const START_FUEL: u64 = 1_000_000;
 /// Largest submitted module, decoded.
 const MAX_MODULE_BYTES: usize = 64 * 1024;
 const MAX_TABLE_ELEMENTS: usize = 10_000;
@@ -52,8 +56,7 @@ impl Function {
             .build();
         let mut store = Store::new(&engine, limits);
         store.limiter(|limits| limits);
-        // The start function, if any, runs on one call's worth of fuel.
-        store.set_fuel(fuel_per_call).ok()?;
+        store.set_fuel(START_FUEL).ok()?;
         let instance = <Linker<StoreLimits>>::new(&engine).instantiate_and_start(&mut store, &module).ok()?;
         let func = instance.get_func(&store, export)?;
         let ty = func.ty(&store);

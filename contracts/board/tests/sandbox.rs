@@ -1096,3 +1096,23 @@ async fn a_failed_fee_payout_keeps_the_fee_held_and_can_be_settled_again() -> an
     assert_eq!(fee_of(&env, job).await?["state"], "Held");
     Ok(())
 }
+
+#[tokio::test]
+async fn closing_a_bid_cannot_erase_a_refunded_job_from_the_record() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    let job = judged(&env, bid, &env.agent, "fail").await?;
+    on_escrow(&env, &env.stranger, "refund", json!({ "job_id": job }), NONE)
+        .await?
+        .into_result()?;
+    on_board(&env, &env.buyer, "close_bid", json!({ "bid_id": bid }), NONE)
+        .await?
+        .into_result()?;
+    let after = bid_of(&env, bid).await?;
+    assert_eq!(after["state"], "Cancelled");
+    assert_eq!(after["funded_attempts"], 1);
+    assert_eq!(after["past_jobs"][0]["job_id"], job);
+    assert_eq!(after["past_jobs"][0]["funded"], true);
+    assert_eq!(attempt(&env, bid, &env.agent).await?, "Used");
+    Ok(())
+}

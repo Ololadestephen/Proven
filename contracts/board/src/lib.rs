@@ -52,6 +52,8 @@ const MAX_BID_LIFE_NANOS: u64 = 7 * 24 * 3_600 * NANOS;
 const FORMAT_RULE: &str = "format";
 const SETTLE_CALLBACK_GAS: Gas = Gas::from_tgas(40);
 const FEE_PAID_GAS: Gas = Gas::from_tgas(10);
+/// A job is far smaller than this. A larger answer is not a job.
+const MAX_JOB_VIEW_BYTES: usize = 16 * 1024;
 const READ_GAS: Gas = Gas::from_tgas(15);
 const CALLBACK_GAS: Gas = Gas::from_tgas(25);
 
@@ -194,6 +196,8 @@ pub struct JobView {
     pub verifier_hash: String,
     pub state: String,
     pub deadline: U64,
+    /// Missing on an escrow that has not been upgraded, and then no job matches a bid's format.
+    #[serde(default)]
     pub format_hash: String,
     #[serde(default)]
     pub failed_rule: Option<String>,
@@ -555,7 +559,8 @@ impl Board {
             )
     }
 
-    /// Never panics once the money is held, because a failed callback would strand what was attached.
+    /// Reads the result by hand and never panics on it, because a failed callback would strand what
+    /// was attached.
     #[private]
     pub fn on_link(
         &mut self,
@@ -564,8 +569,10 @@ impl Board {
         job_id: JobId,
         payer: AccountId,
         attached: U128,
-        #[callback_result] job: Result<Option<JobView>, PromiseError>,
     ) -> bool {
+        let job: Result<Option<JobView>, ()> = env::promise_result_checked(0, MAX_JOB_VIEW_BYTES)
+            .map_err(|_| ())
+            .and_then(|bytes| near_sdk::serde_json::from_slice(&bytes).map_err(|_| ()));
         let attached = NearToken::from_yoctonear(attached.0);
         match self.link_problem(bid_id, claim_number, job_id, &job) {
             Some(problem) => {
@@ -771,7 +778,16 @@ impl Board {
             }
         };
         require!(closable, "the linked job has been funded and has not ended");
-        self.cancel_bid(bid_id);
+        // A job that was funded and ended stays on the record, whoever closes the bid first.
+        let finished = job
+            .as_ref()
+            .is_some_and(|job| matches!(job.state.as_str(), "Refunded" | "Expired"));
+        let agent = self.bid(bid_id).claim.as_ref().map(|claim| claim.agent.clone());
+        if let (true, Some(agent)) = (finished, agent) {
+            self.end_claim(bid_id, &agent, BidState::Cancelled, true);
+        } else {
+            self.cancel_bid(bid_id);
+        }
         BidState::Cancelled
     }
 
@@ -837,7 +853,7 @@ impl Board {
         bid_id: BidId,
         claim_number: u32,
         job_id: JobId,
-        job: &Result<Option<JobView>, PromiseError>,
+        job: &Result<Option<JobView>, ()>,
     ) -> Option<&'static str> {
         let job = match job {
             Ok(Some(job)) => job,
@@ -992,6 +1008,9 @@ impl Board {
 
     fn cancel_bid(&mut self, bid_id: BidId) {
         let bid = self.bid_mut(bid_id);
+        if let Some(agent) = bid.claim.as_ref().map(|claim| claim.agent.clone()) {
+            Self::record_past_job(bid, &agent, false, BidState::Cancelled);
+        }
         bid.claim = None;
         bid.state = BidState::Cancelled;
         env::log_str(&format!("bid_cancelled {bid_id}"));

@@ -84,7 +84,7 @@ export function nextStep(
 
   // Anyone can move these on, so a stuck job or an unsettled fee never depends on one person.
   if (
-    (bid.state === "Open" || bid.state === "Done" || bid.state === "Closed") &&
+    ["Open", "Done", "Closed", "Cancelled"].includes(bid.state) &&
     bid.fee?.state === "Held" &&
     bid.fee_job_id != null &&
     bid.last_job

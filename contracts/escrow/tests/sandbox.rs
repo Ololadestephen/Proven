@@ -433,7 +433,7 @@ async fn a_run_that_times_out_is_no_verdict_and_the_job_then_expires_to_the_buye
 #[tokio::test]
 async fn missed_deadline_refuses_delivery_and_expires_to_the_buyer() -> anyhow::Result<()> {
     let env = setup().await?;
-    let id = create_job(&env, false, 60, NearToken::from_near(1).as_yoctonear()).await?;
+    let id = create_job(&env, false, 1_830, NearToken::from_near(1).as_yoctonear()).await?;
     behave(&env, "strong_check").await?;
     challenge(&env, id).await?.into_result()?;
     fund_near(&env, id, NearToken::from_near(1))
@@ -755,7 +755,7 @@ async fn the_pause_stops_only_new_jobs_and_new_funding() -> anyhow::Result<()> {
     behave(&env, "strong_check").await?;
     challenge(&env, to_finish).await?.into_result()?;
     fund_near(&env, to_finish, one).await?.into_result()?;
-    let to_expire = create_job(&env, false, 30, one.as_yoctonear()).await?;
+    let to_expire = create_job(&env, false, 1_810, one.as_yoctonear()).await?;
     behave(&env, "strong_check").await?;
     challenge(&env, to_expire).await?.into_result()?;
     fund_near(&env, to_expire, one).await?.into_result()?;

@@ -31,7 +31,7 @@ for path, reference in [
     ("examples/function-job/check-weak.json", None),
 ]:
     check = json.load(open(path))
-    format_ = data_format(reference) if reference else {"kind": "function", "export": check["export"], "arity": check["arity"]}
+    format_ = data_format(reference) if reference else {"kind": "function", "export": check["export"], "arity": check["arity"], "fuel": check.get("fuel", 1000000)}
     check["proven_check"] = 2
     check["verifier"] = verifier
     check["format"] = json.dumps(format_, separators=(",", ":"), sort_keys=True)

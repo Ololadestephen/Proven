@@ -48,6 +48,10 @@ pub type JobId = u64;
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 const MAX_DEADLINE_NANOS: u64 = 24 * 60 * 60 * NANOS_PER_SEC;
 /// Long enough for a stale run and one retry: see `RUN_TIMEOUT_NANOS`.
+const MIN_TIME_AFTER_FUNDING_NANOS: u64 = 30 * 60 * NANOS_PER_SEC;
+/// Charged with a job, for the per-buyer record funding may create. Funding must attach the exact amount,
+/// so it cannot pay for this itself.
+const FUNDING_RECORD_BYTES: u128 = 200;
 const MIN_VERDICT_WINDOW_SECS: u32 = 30 * 60;
 const MAX_VERDICT_WINDOW_SECS: u32 = 24 * 60 * 60;
 /// After this long with no callback, a run is stale. A real run resolves within NEAR's yield timeout
@@ -651,8 +655,9 @@ impl Escrow {
         let storage_before = env::storage_usage();
         self.jobs.insert(id, job.at_full_size());
         self.jobs.flush();
-        let storage_cost = env::storage_byte_cost()
-            .saturating_mul(u128::from(env::storage_usage() - storage_before));
+        let storage_cost = env::storage_byte_cost().saturating_mul(
+            u128::from(env::storage_usage() - storage_before) + FUNDING_RECORD_BYTES,
+        );
         let attached = env::attached_deposit();
         require!(
             attached >= storage_cost,
@@ -748,7 +753,16 @@ impl Escrow {
             _ => false,
         };
         require!(ready, "job is not awaiting a challenge");
-        require!(now < job.deadline.0, "the delivery deadline has passed");
+        // Funding at the last moment would use up the worker's one attempt with no time to do the work.
+        require!(
+            job.deadline.0 >= now.saturating_add(MIN_TIME_AFTER_FUNDING_NANOS),
+            "the job must leave at least 30 minutes after funding"
+        );
+        // A job from before public formats can never get a verdict, so it must not take money.
+        require!(
+            job.format_hash.len() == 64,
+            "this job has no public format"
+        );
         self.start_run(job_id, RunKind::Challenge, JobState::Challenging)
     }
 
@@ -980,7 +994,16 @@ impl Escrow {
             "job is not ready to fund: the check must pass its challenge first"
         );
         require!(amount == job.amount.0, "pay exactly the job amount");
-        require!(now < job.deadline.0, "the delivery deadline has passed");
+        // Funding at the last moment would use up the worker's one attempt with no time to do the work.
+        require!(
+            job.deadline.0 >= now.saturating_add(MIN_TIME_AFTER_FUNDING_NANOS),
+            "the job must leave at least 30 minutes after funding"
+        );
+        // A job from before public formats can never get a verdict, so it must not take money.
+        require!(
+            job.format_hash.len() == 64,
+            "this job has no public format"
+        );
         job.state = JobState::Funded;
         require!(!self.paused, "new funding is paused");
         let cap = self.cap_mut(token);

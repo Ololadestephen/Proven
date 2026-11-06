@@ -142,6 +142,7 @@ export function jsonValidator(candidate: string, formatText: string): string {
   const rows = (value as { rows?: unknown }).rows;
   if (!Array.isArray(rows) || Object.keys(value as object).length !== 1)
     return 'The result must be exactly {"rows":[...]}.';
+  if (rows.length === 0) return "An empty result does not fit any format.";
   const problems: string[] = [];
   rows.slice(0, 500).forEach((row, index) => {
     problems.push(...fieldProblems(row, format.rows!, `rows[${index}]`));
