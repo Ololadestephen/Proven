@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 await build({
   absWorkingDir: fileURLToPath(new URL("../", import.meta.url)),
   entryPoints: ["ui/market.tsx"],
+  inject: ["ui/market-shim.ts"],
   bundle: true,
   outdir: "dist",
   format: "esm",

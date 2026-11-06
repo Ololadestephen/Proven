@@ -1,5 +1,4 @@
 import { Buffer } from "buffer";
-(globalThis as { Buffer?: unknown }).Buffer ??= Buffer;
 import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
 import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
 import { setupWalletSelector } from "@near-wallet-selector/core";
@@ -128,7 +127,8 @@ function useWallet(board: string | undefined) {
   const adopt = useCallback(async (sel: Selector) => {
     const state = sel.store.getState();
     const account =
-      state.accounts.find((item) => item.active) ?? state.accounts[0];
+      state.accounts.find((item: { active: boolean }) => item.active) ??
+      state.accounts[0];
     if (!account || !state.selectedWalletId) {
       setWallet(null);
       return;
@@ -137,7 +137,7 @@ function useWallet(board: string | undefined) {
     setWallet({
       accountId: account.accountId,
       label: chosen.metadata.name,
-      async call(call) {
+      async call(call: Call) {
         await chosen.signAndSendTransaction({
           receiverId: call.receiver,
           actions: [
@@ -185,7 +185,7 @@ function useWallet(board: string | undefined) {
     void setupWalletSelector({
       network: "testnet",
       modules: [setupMeteorWallet(), setupMyNearWallet()],
-    }).then((sel) => {
+    }).then((sel: Selector) => {
       if (!live) return;
       setSelector(sel);
       void adopt(sel);
