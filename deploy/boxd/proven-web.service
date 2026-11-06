@@ -16,6 +16,14 @@ RestartSec=5
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/boxd/proven/runs
+ProtectKernelTunables=true
+ProtectControlGroups=true
+MemoryMax=1500M
+TasksMax=128
+LimitNOFILE=1024
 
 [Install]
 WantedBy=multi-user.target

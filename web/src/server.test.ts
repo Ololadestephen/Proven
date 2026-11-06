@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { once } from "node:events";
-import { createApp } from "./server.ts";
+import { clientKey, createApp } from "./server.ts";
 import { ReadError } from "./model.ts";
 
 test("local HTTP only exposes allowed read routes, never private files or transaction endpoints", async (t) => {
@@ -123,4 +123,13 @@ test("the market is the app, keeps its old address, and only it gets the wallet 
   const moved = await fetch(`${base}/market`, { redirect: "manual" });
   assert.equal(moved.status, 308);
   assert.equal(moved.headers.get("location"), "/app");
+});
+
+test("one IPv6 visitor counts as one client across its /64", () => {
+  assert.equal(
+    clientKey("2001:db8:1:2:aaaa::1"),
+    clientKey("2001:db8:1:2:bbbb::9"),
+  );
+  assert.notEqual(clientKey("2001:db8:1:2::1"), clientKey("2001:db8:1:3::1"));
+  assert.equal(clientKey("203.0.113.9"), "203.0.113.9");
 });

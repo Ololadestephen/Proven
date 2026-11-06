@@ -120,3 +120,35 @@ test("a signature covers the exact texts", () => {
     relayPayload({ action: "challenge", check: "ab", reference: "c" }),
   );
 });
+
+test("a nonce written another way, or in the wrong type, is not a new nonce", async () => {
+  const verifier = new RelayVerifier(
+    async () => false,
+    () => NOW,
+  );
+  const first = auth({ job: 7 });
+  first.public_key = encoded;
+  const account = implicit;
+  assert.equal(
+    await verifier.verify(first, [account], "collect", 7, PAYLOAD),
+    true,
+  );
+  const reworded = {
+    ...first,
+    nonce_base64: Buffer.from(first.nonce_base64, "base64").toString(
+      "base64url",
+    ),
+  };
+  assert.equal(
+    await verifier.verify(reworded, [account], "collect", 7, PAYLOAD),
+    false,
+  );
+  const asArray = {
+    ...first,
+    nonce_base64: [...Buffer.from(first.nonce_base64, "base64")],
+  } as unknown as RelayAuth;
+  assert.equal(
+    await verifier.verify(asArray, [account], "collect", 7, PAYLOAD),
+    false,
+  );
+});

@@ -110,20 +110,25 @@ export function readMarketCached(now = Date.now()): Promise<unknown> {
 export class RateLimiter {
   private readonly hits = new Map<string, number[]>();
   private readonly limit: number;
-  constructor(limit: number) {
+  private readonly windowMs: number;
+  constructor(limit: number, windowMs = 60_000) {
     this.limit = limit;
+    this.windowMs = windowMs;
   }
   allow(client: string, now = Date.now()): boolean {
     const recent = (this.hits.get(client) ?? []).filter(
-      (at) => now - at < 60_000,
+      (at) => now - at < this.windowMs,
     );
     if (recent.length >= this.limit) {
       this.hits.set(client, recent);
       return false;
     }
     recent.push(now);
+    this.hits.delete(client);
     this.hits.set(client, recent);
-    if (this.hits.size > 10_000) this.hits.clear();
+    // Full: forget the longest-quiet client, never everyone's counts at once.
+    if (this.hits.size > 10_000)
+      this.hits.delete(this.hits.keys().next().value as string);
     return true;
   }
 }
@@ -248,6 +253,8 @@ const verifier = new RelayVerifier(async (accountId, publicKey) => {
 });
 
 let reviewing = false;
+/** Each review spends the operator's model credit. The key pool also caps the project's total on disk. */
+const reviewsByBuyer = new RateLimiter(5, 3_600_000);
 /** Runs the bid review, which can only keep a bid off the board. Fixed command, one at a time. Only the
  * bid's own buyer can ask, because each review spends the operator's model credit. */
 export async function reviewRoute(
@@ -258,6 +265,8 @@ export async function reviewRoute(
     throw new ReadError("Invalid bid.", 400);
   const bid = await view<Bid | null>(BOARD, "get_bid", { bid_id: bidId });
   if (!bid) throw new ReadError("No such bid.", 404);
+  if (bid.state !== "Unreviewed")
+    throw new ReadError("That bid is not waiting for a review.", 409);
   const allowed = await verifier.verify(
     auth,
     [bid.buyer],
@@ -268,6 +277,8 @@ export async function reviewRoute(
   if (!allowed)
     throw new ReadError("Only the bid's buyer can ask for a review.", 403);
   if (reviewing) throw new ReadError("A review is already running.", 429);
+  if (!reviewsByBuyer.allow(bid.buyer))
+    throw new ReadError("Too many reviews. Try again later.", 429);
   reviewing = true;
   return new Promise((resolve, reject) => {
     execFile(

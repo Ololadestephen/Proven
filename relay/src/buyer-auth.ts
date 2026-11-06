@@ -116,7 +116,14 @@ export class RelayVerifier {
     id: number,
     payload: string,
   ): Promise<boolean> {
-    if (!auth || typeof auth.message !== "string") return false;
+    if (
+      !auth ||
+      typeof auth.message !== "string" ||
+      typeof auth.public_key !== "string" ||
+      typeof auth.nonce_base64 !== "string" ||
+      typeof auth.signature_base64 !== "string"
+    )
+      return false;
     const parts = /^proven-relay:([a-z_]+):(\d+):([a-f0-9]{64}):(\d+)$/.exec(
       auth.message,
     );
@@ -158,10 +165,12 @@ export class RelayVerifier {
       if (await keyBelongsTo(account, key, this.isAccessKey, auth.public_key))
         belongs = true;
     if (!belongs) return false;
-    for (const [seen, time] of this.used)
-      if (now - time > 2 * MAX_AGE_MS) this.used.delete(seen);
-    if (this.used.has(auth.nonce_base64)) return false;
-    this.used.set(auth.nonce_base64, now);
+    for (const [old, time] of this.used)
+      if (now - time > 2 * MAX_AGE_MS) this.used.delete(old);
+    // By the signed bytes: the same nonce can be written in several ways.
+    const seen = nonce.toString("hex");
+    if (this.used.has(seen)) return false;
+    this.used.set(seen, now);
     return true;
   }
 }

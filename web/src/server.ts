@@ -118,12 +118,22 @@ async function readBody(
 }
 
 const writes = new RateLimiter(30);
+/** Holds even if per-client counting is fooled, such as by forged forwarding headers. */
+const allWrites = new RateLimiter(240);
 /** Behind a reverse proxy on a known origin, the proxy's last entry is the visitor. */
 function clientOf(req: IncomingMessage, origin?: string): string {
   const forwarded = req.headers["x-forwarded-for"];
   if (origin && typeof forwarded === "string")
-    return forwarded.split(",").at(-1)?.trim() ?? "unknown";
-  return req.socket.remoteAddress ?? "unknown";
+    return clientKey(forwarded.split(",").at(-1)?.trim() ?? "unknown");
+  return clientKey(req.socket.remoteAddress ?? "unknown");
+}
+/** One IPv6 visitor holds a whole /64, so that is what counts as one client. */
+export function clientKey(address: string): string {
+  if (!address.includes(":") || address.startsWith("::ffff:")) return address;
+  const [head = "", tail] = address.split("::");
+  const parts = head.split(":").filter(Boolean);
+  if (tail !== undefined) while (parts.length < 4) parts.push("0");
+  return `${parts.slice(0, 4).join(":")}::/64`;
 }
 
 async function marketRoute(
@@ -145,9 +155,9 @@ async function marketRoute(
     req.headers["sec-fetch-site"] !== "same-origin"
   )
     throw new ReadError("A same-origin request is required.", 403);
-  const body = await readBody(req);
-  if (!writes.allow(clientOf(req, origin)))
+  if (!allWrites.allow("all") || !writes.allow(clientOf(req, origin)))
     throw new ReadError("Too many requests. Wait a minute and try again.", 429);
+  const body = await readBody(req);
   if (path === "/api/market/relay") return relayRoute(body);
   const review = /^\/api\/market\/review\/([0-9]+)$/.exec(path);
   if (review) return reviewRoute(Number(review[1]), body.auth as never);
@@ -294,6 +304,7 @@ if (
   const server = createApp(loadJob, demo, origin, devWallet);
   server.requestTimeout = 60_000;
   server.headersTimeout = 15_000;
+  server.maxConnections = 256;
   server.on("error", () => {
     process.exitCode = 1;
     console.error(

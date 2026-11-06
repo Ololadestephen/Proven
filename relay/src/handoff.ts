@@ -64,6 +64,8 @@ export interface HandoffDependencies {
   requireSignatures?: boolean;
   demoCompute?: DemoCompute;
   isSigningSuspended?: () => boolean;
+  /** Checks a signed transaction whose outcome was unknown, and resumes signing once it is settled. */
+  reconcile?: () => Promise<void>;
 }
 
 type Request =
@@ -235,6 +237,12 @@ function profile(job: HandoffJob, jobId: number, kind: RunKind): string {
 /** Paid work is kept this long after delivery for the buyer to collect, then deleted. */
 export const COLLECT_RETENTION_MS = 30 * 24 * 3_600_000;
 const SWEEP_EVERY_MS = 300_000;
+/** Each pin locks a deposit of the relay's, so a pin nobody ran is given back after this long. */
+const PIN_MAX_AGE_MS = 3_600_000;
+/** For a relay reachable from the internet: limits on what one account or job can make it sign. */
+const MAX_CHALLENGE_BYTES = 64 * 1024;
+const MAX_OPEN_PINS_PER_BUYER = 5;
+const MAX_SIGNINGS_PER_JOB_PER_DAY = 8;
 
 /** Deletes refunded, expired and cancelled work, paid work past retention, and every private check
  * once its job has ended. A failed read deletes nothing. Returns the deleted deliverables' job ids. */
@@ -348,6 +356,32 @@ export async function createHandoffHandler(
   await privateDirectory(directory);
   const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
   await privateDirectory(records);
+  const pins = join(directory, `pins-${sha256Hex(deps.escrow)}`);
+  await privateDirectory(pins);
+  const pinPath = (jobId: number, kind: RunKind) =>
+    join(pins, `${jobId}.${kind}.json`);
+  const signings = new Map<number, { since: number; count: number }>();
+  function allowSigning(jobId: number, now = Date.now()): boolean {
+    let entry = signings.get(jobId);
+    if (!entry || now - entry.since > 86_400_000) {
+      if (signings.size > 10_000) signings.clear();
+      entry = { since: now, count: 0 };
+      signings.set(jobId, entry);
+    }
+    entry.count += 1;
+    return entry.count <= MAX_SIGNINGS_PER_JOB_PER_DAY;
+  }
+  async function openPins(buyer: string | undefined): Promise<number> {
+    let count = 0;
+    for (const name of await readdir(pins)) {
+      if (!name.endsWith(".json")) continue;
+      const record = JSON.parse(await readPrivate(join(pins, name))) as {
+        buyer?: string;
+      };
+      if (record.buyer === buyer) count += 1;
+    }
+    return count;
+  }
   const queues = new Map<number, Promise<unknown>>();
   const verifier = new RelayVerifier(deps.isAccessKey);
   const pinned = new Set<string>();
@@ -441,6 +475,8 @@ export async function createHandoffHandler(
         terminal || (typeof recorded === "string" && /^\d+$/.test(recorded)),
       );
       if (request.kind === "Verify") requireSafe(isHash(job.deliverable_hash));
+      if (!internal && deps.requireSignatures)
+        requireSafe(allowSigning(request.job_id));
       const name = profile(job, request.job_id, request.kind);
       const transactionHash = await wallet(async () => {
         const fresh = await deps.getJob(request.job_id);
@@ -452,6 +488,9 @@ export async function createHandoffHandler(
         return deleteOnce(() => deps.deleteSecret(job.verifier_hash, name));
       });
       pinned.delete(`${request.job_id}:${request.kind}`);
+      await unlink(pinPath(request.job_id, request.kind)).catch(
+        () => undefined,
+      );
       if (terminal) {
         // Paid work stays until the buyer can collect it; see sweepDeliveries for how long.
         const kinds =
@@ -482,27 +521,58 @@ export async function createHandoffHandler(
     requireSafe(
       sha256Hex(other) === (challenge ? job.fakes_hash : job.deliverable_hash),
     );
-    if (challenge) await writePrivate(path(request.job_id, "check"), check);
-    const name = profile(
-      job,
-      request.job_id,
-      challenge ? "Challenge" : "Verify",
+    const kind: RunKind = challenge ? "Challenge" : "Verify";
+    const pinFile = pinPath(request.job_id, kind);
+    if (!internal && deps.requireSignatures) {
+      if (challenge) {
+        requireSafe(
+          Buffer.byteLength(check) + Buffer.byteLength(other) <=
+            MAX_CHALLENGE_BYTES,
+        );
+        requireSafe(
+          (await safeExistingFile(pinFile)) ||
+            (await openPins(job.buyer)) < MAX_OPEN_PINS_PER_BUYER,
+        );
+      }
+      requireSafe(allowSigning(request.job_id));
+    }
+    // A check file is kept only once its secret is stored, but a bad path is refused before signing.
+    if (challenge) await safeExistingFile(path(request.job_id, "check"));
+    const name = profile(job, request.job_id, kind);
+    // Written first, so a deposit can always be found and returned, even if the job is later cancelled.
+    await writePrivate(
+      pinFile,
+      JSON.stringify({
+        verifier_hash: job.verifier_hash,
+        profile: name,
+        buyer: job.buyer,
+        at: Date.now(),
+      }),
     );
-    const stored = await wallet(async () => {
-      const fresh = await deps.getJob(request.job_id);
-      requireSafe(
-        fresh &&
-          (challenge
-            ? ["Draft", "Challenging"]
-            : ["Delivered", "Verifying"]
-          ).includes(fresh.state),
-      );
-      return deps.storeSecret(job.verifier_hash, name, {
-        PROVEN_CHECK: check,
-        [challenge ? "PROVEN_REFERENCE" : "PROVEN_DELIVERABLE"]: other,
+    let stored: { transactionHash: string; ciphertextBytes: number };
+    try {
+      stored = await wallet(async () => {
+        const fresh = await deps.getJob(request.job_id);
+        requireSafe(
+          fresh &&
+            (challenge
+              ? ["Draft", "Challenging"]
+              : ["Delivered", "Verifying"]
+            ).includes(fresh.state),
+        );
+        return deps.storeSecret(job.verifier_hash, name, {
+          PROVEN_CHECK: check,
+          [challenge ? "PROVEN_REFERENCE" : "PROVEN_DELIVERABLE"]: other,
+        });
       });
-    });
-    pinned.add(`${request.job_id}:${challenge ? "Challenge" : "Verify"}`);
+    } catch (error) {
+      // Refused for certain, so no deposit was locked. Anything else stays listed for the sweep.
+      if (error instanceof Refused || isDefiniteRefusal(error))
+        await unlink(pinFile).catch(() => undefined);
+      throw error;
+    }
+    if (challenge) await writePrivate(path(request.job_id, "check"), check);
+    pinned.add(`${request.job_id}:${kind}`);
     return {
       profile: name,
       transaction_hash: stored.transactionHash,
@@ -512,7 +582,55 @@ export async function createHandoffHandler(
     };
   }
 
+  /** Returns the deposit of every pin whose run is over, whose job is gone, or that nobody ran in time.
+   * A failed read or delete changes nothing and is tried again on the next sweep. */
+  async function expirePins(now = Date.now()): Promise<void> {
+    for (const name of await readdir(pins)) {
+      const parts = /^(\d+)\.(Challenge|Verify)\.json$/.exec(name);
+      if (!parts) continue;
+      const jobId = Number(parts[1]);
+      const kind = parts[2] as RunKind;
+      try {
+        const file = join(pins, name);
+        const record = JSON.parse(await readPrivate(file)) as {
+          verifier_hash: string;
+          profile: string;
+          at: number;
+        };
+        const job = await deps.getJob(jobId);
+        const running =
+          job &&
+          (["Challenging", "Verifying"].includes(job.state) ||
+            job.run_started_at != null);
+        if (running) continue;
+        const stale = now - record.at > PIN_MAX_AGE_MS;
+        const ended =
+          !job ||
+          ["Released", "Refunded", "Expired"].includes(job.state) ||
+          (kind === "Challenge"
+            ? job.challenge_request_id
+            : job.verdict_request_id) != null;
+        if (!stale && !ended) continue;
+        await wallet(() =>
+          deleteOnce(() =>
+            deps.deleteSecret(record.verifier_hash, record.profile),
+          ),
+        );
+        await unlink(file);
+        pinned.delete(`${jobId}:${kind}`);
+        if (!job || (stale && job.state === "Draft"))
+          await unlink(path(jobId, "check")).catch(() => undefined);
+      } catch {
+        /* Try again on the next sweep. */
+      }
+    }
+  }
+
   return async (value, internal = false) => {
+    if (internal && object(value) && value.action === "expire_pins") {
+      await expirePins();
+      return { ok: true, result: {} };
+    }
     if (
       object(value) &&
       value.action === "demo_status" &&
@@ -647,7 +765,9 @@ export async function startHandoffServer(
   const handle = await createHandoffHandler(deps, directory);
   const cleaned = new Set<string>();
   const sweep = async () => {
+    await deps.reconcile?.().catch(() => undefined);
     await sweepSecrets(deps, directory, handle, cleaned);
+    await handle({ action: "expire_pins" }, true);
     await sweepDeliveries(deps, directory);
   };
   void sweep();
@@ -718,36 +838,69 @@ async function main(): Promise<void> {
     process.stderr.write(`Private timing evidence: ${path}\n`);
   }
   const account = near.relayAccount(config, !!timing);
-  const secretJournal = (
-    profile: string,
-    operation: string,
-  ): SecretJournal | undefined =>
-    timing
-      ? async (transaction_hash, submission) => {
-          await writePrivate(
-            join(
-              dirname(DEFAULT_SOCKET),
-              `secret-submission-${randomUUID()}.json`,
-            ),
-            JSON.stringify({
-              profile,
-              operation,
-              transaction_hash,
-              submission,
-            }),
-          );
-        }
-      : undefined;
+  // The transaction being sent, known only once it is signed and about to go out.
+  let inFlight: string | null = null;
+  const secretJournal =
+    (profile: string, operation: string): SecretJournal =>
+    async (transaction_hash, submission) => {
+      inFlight = transaction_hash;
+      if (!timing) return;
+      await writePrivate(
+        join(dirname(DEFAULT_SOCKET), `secret-submission-${randomUUID()}.json`),
+        JSON.stringify({
+          profile,
+          operation,
+          transaction_hash,
+          submission,
+        }),
+      );
+    };
   let demoCompute: HandoffDependencies["demoCompute"];
-  let signingSuspended = false;
+  // Kept on disk, so a restart cannot forget a transaction whose outcome is still unknown.
+  const suspendedFile = join(dirname(DEFAULT_SOCKET), "signing-suspended.json");
+  await privateDirectory(dirname(DEFAULT_SOCKET));
+  let unknownTransaction: { hash: string; at: number } | null =
+    (await safeExistingFile(suspendedFile))
+      ? (JSON.parse(await readPrivate(suspendedFile)) as {
+          hash: string;
+          at: number;
+        })
+      : null;
+  let signingSuspended = unknownTransaction !== null;
   async function signing<T>(call: () => Promise<T>): Promise<T> {
+    inFlight = null;
     try {
       return await call();
     } catch (error) {
-      // Stop signing only when an outcome is unknown. A definite refusal changed nothing on chain.
-      if (!isDefiniteRefusal(error)) signingSuspended = true;
+      // Stop signing only when something was sent and its outcome is unknown.
+      if (inFlight && !isDefiniteRefusal(error)) {
+        signingSuspended = true;
+        unknownTransaction = { hash: inFlight, at: Date.now() };
+        await writePrivate(suspendedFile, JSON.stringify(unknownTransaction));
+        console.error(`relay paused signing: ${inFlight} is unknown`);
+      }
       throw error;
     }
+  }
+  /** Resumes once the chain has settled the transaction, or once it is too old to ever be included. */
+  async function reconcile(): Promise<void> {
+    if (!unknownTransaction) return;
+    let settled = false;
+    try {
+      const outcome = await account.provider.viewTransactionStatus({
+        txHash: unknownTransaction.hash,
+        accountId: account.accountId,
+        waitUntil: "NONE",
+      });
+      settled = ["EXECUTED", "FINAL"].includes(outcome.final_execution_status);
+    } catch {
+      settled = Date.now() - unknownTransaction.at > 2 * 86_400_000;
+    }
+    if (!settled) return;
+    await unlink(suspendedFile);
+    unknownTransaction = null;
+    signingSuspended = false;
+    console.error("relay resumed signing");
   }
   if (args[0] === "--demo-compute") {
     const buyer = process.env.PROVEN_BUYER_ACCOUNT_ID;
@@ -821,6 +974,7 @@ async function main(): Promise<void> {
       ),
     demoCompute,
     isSigningSuspended: () => signingSuspended,
+    reconcile,
     requireSignatures: process.env.PROVEN_RELAY_REQUIRE_SIGNATURES === "yes",
   });
 }

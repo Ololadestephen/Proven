@@ -862,3 +862,41 @@ test("the sweep deletes a run's secret once its result is recorded, once", async
     await f.cleanup();
   }
 });
+
+test("returns the deposit of a pin whose job was cancelled, without any request", async () => {
+  const f = await fixture();
+  const handle = await createHandoffHandler(f.deps, f.directory);
+  assert.equal((await handle(challenge())).ok, true);
+  const original = f.deps.getJob;
+  f.deps.getJob = async () => null;
+  assert.equal((await handle({ action: "expire_pins" }, true)).ok, true);
+  f.deps.getJob = original;
+  assert.equal(f.deletions.length, 1);
+  assert.deepEqual(await readdir(f.records), []);
+  await handle({ action: "expire_pins" }, true);
+  assert.equal(f.deletions.length, 1);
+  await f.cleanup();
+});
+
+test("keeps a pin while its job is waiting, and refuses expire_pins from outside", async () => {
+  const f = await fixture();
+  const handle = await createHandoffHandler(f.deps, f.directory);
+  assert.equal((await handle(challenge())).ok, true);
+  await handle({ action: "expire_pins" }, true);
+  assert.equal(f.deletions.length, 0);
+  assert.equal((await handle({ action: "expire_pins" })).ok, false);
+  await f.cleanup();
+});
+
+test("leaves no check file or pin behind when the chain refuses the store", async () => {
+  const f = await fixture();
+  f.deps.storeSecret = async () => {
+    throw new Error("Secret transaction failed: abc");
+  };
+  const handle = await createHandoffHandler(f.deps, f.directory);
+  assert.equal((await handle(challenge())).ok, false);
+  assert.deepEqual(await readdir(f.records), []);
+  await handle({ action: "expire_pins" }, true);
+  assert.equal(f.deletions.length, 0);
+  await f.cleanup();
+});
