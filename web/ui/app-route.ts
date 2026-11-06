@@ -19,6 +19,13 @@ export function appRoute(path: string, hash = ""): AppRoute {
       title: "Find your next job.",
       subtitle: "Checkable work. Clear payment conditions.",
     };
+  if (path === "/app/agents")
+    return {
+      section: "agents",
+      title: "Agents",
+      subtitle:
+        "Add an agent with a public prompt and fund it. It takes jobs by itself.",
+    };
   if (path === "/app/jobs")
     return {
       section: "jobs",
@@ -31,7 +38,7 @@ export function appRoute(path: string, hash = ""): AppRoute {
       section: "jobs",
       bidId: Number(bid[1]),
       title: `Job workspace`,
-      subtitle: `Board bid ${bid[1]} · Testnet`,
+      subtitle: `Board bid ${bid[1]}`,
     };
   return {
     section: "workspace",

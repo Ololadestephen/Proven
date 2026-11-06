@@ -15,10 +15,16 @@ import {
 import { ReadError } from "./model.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
-export const BOARD = process.env.PROVEN_BOARD ?? "board-v2.proven.testnet";
+export const NETWORK =
+  process.env.NEAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
+export const BOARD = process.env.PROVEN_BOARD ?? "board-v3.proven.testnet";
 export const MARKET_ESCROW =
-  process.env.PROVEN_MARKET_ESCROW ?? "escrow-v3.proven.testnet";
-const RPC = "https://test.rpc.fastnear.com";
+  process.env.PROVEN_MARKET_ESCROW ?? "escrow-v4.proven.testnet";
+const RPC =
+  NETWORK === "mainnet"
+    ? "https://rpc.mainnet.fastnear.com"
+    : "https://test.rpc.fastnear.com";
+const HOSTED_SERVICE = process.env.PROVEN_HOSTED_URL ?? "http://127.0.0.1:4175";
 const MAX_BODY = 512 * 1024;
 const HANDOFF_ACTIONS = new Set([
   "challenge",
@@ -44,7 +50,11 @@ interface Job {
   state: string;
   spec_hash: string;
   fakes_hash: string;
+  format_hash: string;
   verifier_hash: string;
+  delivered_at: string | null;
+  verdict_window_secs: number;
+  run_started_at: string | null;
   deliverable_hash: string | null;
   fakes_caught: number;
   fakes_total: number;
@@ -66,6 +76,9 @@ interface Bid {
   check_hash: string;
   reference_hash: string;
   verifier_hash: string;
+  format: string;
+  format_hash: string;
+  expires_at: string;
   state: string;
   claim: Claim | null;
   past_jobs: Array<{ job_id: number }>;
@@ -86,6 +99,7 @@ export function candidateJob(
       job.worker === bid.claim?.agent &&
       job.spec_hash === bid.check_hash &&
       job.fakes_hash === bid.reference_hash &&
+      job.format_hash === bid.format_hash &&
       job.amount === bid.amount &&
       job.state === "Draft",
   );
@@ -162,22 +176,37 @@ export async function readMarket() {
   const readJob = (id: number) =>
     recent.find(([jobId]) => jobId === id)?.[1] ??
     view<Job | null>(MARKET_ESCROW, "get_job", { job_id: id });
+  const readFee = (id: number) =>
+    view<{ state: string; amount: string } | null>(BOARD, "get_fee", {
+      job_id: id,
+    });
+  const records = new Map<string, BuyerRecord>();
   const rows = await Promise.all(
-    bids.map(async ([id, bid]) => ({
-      id,
-      ...bid,
-      job: bid.claim?.job_id != null ? await readJob(bid.claim.job_id) : null,
-      last_job: bid.past_jobs.length
-        ? {
-            id: bid.past_jobs.at(-1)!.job_id,
-            ...(await readJob(bid.past_jobs.at(-1)!.job_id)),
-          }
-        : null,
-      candidate_job_id: candidateJob(bid, recent),
-    })),
+    bids.map(async ([id, bid]) => {
+      const past = await Promise.all(
+        bid.past_jobs.map((entry) => readJob(entry.job_id)),
+      );
+      const current =
+        bid.claim?.job_id != null ? await readJob(bid.claim.job_id) : null;
+      const record = records.get(bid.buyer) ?? emptyRecord();
+      records.set(bid.buyer, record);
+      for (const job of [...past, current]) countJob(record, job?.state);
+      const lastId = bid.past_jobs.at(-1)?.job_id;
+      const feeJob = bid.claim?.job_id ?? lastId ?? null;
+      return {
+        id,
+        ...bid,
+        job: current,
+        last_job: lastId !== undefined ? { id: lastId, ...past.at(-1)! } : null,
+        candidate_job_id: candidateJob(bid, recent),
+        fee_job_id: feeJob,
+        fee: feeJob !== null ? await readFee(feeJob) : null,
+      };
+    }),
   );
   return {
-    network: "testnet",
+    network: NETWORK,
+    buyer_records: Object.fromEntries(records),
     board: BOARD,
     escrow: MARKET_ESCROW,
     verifier_hash: config.verifier_hash,
@@ -185,6 +214,60 @@ export async function readMarket() {
     agents: agents.map((agent) => agent.wallet),
     bids: rows.reverse(),
   };
+}
+
+interface BuyerRecord {
+  paid: number;
+  refunded: number;
+  expired: number;
+}
+const emptyRecord = (): BuyerRecord => ({ paid: 0, refunded: 0, expired: 0 });
+function countJob(record: BuyerRecord, state: string | undefined) {
+  if (state === "Released") record.paid += 1;
+  if (state === "Refunded") record.refunded += 1;
+  if (state === "Expired") record.expired += 1;
+}
+
+/** What the page and the agent tools need in order to reach the right network and wallets. */
+export const marketConfig = () => ({ network: NETWORK });
+
+/** Publishes a bid's check once its bid has ended. The relay checks the rule against the chain. */
+export function revealRoute(bidId: number) {
+  if (!Number.isSafeInteger(bidId) || bidId < 0)
+    throw new ReadError("Invalid bid.", 400);
+  return relay({ action: "reveal", bid_id: bidId });
+}
+
+/** Passes one request to the hosted agents service on this machine, on fixed paths only. */
+export async function hostedRoute(
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  if (
+    !/^\/(terms|agents|withdraw|agents\/[a-z0-9._-]{2,64}|jobs\/\d{1,12}\/log)$/.test(
+      path,
+    )
+  )
+    throw new ReadError("Route not found.", 404);
+  const response = await fetch(`${HOSTED_SERVICE}${path}`, {
+    method,
+    headers: { "content-type": "application/json" },
+    ...(method === "POST" ? { body: JSON.stringify(body ?? {}) } : {}),
+    signal: AbortSignal.timeout(120_000),
+    redirect: "error",
+  }).catch(() => {
+    throw new ReadError("The hosted agents service is not reachable.", 503);
+  });
+  const reply = (await response.json().catch(() => ({}))) as {
+    error?: string;
+  };
+  if (!response.ok)
+    throw new ReadError(
+      reply.error ?? "The hosted agents service refused this.",
+      response.status === 404 ? 404 : 400,
+    );
+  return reply;
 }
 
 export async function sample() {

@@ -14,7 +14,7 @@ interface ActionContext {
 type SignedContext = Omit<ActionContext, "wallet"> & { wallet: Wallet };
 type BoardStep = Extract<
   Step,
-  { id: "register" | "claim" | "sync" | "link_job" }
+  { id: "register" | "claim" | "sync" | "link_job" | "settle_fee" | "close" }
 >;
 type RelayStep = Extract<Step, { id: "review" | "collect" }>;
 type ComputeStep = Extract<Step, { id: "challenge" | "verify" }>;
@@ -66,6 +66,7 @@ async function boardAction(current: BoardStep, context: SignedContext) {
           knowledge_hash: await sha256(""),
           tools_hash: await sha256("[]"),
           model: "not-declared",
+          owner: null,
         },
         (NEAR * 2n) / 100n,
         30n * TGAS,
@@ -84,10 +85,19 @@ async function boardAction(current: BoardStep, context: SignedContext) {
       await boardCall(context, "sync", { bid_id: bid.id });
       return;
     case "link_job":
-      await boardCall(context, "link_job", {
-        bid_id: bid.id,
-        job_id: current.jobId,
-      });
+      // The attempt fee and its record. The board returns all of it if the job does not fit.
+      await boardCall(
+        context,
+        "link_job",
+        { bid_id: bid.id, job_id: current.jobId },
+        (NEAR * 17n) / 1000n,
+      );
+      return;
+    case "settle_fee":
+      await boardCall(context, "settle_fee", { job_id: current.jobId });
+      return;
+    case "close":
+      await boardCall(context, "close_bid", { bid_id: bid.id });
   }
 }
 
@@ -173,6 +183,7 @@ async function escrowAction(current: EscrowStep, context: SignedContext) {
           worker: bid.claim.agent,
           spec_hash: bid.check_hash,
           fakes_hash: bid.reference_hash,
+          format_hash: bid.format_hash,
           amount: bid.amount,
           token: null,
           deadline: ((BigInt(clock) + 3_600_000n) * 1_000_000n).toString(),
@@ -199,6 +210,9 @@ async function escrowAction(current: EscrowStep, context: SignedContext) {
       return;
     case "settle":
       await escrowCall(context, current.method, { job_id: current.jobId });
+      return;
+    case "expire":
+      await escrowCall(context, "expire", { job_id: current.jobId });
   }
 }
 
@@ -219,6 +233,8 @@ export async function performJobAction(
     case "claim":
     case "sync":
     case "link_job":
+    case "settle_fee":
+    case "close":
       await boardAction(current, signedContext);
       return;
     default:

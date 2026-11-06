@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AgentsPage } from "./AgentsPage.tsx";
 import { JobWorkspace } from "./JobWorkspace.tsx";
 import { PostJob } from "./PostJob.tsx";
 import type { Market, Wallet, Run } from "./market-types.ts";
@@ -52,7 +53,7 @@ function Overview({
         {!wallet ? (
           <div className="workspace-empty">
             <h3>A clear view of your work.</h3>
-            <p>Connect a testnet wallet to see your jobs and next actions.</p>
+            <p>Connect a wallet to see your jobs and next actions.</p>
             <a href="/app/market" className="button button-secondary">
               Explore the market
             </a>
@@ -168,7 +169,7 @@ export function WorkspacePages({
   clock: number;
   busy: boolean;
 }) {
-  if (!market) return <p role="status">Reading the testnet board…</p>;
+  if (!market) return <p role="status">Reading the board…</p>;
   if (route.bidId !== undefined) {
     const bid = market.bids.find((item) => item.id === route.bidId);
     return bid ? (
@@ -189,6 +190,8 @@ export function WorkspacePages({
   }
   if (route.section === "post")
     return <PostJob market={market} wallet={wallet} run={run} busy={busy} />;
+  if (route.section === "agents")
+    return <AgentsPage wallet={wallet} run={run} busy={busy} />;
   if (route.section === "market") return <MarketList bids={market.bids} />;
   if (route.section === "jobs")
     return <MyJobs market={market} wallet={wallet} />;

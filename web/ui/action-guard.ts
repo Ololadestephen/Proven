@@ -61,7 +61,12 @@ export function reconciled(pending: PendingAction, market: Market): boolean {
       bid.claim.number !== old?.claim?.number
     );
   if (method === "link_job") return bid.claim?.job_id === args.job_id;
-  if (method === "sync") return JSON.stringify(bid) !== JSON.stringify(old);
+  if (method === "sync" || method === "settle_fee" || method === "close_bid")
+    return JSON.stringify(bid) !== JSON.stringify(old);
+  if (method === "expire")
+    return ["Expired", "Expiring"].includes(
+      bid.job?.state ?? bid.last_job?.state ?? "",
+    );
   if (method === "request_challenge")
     return (
       !!bid.job &&

@@ -1,3 +1,4 @@
+import { COIN, NETWORK } from "./network.ts";
 import { useRef, useState } from "react";
 import type { Market, Wallet } from "./market-types.ts";
 import { api, remember, sha256 } from "./market-client.ts";
@@ -14,6 +15,8 @@ interface Draft {
   amount: string;
   windowMins: string;
   workers: string;
+  days: string;
+  revealAgreed: boolean;
 }
 interface Prepared {
   check_hash: string;
@@ -21,6 +24,8 @@ interface Prepared {
   amount: bigint;
   claim_window_secs: number;
   allowed_workers: string[] | null;
+  format: string;
+  expires_at: string;
 }
 
 function terms(draft: Draft) {
@@ -30,6 +35,8 @@ function terms(draft: Draft) {
   )
     throw new Error("The public description must contain 1 to 2,048 bytes.");
   const amount = parseNearAmount(draft.amount);
+  if (!/^[1-7]$/.test(draft.days))
+    throw new Error("A bid must end within 1 to 7 days.");
   if (
     !/^\d+$/.test(draft.windowMins) ||
     Number(draft.windowMins) < 1 ||
@@ -75,6 +82,8 @@ export function PostJob({
     reference: "",
     amount: "0.01",
     windowMins: "30",
+    days: "3",
+    revealAgreed: false,
     workers: "",
   });
   const [stage, setStage] = useState(0);
@@ -83,7 +92,7 @@ export function PostJob({
   const [preparing, setPreparing] = useState(false);
   const samplePending = useRef(false);
   const locked = busy || preparing;
-  const update = (key: keyof Draft, value: string) => {
+  const update = (key: keyof Draft, value: string | boolean) => {
     setDraft((current) => ({ ...current, [key]: value }));
     setPrepared(null);
     setError("");
@@ -138,7 +147,26 @@ export function PostJob({
           sha256(draft.check),
           sha256(draft.reference),
         ]);
-        setPrepared({ ...validated, check_hash, reference_hash });
+        const format = (check as { format?: unknown }).format;
+        if (typeof format !== "string" || !format)
+          throw new Error(
+            "The check must carry its public format, the fields a delivery must have.",
+          );
+        if (!draft.revealAgreed)
+          throw new Error(
+            "Agree that the relay publishes your check when this bid closes.",
+          );
+        const expires_at = (
+          (BigInt(Date.now()) + BigInt(draft.days) * 86_400_000n) *
+          1_000_000n
+        ).toString();
+        setPrepared({
+          ...validated,
+          check_hash,
+          reference_hash,
+          format,
+          expires_at,
+        });
       }
       setStage((current) => Math.min(current + 1, 2));
     } catch (cause) {
@@ -167,10 +195,13 @@ export function PostJob({
           check_hash: prepared.check_hash,
           reference_hash: prepared.reference_hash,
           verifier_hash: market.verifier_hash,
+          format: prepared.format,
+          expires_at: prepared.expires_at,
+          reveal_agreed: true,
           claim_window_secs: prepared.claim_window_secs,
           allowed_workers: prepared.allowed_workers,
         },
-        deposit: (NEAR * 6n) / 100n,
+        deposit: (NEAR * 8n) / 100n,
         gas: 30n * TGAS,
       });
     });
@@ -212,7 +243,7 @@ export function PostJob({
           <>
             <p className="market-note">
               Describe work a program can check. Your brief and payment terms
-              will be public on testnet.
+              will be public.
             </p>
             <label>
               Public brief
@@ -234,9 +265,7 @@ export function PostJob({
                   onChange={(event) => update("amount", event.target.value)}
                   inputMode="decimal"
                 />
-                <span className="market-note">
-                  Above 0, up to 0.1 testnet NEAR.
-                </span>
+                <span className="market-note">Above 0, up to 0.1 NEAR.</span>
               </label>
               <label>
                 Claim window in minutes
@@ -265,6 +294,26 @@ export function PostJob({
         )}
         {stage === 1 && (
           <>
+            <label>
+              Bid ends after this many days (1 to 7)
+              <input
+                value={draft.days}
+                onChange={(event) => update("days", event.target.value)}
+                inputMode="numeric"
+              />
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={draft.revealAgreed}
+                onChange={(event) =>
+                  update("revealAgreed", event.target.checked)
+                }
+              />{" "}
+              I agree that the relay publishes my check when this bid closes.
+              Anyone can compare it with its hash, and workers can see what they
+              were judged by. The reference stays private.
+            </label>
             <p className="market-note">
               The check must reject the planted fakes before payment can be
               funded. These texts stay in this browser until you send them to
@@ -301,22 +350,43 @@ export function PostJob({
             </details>
             <dl className="workspace-review">
               <dt>Payment</dt>
-              <dd>{draft.amount} testnet NEAR, funded in a later step</dd>
+              <dd>
+                {draft.amount} {COIN}, funded in a later step
+              </dd>
               <dt>Claim window</dt>
               <dd>{draft.windowMins} minutes</dd>
               <dt>Workers</dt>
               <dd>
                 {prepared.allowed_workers?.join(", ") ?? "Anyone may apply"}
               </dd>
+              <dt>Public format</dt>
+              <dd>
+                <code>{prepared.format}</code>
+              </dd>
+              <dt>Bid ends</dt>
+              <dd>
+                In {draft.days} days. Your check is then published, and it can
+                be checked against its hash.
+              </dd>
+              <dt>Attempts</dt>
+              <dd>At most 3 funded attempts, one per account.</dd>
+              <dt>Attempt fee</dt>
+              <dd>
+                0.017 NEAR at each link: 0.015 fee and 0.002 for its record. The
+                worker keeps the fee if well-formed work fails a rule. A pass,
+                no delivery or no verdict returns the fee to you.
+              </dd>
               <dt>Posting deposit</dt>
               <dd>
-                0.06 NEAR for storage; the unused part returns. Network gas is
+                0.08 NEAR for storage; the unused part returns. Network gas is
                 additional.
               </dd>
               <dt>Signing account</dt>
               <dd>{wallet?.accountId ?? "Connect a wallet to post"}</dd>
               <dt>Contract</dt>
-              <dd>{market.board} · testnet</dd>
+              <dd>
+                {market.board} · {NETWORK}
+              </dd>
             </dl>
             <details>
               <summary>Acceptance check commitments</summary>
@@ -339,7 +409,6 @@ export function PostJob({
               Posting does not lock the payment. Challenge and verification each
               require a separate 0.1 NEAR compute deposit and gas. Unused
               compute deposit returns; execution failures can still incur costs.
-              This Market is testnet only.
             </p>
           </>
         )}
@@ -376,7 +445,7 @@ export function PostJob({
             disabled={locked || !wallet || !prepared || market.paused}
             onClick={post}
           >
-            {busy ? "Posting…" : "Post job · 0.06 NEAR deposit"}
+            {busy ? "Posting…" : "Post job · 0.08 NEAR deposit"}
           </button>
         )}
       </div>

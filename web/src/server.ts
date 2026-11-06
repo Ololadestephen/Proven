@@ -11,6 +11,9 @@ import { launchFixedDemo } from "./demo-process.ts";
 import { demoRoute } from "./demo-routes.ts";
 import { loadJob } from "./evidence.ts";
 import {
+  hostedRoute,
+  marketConfig,
+  revealRoute,
   createDevWallet,
   RateLimiter,
   readMarketCached,
@@ -32,6 +35,8 @@ const FILES: Record<string, [string, string]> = {
   "/examples/": ["examples.html", "text/html; charset=utf-8"],
   "/trust": ["trust.html", "text/html; charset=utf-8"],
   "/trust/": ["trust.html", "text/html; charset=utf-8"],
+  "/about": ["about.html", "text/html; charset=utf-8"],
+  "/about/": ["about.html", "text/html; charset=utf-8"],
   "/workspace-layout.css": ["workspace-layout.css", "text/css; charset=utf-8"],
   "/workspace-surfaces.css": [
     "workspace-surfaces.css",
@@ -162,6 +167,11 @@ async function marketRoute(
   if (req.method === "GET") {
     if (path === "/api/market") return readMarketCached();
     if (path === "/api/market/sample") return sample();
+    if (path === "/api/market/config") return marketConfig();
+    const reveal = /^\/api\/market\/reveal\/([0-9]+)$/.exec(path);
+    if (reveal) return revealRoute(Number(reveal[1]));
+    if (path.startsWith("/api/market/hosted/"))
+      return hostedRoute("GET", path.slice("/api/market/hosted".length));
     if (path === "/api/market/dev") return devWallet ? devWallet.list() : {};
     throw new ReadError("Route not found.", 404);
   }
@@ -177,6 +187,8 @@ async function marketRoute(
     throw new ReadError("Too many requests. Wait a minute and try again.", 429);
   const body = await readBody(req);
   if (path === "/api/market/relay") return relayRoute(body);
+  if (path.startsWith("/api/market/hosted/"))
+    return hostedRoute("POST", path.slice("/api/market/hosted".length), body);
   const review = /^\/api\/market\/review\/([0-9]+)$/.exec(path);
   if (review) return reviewRoute(Number(review[1]), body.auth as never);
   if (devWallet && path === "/api/market/dev/call")

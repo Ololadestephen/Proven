@@ -4,6 +4,11 @@ export const NEAR = 10n ** 24n;
 export interface Market {
   board: string;
   escrow: string;
+  network?: string;
+  buyer_records?: Record<
+    string,
+    { paid: number; refunded: number; expired: number }
+  >;
   verifier_hash: string;
   paused: boolean;
   agents: string[];

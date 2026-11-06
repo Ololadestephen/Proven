@@ -4,15 +4,16 @@ import type {
 } from "@hot-labs/near-connect";
 import { DefinitiveWalletFailure } from "./action-guard.ts";
 import type { Wallet } from "./market-types.ts";
+import { IS_MAINNET, NETWORK } from "./network.ts";
 import { b64, randomNonce, RELAY_RECIPIENT } from "./market-client.ts";
 
 export function connectorOptions(cspNonce: string): NearConnectorOptions {
   return {
-    network: "testnet",
+    network: NETWORK,
     autoConnect: false,
     cspNonce,
     features: {
-      testnet: true,
+      ...(IS_MAINNET ? {} : { testnet: true }),
       signMessage: true,
       signAndSendTransaction: true,
       signInWithoutAddKey: true,
@@ -26,12 +27,14 @@ export function adaptWallet(
   signOut: () => Promise<void>,
 ): Wallet {
   if (
-    !chosen.manifest.features.testnet ||
+    (!IS_MAINNET && !chosen.manifest.features.testnet) ||
     !chosen.manifest.features.signMessage
   )
-    throw new Error("Choose a testnet wallet that supports message signing.");
+    throw new Error(
+      "Choose a wallet that supports this network and message signing.",
+    );
   async function checkAccount() {
-    const accounts = await chosen.getAccounts({ network: "testnet" });
+    const accounts = await chosen.getAccounts({ network: NETWORK });
     if (!accounts.some((account) => account.accountId === accountId))
       throw new DefinitiveWalletFailure(
         "Your wallet account changed. Reconnect before continuing.",
@@ -44,7 +47,7 @@ export function adaptWallet(
     async call(call) {
       await checkAccount();
       const outcome = await chosen.signAndSendTransaction({
-        network: "testnet",
+        network: NETWORK,
         signerId: accountId,
         receiverId: call.receiver,
         actions: [
@@ -80,7 +83,7 @@ export function adaptWallet(
       await checkAccount();
       const nonce = randomNonce();
       const result = await chosen.signMessage({
-        network: "testnet",
+        network: NETWORK,
         signerId: accountId,
         message,
         recipient: RELAY_RECIPIENT,

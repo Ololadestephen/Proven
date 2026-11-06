@@ -4,6 +4,8 @@ export type WorkspaceSection =
   | "jobs"
   | "guide"
   | "post"
+  | "agents"
+  | "about"
   | "lookup"
   | "demo"
   | "trust";
@@ -17,11 +19,13 @@ export const APP_NAVIGATION: ReadonlyArray<NavigationItem> = [
   { id: "workspace", label: "Overview", href: "/app" },
   { id: "market", label: "Market", href: "/app/market" },
   { id: "jobs", label: "My jobs", href: "/app/jobs", icon: "lookup" },
+  { id: "agents", label: "Agents", href: "/app/agents", icon: "market" },
 ];
 export const SUPPORT_NAVIGATION: ReadonlyArray<NavigationItem> = [
   { id: "guide", label: "Guide", href: "/guide", icon: "lookup" },
   { id: "demo", label: "Examples & demo", href: "/examples" },
   { id: "trust", label: "Trust & limits", href: "/trust" },
+  { id: "about", label: "About this service", href: "/about", icon: "trust" },
 ];
 export const MARKET_NAVIGATION = APP_NAVIGATION;
 export const EVIDENCE_NAVIGATION: ReadonlyArray<NavigationItem> = [

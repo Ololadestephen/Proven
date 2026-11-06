@@ -8,6 +8,9 @@ export interface MarketJob {
   amount: string;
   state: string;
   deadline: string;
+  delivered_at?: string | null;
+  verdict_window_secs?: number;
+  run_started_at?: string | null;
   deliverable_hash: string | null;
   fakes_caught: number;
   fakes_total: number;
@@ -23,6 +26,9 @@ export interface MarketBid {
   check_hash: string;
   reference_hash: string;
   verifier_hash: string;
+  format: string;
+  format_hash: string;
+  expires_at: string;
   state: string;
   claim_window_secs: number;
   allowed_workers: string[] | null;
@@ -38,6 +44,8 @@ export interface MarketBid {
   job: MarketJob | null;
   last_job: MarketJob | null;
   candidate_job_id: number | null;
+  fee_job_id?: number | null;
+  fee?: { state: string; amount: string } | null;
 }
 export type Step =
   | { id: "review"; label: string }
@@ -48,6 +56,9 @@ export type Step =
   | { id: "verify"; label: string; jobId: number }
   | { id: "settle"; label: string; jobId: number; method: "release" | "refund" }
   | { id: "sync"; label: string }
+  | { id: "expire"; label: string; jobId: number }
+  | { id: "settle_fee"; label: string; jobId: number }
+  | { id: "close"; label: string }
   | { id: "collect"; label: string; jobId: number }
   | { id: "register"; label: string }
   | { id: "claim"; label: string }
@@ -71,6 +82,25 @@ export function nextStep(
   const isBuyer = viewer === bid.buyer;
   const isWorker = viewer !== null && viewer === bid.claim?.agent;
 
+  // Anyone can move these on, so a stuck job or an unsettled fee never depends on one person.
+  if (
+    (bid.state === "Open" || bid.state === "Done" || bid.state === "Closed") &&
+    bid.fee?.state === "Held" &&
+    bid.fee_job_id != null &&
+    bid.last_job
+  )
+    return {
+      id: "settle_fee",
+      label: "Settle the attempt fee",
+      jobId: bid.fee_job_id,
+    };
+  if (
+    now >= BigInt(bid.expires_at) &&
+    ["Unreviewed", "Blocked", "Open"].includes(bid.state)
+  )
+    return viewer
+      ? { id: "close", label: "This bid has expired: close it" }
+      : { id: "wait", label: "This bid has expired" };
   if (bid.state === "Unreviewed")
     return isBuyer
       ? { id: "review", label: "Run the bid review" }
@@ -85,6 +115,8 @@ export function nextStep(
   if (bid.state === "Open") {
     if (!viewer) return { id: "wait", label: "Connect a wallet to apply" };
     if (isBuyer) return { id: "wait", label: "Waiting for someone to apply" };
+    if (bid.funded_attempts >= 3)
+      return { id: "wait", label: "This bid has used all three attempts" };
     if (bid.allowed_workers && !bid.allowed_workers.includes(viewer))
       return { id: "wait", label: "This bid is limited to listed workers" };
     if (!registered) return { id: "register", label: "Register to apply" };
@@ -106,7 +138,7 @@ export function nextStep(
     if (bid.candidate_job_id !== null)
       return {
         id: "link_job",
-        label: "Link the job to this claim",
+        label: "Link the job and pay the attempt fee (0.017 NEAR)",
         jobId: bid.candidate_job_id,
       };
     return { id: "create_job", label: "Create the job for this agent" };
@@ -136,10 +168,27 @@ export function nextStep(
         label: "The check failed its challenge: close the bid",
       };
     case "Funded":
+      if (now > BigInt(job.deadline))
+        return {
+          id: "expire",
+          label: "Expire this job and return the money to the buyer",
+          jobId,
+        };
       return isWorker
         ? { id: "deliver", label: "Deliver the work", jobId }
         : { id: "wait", label: "Funded. Waiting for the delivery" };
     case "Delivered":
+      if (
+        job.delivered_at &&
+        now >
+          BigInt(job.delivered_at) +
+            BigInt(job.verdict_window_secs ?? 0) * 1_000_000_000n
+      )
+        return {
+          id: "expire",
+          label: "No verdict in time: expire this job",
+          jobId,
+        };
       return {
         id: "verify",
         label: "Run verification (0.1 NEAR, mostly refunded)",
@@ -163,6 +212,21 @@ export function nextStep(
     case "Refunded":
     case "Expired":
       return { id: "sync", label: "Update the bid" };
+    case "Verifying":
+      if (
+        job.delivered_at &&
+        job.run_started_at &&
+        now >
+          BigInt(job.delivered_at) +
+            BigInt(job.verdict_window_secs ?? 0) * 1_000_000_000n &&
+        now > BigInt(job.run_started_at) + 900_000_000_000n
+      )
+        return {
+          id: "expire",
+          label: "The run never finished: expire this job",
+          jobId,
+        };
+      return { id: "wait", label: "A run or payout is in progress" };
     default:
       return { id: "wait", label: "A run or payout is in progress" };
   }
