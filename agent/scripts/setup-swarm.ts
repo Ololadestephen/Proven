@@ -16,7 +16,7 @@ import { ROOT } from "../src/config.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
 
 const API = "https://testnet-api.outlayer.ai";
-const ESCROW = "escrow-v2.proven.testnet";
+const ESCROW = "escrow-v3.proven.testnet";
 const FUNDING = 400000000000000000000000n; // 0.4 NEAR for each agent wallet.
 const MAX_POLICY_STORAGE = 50000000000000000000000n; // 0.05 NEAR.
 const REVIEW_KEY_ALLOWANCE = 250000000000000000000000n; // 0.25 NEAR of gas.
@@ -211,12 +211,60 @@ async function reviewerKey() {
   });
 }
 
+/** Moves existing wallets and the review key to the new escrow and board. Run after those deploy. */
+async function moveToNewContracts() {
+  await once("v3_buyer_policy", () =>
+    storePolicy(
+      env.PROVEN_BUYER_WALLET_ID!,
+      env.PROVEN_BUYER_CUSTODY_KEY!,
+      env.PROVEN_BUYER_ACCOUNT_ID!,
+    ),
+  );
+  for (const letter of ["A", "B", "C"]) {
+    const prefix = `PROVEN_AGENT_${letter}`;
+    await once(`v3_agent_${letter}_policy`, () =>
+      storePolicy(
+        env[`${prefix}_WALLET_ID`]!,
+        env[`${prefix}_CUSTODY_KEY`]!,
+        env[`${prefix}_ACCOUNT_ID`]!,
+      ),
+    );
+  }
+  await once("v3_reviewer_key", async () => {
+    if (!env.PROVEN_REVIEWER_V2_PRIVATE_KEY)
+      save({
+        PROVEN_REVIEWER_V2_PRIVATE_KEY:
+          KeyPair.fromRandom("ed25519").toString(),
+      });
+    const key = KeyPair.fromString(
+      env.PROVEN_REVIEWER_V2_PRIVATE_KEY as `ed25519:${string}`,
+    );
+    const owner = controller();
+    const result = await owner.signAndSendTransaction({
+      receiverId: owner.accountId,
+      actions: [
+        actions.addFunctionCallAccessKey(
+          key.getPublicKey(),
+          BOARD,
+          ["record_review"],
+          REVIEW_KEY_ALLOWANCE,
+        ),
+      ],
+    });
+    if (!(typeof result.status === "object" && "SuccessValue" in result.status))
+      throw new PublicError("Installing the reviewer key failed.");
+    return result.transaction.hash;
+  });
+}
+
 async function main() {
   if (
     env.NEAR_NETWORK !== "testnet" ||
     process.argv[2] !== "--approved-testnet-setup"
   )
     throw new PublicError("The owner-approved testnet setup flag is required.");
+  if (process.argv[3] === "--move-to-new-contracts")
+    return moveToNewContracts();
   await once("buyer_policy", () =>
     storePolicy(
       env.PROVEN_BUYER_WALLET_ID!,

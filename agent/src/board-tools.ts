@@ -7,6 +7,7 @@ import { BOARD } from "./custody.ts";
 import { PublicError } from "./errors.ts";
 import { buildFeed } from "./feed.ts";
 import {
+  accountId,
   fields,
   flag,
   integer,
@@ -60,6 +61,11 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
         reference: string,
         amount_near: string,
         claim_window_secs: { type: "integer", minimum: 60, maximum: 86400 },
+        allowed_workers: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: 20,
+        },
       },
       ["description", "check", "reference", "amount_near"],
     ],
@@ -82,6 +88,12 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
       ["bid_id", "job_id"],
     ],
     [
+      "post_job_for_claim",
+      "Create the job for a bid's active claim. The worker and amount come from the chain, never from this call. Buyer custody only.",
+      { bid_id: id, check: string, reference: string },
+      ["bid_id", "check", "reference"],
+    ],
+    [
       "fund_linked_job",
       "Fund a job only if its bid's claim is still active and linked to it. Buyer custody only.",
       { bid_id: id, job_id: id },
@@ -100,6 +112,15 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
       ["bid_id"],
     ],
   ];
+
+/** Exact decimal NEAR for a yocto amount, for the job tool's `amount_near`. */
+export function nearText(yoctoAmount: string): string {
+  const padded = yoctoAmount.padStart(25, "0");
+  const fraction = padded.slice(-24).replace(/0+$/, "");
+  return fraction
+    ? `${padded.slice(0, -24)}.${fraction}`
+    : padded.slice(0, -24);
+}
 
 export const boardTools = definitions.map(
   ([name, description, properties, required]) => ({
@@ -134,6 +155,7 @@ export async function executeBoardTool(
   input: unknown,
   config: Config,
   fund: (jobId: number) => Promise<unknown>,
+  postForWorker: (worker: string, args: Args) => Promise<unknown>,
   forceDry = false,
 ): Promise<unknown> {
   const definition = definitions.find(([key]) => key === name);
@@ -185,6 +207,9 @@ export async function executeBoardTool(
       reference_hash: hash(reference),
       verifier_hash: verifier,
       claim_window_secs: integer(args, "claim_window_secs", 60, 86_400, 1_800),
+      allowed_workers: Array.isArray(args.allowed_workers)
+        ? args.allowed_workers.map((worker) => accountId(String(worker)))
+        : null,
     };
     return dry
       ? planned("post_bid", call)
@@ -216,6 +241,24 @@ export async function executeBoardTool(
       ? planned("close_bid", { bid_id: bidId() })
       : board.close(wallet(config), bidId());
 
+  if (name === "post_job_for_claim") {
+    const bid = await board.bid(bidId());
+    if (!bid?.claim || bid.state !== "Claimed")
+      throw new PublicError("That bid has no active claim.");
+    const check = text(args, "check");
+    const reference = text(args, "reference");
+    if (
+      hash(check) !== bid.check_hash ||
+      hash(reference) !== bid.reference_hash
+    )
+      throw new PublicError("These texts do not match the bid's hashes.");
+    return postForWorker(bid.claim.agent, {
+      worker: bid.claim.agent,
+      check,
+      reference,
+      amount_near: nearText(bid.amount),
+    });
+  }
   const jobId = integer(args, "job_id", 0, Number.MAX_SAFE_INTEGER);
   if (name === "link_job")
     return dry

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { boardTools, executeBoardTool, isBoardTool } from "./board-tools.ts";
+import {
+  boardTools,
+  executeBoardTool,
+  isBoardTool,
+  nearText,
+} from "./board-tools.ts";
 import type { Config } from "./config.ts";
 import { BOARD } from "./custody.ts";
 
@@ -27,6 +32,8 @@ test("a dry post_bid fixes the hashes and the verifier named in the check", asyn
     { description: "Do it", check, reference: "r", amount_near: "0.01" },
     config,
     never,
+    never,
+    never,
     true,
   )) as { call: { receiver_id: string; args: Record<string, unknown> } };
   assert.equal(result.call.receiver_id, BOARD);
@@ -49,6 +56,7 @@ test("a description over the board's limit, unknown fields and a keyless write a
       },
       config,
       never,
+      never,
       true,
     ),
   );
@@ -58,12 +66,23 @@ test("a description over the board's limit, unknown fields and a keyless write a
       { bid_id: 0, payee: "x.testnet" },
       config,
       never,
+      never,
       true,
     ),
     /Unknown field/,
   );
   await assert.rejects(
-    executeBoardTool("claim_bid", { bid_id: 0 }, config, never),
+    executeBoardTool("claim_bid", { bid_id: 0 }, config, never, never),
     /custody wallet/,
+  );
+});
+
+test("amounts convert exactly for the job tool", () => {
+  assert.equal(nearText("10000000000000000000000"), "0.01");
+  assert.equal(nearText("100000000000000000000000"), "0.1");
+  assert.equal(nearText("1000000000000000000000000"), "1");
+  assert.equal(
+    nearText("1500000000000000000000001"),
+    "1.500000000000000000000001",
   );
 });

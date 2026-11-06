@@ -50,7 +50,7 @@ export function parseReview(text: string): ReviewAnswer | null {
 }
 
 export async function reviewBid(
-  client: ModelClient,
+  client: Pick<ModelClient, "call">,
   key: string,
   description: string,
   run: string,

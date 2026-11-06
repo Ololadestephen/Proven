@@ -7,6 +7,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import { BoardClient, fundRefusal, type Bid, type Wallet } from "./board.ts";
+import { nearText } from "./board-tools.ts";
+import { keysFrom, KeyPool } from "./key-pool.ts";
 import { loadConfig, ROOT, type Config } from "./config.ts";
 import { BOARD } from "./custody.ts";
 import { PublicError } from "./errors.ts";
@@ -32,6 +34,10 @@ const BASE_LIMIT_NANO_USD = 0.05 * NANO_USD_PER_USD;
 const CEILING_NANO_USD = 0.3 * NANO_USD_PER_USD;
 /** Nominal, for this ledger only. Testnet NEAR is not converted to anything, and NEAR AI bills USD. */
 export const NOMINAL_NANO_USD_PER_NEAR = 1 * NANO_USD_PER_USD;
+/** The whole project's inference, across every key. */
+const PROJECT_LIMIT_NANO_USD = 1 * NANO_USD_PER_USD;
+/** More than this on one job is abnormal: about ten full-size calls. */
+const JOB_LIMIT_NANO_USD = 0.05 * NANO_USD_PER_USD;
 const REVIEW_LIMIT_NANO_USD = 0.1 * NANO_USD_PER_USD;
 export const AGENT_TOOLS = JSON.stringify(["submit_deliverable"]);
 const CLAIM_WINDOW_SECS = 1_800;
@@ -42,6 +48,25 @@ const MIN_WORK_NANOS = 420_000_000_000n;
 
 const pause = () =>
   new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
+
+/** One agent's keys in order. Budgets count every key, whichever one ran. */
+async function pooledClient(spender: string, ...names: string[]) {
+  const ledger = new Ledger(`${ROOT}runs/inference-ledger.jsonl`);
+  const keys = keysFrom(env(), [...new Set(names)]);
+  if (keys.length === 0)
+    throw new PublicError(`${spender} has no NEAR AI key set.`);
+  return new KeyPool(
+    new ModelClient(ledger, await fetchPrices()),
+    ledger,
+    keys,
+    {
+      agentNanoUsd: CEILING_NANO_USD,
+      projectNanoUsd: PROJECT_LIMIT_NANO_USD,
+      jobNanoUsd: JOB_LIMIT_NANO_USD,
+    },
+    `${ROOT}runs/key-events.jsonl`,
+  );
+}
 
 export function inferenceLimit(earnedYocto: bigint): number {
   const earned =
@@ -146,10 +171,7 @@ export async function runReview(bidId: number, keyName: string) {
     throw new PublicError("That bid is not waiting for a review.");
   const key = values[keyName];
   if (!key) throw new PublicError(`${keyName} is not set.`);
-  const client = new ModelClient(
-    new Ledger(`${ROOT}runs/inference-ledger.jsonl`),
-    await fetchPrices(),
-  );
+  const client = await pooledClient("review", keyName);
   const { answer, call } = await reviewBid(
     client,
     key,
@@ -171,7 +193,7 @@ export async function runReview(bidId: number, keyName: string) {
     new JsonRpcProvider({ url: config.rpc }),
     new KeyPairSigner(
       KeyPair.fromString(
-        values.PROVEN_REVIEWER_PRIVATE_KEY as `ed25519:${string}`,
+        values.PROVEN_REVIEWER_V2_PRIVATE_KEY as `ed25519:${string}`,
       ),
     ),
   );
@@ -277,11 +299,15 @@ export async function attempt(
   // Link before funding, so a claim cannot lapse under a job about to run.
   let jobId = bid.claim.job_id;
   if (jobId === null) {
-    const posted = (await buyerTool("post_job", {
-      worker: account,
+    // The worker and amount come from the claim the chain records.
+    const forClaim = createService(
+      createRuntime({ ...buyerConfig, allowedWorkers: [bid.claim.agent] }),
+    );
+    const posted = (await forClaim("post_job", {
+      worker: bid.claim.agent,
       check,
       reference,
-      amount_near: "0.01",
+      amount_near: nearText(bid.amount),
     })) as { result: number; transaction_hash: string };
     jobId = posted.result;
     if (!Number.isSafeInteger(jobId))
@@ -357,9 +383,10 @@ export async function attempt(
         if (!existsSync(deliverablePath)) {
           const key = env()[keyName];
           if (!key) throw new PublicError(`${keyName} is not set.`);
-          const client = new ModelClient(
-            new Ledger(`${ROOT}runs/inference-ledger.jsonl`),
-            await fetchPrices(),
+          const client = await pooledClient(
+            agent.id,
+            `NEARAI_KEY_AGENT_${letter.toUpperCase()}`,
+            keyName,
           );
           const profile: AgentProfile = {
             id: agent.id,

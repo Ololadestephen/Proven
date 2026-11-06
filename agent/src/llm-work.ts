@@ -3,6 +3,8 @@
 // Its output is only ever a deliverable: it cannot choose a job, payee, amount or action.
 import type { CallResult, ModelClient } from "./inference.ts";
 
+type Caller = Pick<ModelClient, "call">;
+
 export const MAX_DELIVERABLE_BYTES = 64 * 1024;
 const MAX_OUTPUT_TOKENS = 8_000;
 
@@ -43,7 +45,7 @@ export function parseDeliverable(text: string): {
 }
 
 export async function doWork(
-  client: ModelClient,
+  client: Caller,
   agent: AgentProfile,
   task: string,
   stage: string,

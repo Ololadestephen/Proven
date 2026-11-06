@@ -32,7 +32,7 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
   [
     [
       "post_job",
-      "Create a native-NEAR job with a named worker and committed private check/reference. Buyer custody only; amount at most 0.1 NEAR.",
+      "Create a native-NEAR job with a named worker and committed private check/reference. The worker must be on the operator's list; use post_job_for_claim for a board claim. Buyer custody only; amount at most 0.1 NEAR.",
       {
         worker: string,
         check: string,
@@ -223,6 +223,12 @@ export function createService(runtime: Runtime) {
     if (name === "post_job") {
       payable(dry);
       const worker = accountId(text(args, "worker", 64));
+      // A tool argument may come from a model, so it only selects from what the operator or a board
+      // claim has already allowed. An empty list refuses everyone.
+      if (!runtime.allowedWorkers.includes(worker))
+        throw new PublicError(
+          "That worker is not allowed. A worker comes from a board claim or the operator's list.",
+        );
       const check = text(args, "check"),
         reference = text(args, "reference");
       const cfg = await runtime.view<ChainConfig>("get_config", {});
@@ -429,6 +435,12 @@ export async function executeTool(
       args,
       config,
       (job_id) => service("fund_job", { job_id }),
+      (worker, jobArgs) =>
+        createService(createRuntime({ ...config, allowedWorkers: [worker] }))(
+          "post_job",
+          jobArgs,
+          options?.dryRun,
+        ),
       options?.dryRun,
     );
   return service(name, args, options?.dryRun);

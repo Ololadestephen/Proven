@@ -100,6 +100,7 @@ export function createRuntime(
     actor: config.actor,
     identity: config.account ?? null,
     escrow: config.escrow,
+    allowedWorkers: config.allowedWorkers,
     async view<T>(method: string, args: Record<string, unknown>): Promise<T> {
       return (await provider.callFunction({
         contractId: config.escrow,

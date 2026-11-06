@@ -12,7 +12,7 @@ import { waitTransactionResult } from "../src/near.ts";
 import type { Job } from "../src/types.ts";
 
 const API = "https://testnet-api.outlayer.ai";
-const ESCROW = "escrow-v2.proven.testnet";
+const ESCROW = "escrow-v3.proven.testnet";
 const env = parseEnv(readFileSync(`${ROOT}.env`, "utf8"));
 const key = env.PROVEN_AGENT_C_CUSTODY_KEY!;
 const account = env.PROVEN_AGENT_C_ACCOUNT_ID!;

@@ -37,7 +37,7 @@ export function loadConfig(): Config {
     broadcastRpcUrl: process.env.PROVEN_BROADCAST_RPC_URL,
     relayAccountId: required("RELAY_ACCOUNT_ID", "NEAR_ACCOUNT_ID"),
     relayPrivateKey: key as KeyPairString,
-    escrowContract: process.env.ESCROW_CONTRACT || "escrow-v2.proven.testnet",
+    escrowContract: process.env.ESCROW_CONTRACT || "escrow-v3.proven.testnet",
     outlayerContract: process.env.OUTLAYER_CONTRACT || "outlayer.testnet",
     outlayerApi: process.env.OUTLAYER_API || "https://testnet-api.outlayer.ai",
   };

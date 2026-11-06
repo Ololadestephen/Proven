@@ -16,6 +16,7 @@ export interface Config {
   account?: string;
   key?: string;
   demoSession?: string;
+  allowedWorkers: string[];
 }
 export function loadConfig(selected?: Actor): Config {
   let file: Record<string, string | undefined> = {};
@@ -36,7 +37,7 @@ export function loadConfig(selected?: Actor): Config {
   )
     throw new PublicError("Invalid actor.");
   const escrow = accountId(
-    get("ESCROW_CONTRACT") ?? "escrow-v2.proven.testnet",
+    get("ESCROW_CONTRACT") ?? "escrow-v3.proven.testnet",
   );
   if (!escrow.endsWith(".testnet"))
     throw new PublicError("Escrow must be a testnet account.");
@@ -81,5 +82,14 @@ export function loadConfig(selected?: Actor): Config {
         ? undefined
         : get(`${prefix}_PRIVATE_KEY`),
     demoSession: process.env.PROVEN_DEMO_SESSION,
+    allowedWorkers: (
+      get("PROVEN_BUYER_WORKERS") ??
+      [get("PROVEN_HONEST_ACCOUNT_ID"), get("PROVEN_FAKE_ACCOUNT_ID")]
+        .filter(Boolean)
+        .join(",")
+    )
+      .split(",")
+      .map((worker) => worker.trim())
+      .filter(Boolean),
   };
 }

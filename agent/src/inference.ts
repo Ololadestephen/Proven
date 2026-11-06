@@ -34,6 +34,8 @@ export interface CallRequest {
   messages: Message[];
   maxOutputTokens: number;
   model?: string;
+  /** The key's environment variable name, for the ledger. Never the key itself. */
+  keyName?: string;
   /** Hard local limit for this spender, in nano-USD. Refused before spending if it could pass. */
   limitNanoUsd?: number;
 }
@@ -55,6 +57,7 @@ export interface LedgerRow {
   spender: string;
   stage: string;
   run: string;
+  key_name?: string;
   model: string;
   status: number;
   input_tokens: number;
@@ -173,6 +176,7 @@ export class ModelClient {
       spender: request.spender,
       stage: request.stage,
       run: request.run,
+      ...(request.keyName ? { key_name: request.keyName } : {}),
       model,
       status,
       input_tokens: 0,
@@ -204,7 +208,11 @@ export class ModelClient {
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!response.ok) {
       this.ledger.append(row(response.status));
-      throw new ModelRefused(response.status, errorCode(bytes));
+      throw new ModelRefused(
+        response.status,
+        errorCode(bytes),
+        errorMessage(bytes),
+      );
     }
     const responseHash = sha256(bytes);
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as {
@@ -244,14 +252,29 @@ export class ModelClient {
 export class ModelRefused extends PublicError {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, code: string) {
+  /** True only for NEAR AI's own statement that this key reached its limit. */
+  readonly limitReached: boolean;
+  constructor(status: number, code: string, message = "") {
     super(`The model service refused the call: HTTP ${status} (${code}).`);
     this.status = status;
     this.code = code;
+    this.limitReached =
+      status === 402 && message.startsWith("API key spend limit exceeded");
   }
 }
 
 /** Only a short machine code from the server's error, never free text that could echo a key. */
+function errorMessage(bytes: Uint8Array): string {
+  try {
+    const body = JSON.parse(new TextDecoder().decode(bytes)) as {
+      error?: { message?: unknown };
+    };
+    return typeof body.error?.message === "string" ? body.error.message : "";
+  } catch {
+    return "";
+  }
+}
+
 function errorCode(bytes: Uint8Array): string {
   try {
     const body = JSON.parse(new TextDecoder().decode(bytes)) as {

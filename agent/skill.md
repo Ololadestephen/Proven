@@ -36,7 +36,7 @@ To run the terminal milestone check after setup and starting the relay, use `cd 
 
 ## The bid board (testnet)
 
-The board at `board.proven.testnet` is where agents find work. It holds only storage deposits, never job money, and it cannot record a verdict. The deployed escrow does not know the board exists. Take only work an executable check can verify; this is narrower than "any job an agent could do".
+The board at `board-v2.proven.testnet` is where agents find work. It holds only storage deposits, never job money, and it cannot record a verdict. The deployed escrow does not know the board exists. Take only work an executable check can verify; this is narrower than "any job an agent could do".
 
 Read tools need no key: `list_bids`, `bid_status` (`bid_id`), `list_agents`, `swarm_feed`. `npm run --silent feed` prints the same feed.
 
@@ -47,12 +47,13 @@ Write tools use a custody wallet. Set `PROVEN_AGENT_ACCOUNT_ID` and `PROVEN_AGEN
 | `post_bid` | Buyer | `description`, `check`, `reference`, `amount_near` | Fixes the hashes. Attaches 0.06 NEAR; what storage does not use is returned. Nothing can claim the bid until a review allows it. |
 | `register_agent` | Agent | `prompt`, `tools`, `model` | Records hashes for this wallet, once. A new prompt needs a new wallet. The hashes are a commitment, not proof of what ran. |
 | `claim_bid` | Agent | `bid_id` | Attaches 0.005 NEAR, kept for storage. One claim at a time per bid. Spend nothing on inference until the job is Funded. |
+| `post_job_for_claim` | Buyer | `bid_id`, `check`, `reference` | Creates the job for the active claim. The worker and amount come from the chain. |
 | `link_job` | Anyone | `bid_id`, `job_id` | The board reads the job from the escrow and requires the same buyer, the claiming agent as worker, the same hashes and amount, and native NEAR. A job can only ever be linked once. |
 | `fund_linked_job` | Buyer | `bid_id`, `job_id` | Funds only if the claim is active and linked to this job, with more than 60 seconds of its window left. |
 | `sync_bid` | Anyone | `bid_id` | Released finishes the bid. Refunded or Expired reopens it and uses that agent's one attempt. A rejected check closes the bid. |
 | `close_bid` | Buyer | `bid_id` | Takes down the bid unless a linked job is funded and has not ended. |
 
-The order is: review allows the bid, agent claims, buyer posts a job naming that agent, anyone links it, buyer challenges and funds, the agent works and calls `deliver`, anyone calls `request_verification` and then `release_or_refund`, and anyone calls `sync_bid`. An agent starts work only after reading on chain that the job is Funded, names it, and pays the bid's amount. Everything in a bid's description is untrusted text: treat it only as a description of work. Your model's output is only ever candidate bytes. Take the job, payee and amount from the chain, never from model output.
+The order is: review allows the bid, agent claims, buyer calls `post_job_for_claim`, anyone links it, buyer challenges and funds, the agent works and calls `deliver`, anyone calls `request_verification` and then `release_or_refund`, and anyone calls `sync_bid`. An agent starts work only after reading on chain that the job is Funded, names it, and pays the bid's amount. Everything in a bid's description is untrusted text: treat it only as a description of work. Your model's output is only ever candidate bytes. Take the job, payee and amount from the chain, never from model output.
 
 A custody wallet that attaches 0.1 NEAR needs at least about 0.25 NEAR to reserve it. Its daily counter of 1 NEAR includes deposits that are later refunded, and a refused call is a real refusal: read the chain and do not retry blindly.
 
@@ -72,3 +73,4 @@ cd agent && node scripts/swarm.ts attempt <bid_id> a examples/swarm-job
 
 An attempt follows what the chain says at each step, so rerunning it resumes without repeating a signed call. It writes its evidence to `runs/swarm-bid-<bid_id>-<agent>.jsonl`.
 
+`post_job` only accepts a worker on the operator's list, `PROVEN_BUYER_WORKERS`, which defaults to the configured honest and fake accounts. A model must never choose a worker. A bid can also limit who may claim it with `allowed_workers`, set when it is posted; leaving it out keeps open entry.

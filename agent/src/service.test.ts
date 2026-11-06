@@ -41,6 +41,7 @@ function fixture(state = "Delivered", actor: Actor = "buyer") {
   let handoffFails = false;
   const runtime: Runtime = {
     actor,
+    allowedWorkers: ["honest.testnet"],
     identity: actor === "buyer" ? current.buyer : `${actor}.testnet`,
     escrow: "escrow-v2.proven.testnet",
     async view<T>(method: string): Promise<T> {
@@ -272,4 +273,16 @@ test("explicit storage deposit reduces attachment without widening the custody c
     ),
   );
   assert.equal(f.calls.length, 0);
+});
+
+test("a job can only name a worker the operator or a board claim allowed", async () => {
+  const f = fixture("Draft");
+  await assert.rejects(
+    f.run(
+      "post_job",
+      { worker: "attacker.testnet", check, reference, amount_near: "0.01" },
+      true,
+    ),
+    /not allowed/,
+  );
 });

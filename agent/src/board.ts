@@ -40,6 +40,7 @@ export interface Bid {
   claim: Claim | null;
   claims_made: number;
   funded_attempts: number;
+  allowed_workers: string[] | null;
   past_jobs: Array<{
     agent: string;
     job_id: number;
@@ -152,6 +153,7 @@ export class BoardClient {
       reference_hash: string;
       verifier_hash: string;
       claim_window_secs: number;
+      allowed_workers?: string[] | null;
     },
   ) {
     return this.write(wallet, "post_bid", args, POST_DEPOSIT, SHORT_GAS);

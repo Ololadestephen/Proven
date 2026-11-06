@@ -7,6 +7,7 @@ import type { Config } from "./config.ts";
 test("worker signer refuses full-access, other targets, unrestricted methods and deposits", async () => {
   const config: Config = {
     actor: "honest",
+    allowedWorkers: [],
     escrow: "escrow-v2.proven.testnet",
     rpc: "",
     socket: "",
@@ -123,6 +124,7 @@ test("worker runtime waits for final execution after an optimistic delivery with
     reads = 0;
   const config: Config = {
     actor: "honest",
+    allowedWorkers: [],
     account: "honest.testnet",
     key: KeyPair.fromRandom("ed25519").toString(),
     escrow: "escrow-v2.proven.testnet",
