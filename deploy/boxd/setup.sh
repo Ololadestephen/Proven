@@ -9,19 +9,21 @@ sudo usermod -aG proven-sock proven-web
 sudo usermod -aG proven-sock proven-hosted
 # Nothing here needs Docker, and being able to reach it would mean root.
 sudo systemctl disable --now docker docker.socket 2>/dev/null || true
+# The machine's node lives in an admin's home, which services cannot see.
+sudo install -D -m 755 "$(readlink -f "$(command -v node)")" /opt/node/node
 sudo mkdir -p /opt/proven /etc/proven /var/lib/proven/relay /var/lib/proven/hosted
 sudo systemctl stop proven-relay proven-web proven-hosted 2>/dev/null || true
-sudo rsync -a --delete --exclude runs --exclude .env --exclude node_modules --exclude dist "$SRC"/ /opt/proven/
+sudo rsync -a --delete --exclude runs --exclude /.env --exclude node_modules --exclude dist --exclude /.relay.env --exclude /.hosted.env --exclude /.web-flags "$SRC"/ /opt/proven/
 sudo chown -R root:root /opt/proven
 cd /opt/proven
 for dir in relay agent web; do (cd "$dir" && sudo npm ci --no-audit --no-fund --silent); done
 (cd web && sudo npm run --silent build)
 sudo mkdir -p /opt/proven/runs
-sudo install -m 640 -o root -g proven-web "$SRC/.env" /opt/proven/.env
-sudo install -m 640 -o root -g proven-relay "$SRC/.relay.env" /etc/proven/relay.env
-sudo install -m 640 -o root -g proven-hosted "$SRC/.hosted.env" /etc/proven/hosted.env
+[ -f "$SRC/.env" ] && sudo install -m 640 -o root -g proven-web "$SRC/.env" /opt/proven/.env
+[ -f "$SRC/.relay.env" ] && sudo install -m 640 -o root -g proven-relay "$SRC/.relay.env" /etc/proven/relay.env
+[ -f "$SRC/.hosted.env" ] && sudo install -m 640 -o root -g proven-hosted "$SRC/.hosted.env" /etc/proven/hosted.env
 [ -f "$SRC/.web-flags" ] && sudo install -m 640 -o root -g proven-web "$SRC/.web-flags" /etc/proven/web-flags
-shred -u "$SRC/.env" "$SRC/.relay.env" "$SRC/.hosted.env" 2>/dev/null || rm -f "$SRC/.env" "$SRC/.relay.env" "$SRC/.hosted.env"
+rm -f "$SRC/.env" "$SRC/.relay.env" "$SRC/.hosted.env"
 sudo chown -R proven-web:proven-web /opt/proven/runs
 sudo chmod 700 /opt/proven/runs
 sudo chown proven-relay:proven-relay /var/lib/proven/relay

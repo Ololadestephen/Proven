@@ -10,7 +10,7 @@ SupplementaryGroups=proven-sock
 WorkingDirectory=/opt/proven/agent
 Environment=PROVEN_RELAY_SOCKET=/run/proven/relay.sock
 Environment=PROVEN_HOSTED_DATA=/var/lib/proven/hosted
-ExecStart=/usr/local/bin/node --env-file=/etc/proven/hosted.env src/hosted/service.ts
+ExecStart=/opt/node/node --env-file=/etc/proven/hosted.env src/hosted/service.ts
 Restart=on-failure
 RestartSec=10
 UMask=0077

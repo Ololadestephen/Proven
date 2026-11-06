@@ -13,7 +13,7 @@ Environment=PROVEN_RELAY_SOCKET=/run/proven/relay.sock
 EnvironmentFile=/opt/proven/.env
 # Holds PROVEN_WEB_FLAGS=--public once the owner has opened the site. Without it the server stays on localhost.
 EnvironmentFile=-/etc/proven/web-flags
-ExecStart=/usr/local/bin/node src/server.ts --origin=${PROVEN_ORIGIN} $PROVEN_WEB_FLAGS
+ExecStart=/opt/node/node src/server.ts --origin=${PROVEN_ORIGIN} $PROVEN_WEB_FLAGS
 Restart=on-failure
 RestartSec=5
 UMask=0077
