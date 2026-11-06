@@ -632,3 +632,95 @@ async fn repeated_claims_can_hold_a_bid_until_the_buyer_closes_it() -> anyhow::R
     assert_eq!(bid_of(&env, bid).await?["state"], "Cancelled");
     Ok(())
 }
+
+#[tokio::test]
+async fn a_stranger_can_finalize_but_cannot_complete_or_redirect_another_workers_claim(
+) -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    claim(&env, &env.agent, bid).await?.into_result()?;
+    let job = funded_job(&env, bid, &env.agent).await?;
+    refused(
+        &deliver(&env, &env.stranger, job).await?,
+        "only the job's worker",
+    );
+    assert_eq!(state_of(&env, job).await?, "Funded");
+    assert_eq!(sync(&env, bid).await?, "Claimed");
+    deliver(&env, &env.agent, job).await?.into_result()?;
+    behave(&env, "pass").await?;
+    run(&env, "request_verification", job).await?;
+    let before = env.agent.view_account().await?.balance.as_yoctonear();
+    // An unknown recipient argument is not authority: release still uses the recorded worker.
+    on_escrow(
+        &env,
+        &env.stranger,
+        "release",
+        json!({"job_id":job,"recipient":env.stranger.id()}),
+        NONE,
+    )
+    .await?
+    .into_result()?;
+    assert_eq!(
+        env.agent.view_account().await?.balance.as_yoctonear() - before,
+        ONE_NEAR
+    );
+    assert_eq!(sync(&env, bid).await?, "Done");
+    assert_eq!(attempt(&env, bid, &env.agent).await?, json!("Used"));
+    assert_eq!(attempt(&env, bid, &env.stranger).await?, Value::Null);
+    Ok(())
+}
+
+#[tokio::test]
+async fn same_account_self_claim_is_blocked_but_a_second_controlled_account_can_be_paid(
+) -> anyhow::Result<()> {
+    let env = setup().await?;
+    register(&env, &env.buyer).await?;
+    let bid = open_bid(&env).await?;
+    refused(
+        &claim(&env, &env.buyer, bid).await?,
+        "a buyer cannot claim its own bid",
+    );
+    // This fixture's operator controls both accounts; there is no on-chain identity proof.
+    claim(&env, &env.second, bid).await?.into_result()?;
+    let job = funded_job(&env, bid, &env.second).await?;
+    let unrelated = job_for(&env, &env.stranger, &env.agent, CHECK, ONE_NEAR).await?;
+    challenged(&env, unrelated).await?;
+    on_escrow(
+        &env,
+        &env.stranger,
+        "fund",
+        json!({"job_id":unrelated}),
+        NearToken::from_near(1),
+    )
+    .await?
+    .into_result()?;
+    deliver(&env, &env.second, job).await?.into_result()?;
+    behave(&env, "pass").await?;
+    run(&env, "request_verification", job).await?;
+    // Take the payout baseline after verification, allowing prior delivery refunds to settle.
+    let unrelated_before: Value = env
+        .escrow
+        .view("get_job")
+        .args_json(json!({"job_id":unrelated}))
+        .await?
+        .json()?;
+    let before = env.second.view_account().await?.balance.as_yoctonear();
+    on_escrow(&env, &env.stranger, "release", json!({"job_id":job}), NONE)
+        .await?
+        .into_result()?;
+    assert_eq!(
+        env.second.view_account().await?.balance.as_yoctonear() - before,
+        ONE_NEAR
+    );
+    assert_eq!(sync(&env, bid).await?, "Done");
+    assert_eq!(state_of(&env, unrelated).await?, "Funded");
+    let unrelated_after: Value = env
+        .escrow
+        .view("get_job")
+        .args_json(json!({"job_id":unrelated}))
+        .await?
+        .json()?;
+    assert_eq!(unrelated_before, unrelated_after);
+    assert!(env.escrow.view_account().await?.balance.as_yoctonear() >= ONE_NEAR);
+    Ok(())
+}

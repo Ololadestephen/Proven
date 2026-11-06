@@ -712,3 +712,20 @@ async fn the_minimum_trigger_gas_runs_a_bounded_callback() -> anyhow::Result<()>
     assert_eq!(state(&env, id).await?, "Passed");
     Ok(())
 }
+
+#[tokio::test]
+async fn a_delivery_cannot_be_changed_once_delivered() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let id = delivered_near_job(&env, 3_600).await?;
+    let changed = call(
+        &env,
+        &env.worker,
+        "deliver",
+        json!({ "job_id": id, "deliverable_hash": FAKES }),
+        NO_DEPOSIT,
+    )
+    .await?;
+    assert!(changed.is_failure());
+    assert_eq!(job(&env, id).await?["deliverable_hash"], DELIVERABLE);
+    Ok(())
+}
