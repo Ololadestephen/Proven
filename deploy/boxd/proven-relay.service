@@ -13,8 +13,8 @@ WorkingDirectory=/opt/proven/relay
 Environment=PROVEN_RELAY_REQUIRE_SIGNATURES=yes
 Environment=PROVEN_RELAY_SOCKET=/run/proven/relay.sock
 Environment=PROVEN_RELAY_DATA=/var/lib/proven/relay
-ExecStartPre=+/bin/sh -c 'rm -f /run/proven/relay.sock; chgrp proven-sock /run/proven'
-ExecStartPost=+/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do test -S /run/proven/relay.sock && break; sleep 1; done; chgrp proven-sock /run/proven/relay.sock'
+ExecStartPre=+/bin/rm -f /run/proven/relay.sock
+ExecStartPost=+/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do test -S /run/proven/relay.sock && break; sleep 1; done; chgrp proven-sock /run/proven /run/proven/relay.sock'
 ExecStart=/opt/node/node --env-file=/etc/proven/relay.env src/handoff.ts
 Restart=on-failure
 RestartSec=10
