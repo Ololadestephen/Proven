@@ -14,7 +14,7 @@ const CAPABILITIES = [
   "payment_check",
 ];
 /** The bid board. It holds no job money, so a wallet may also call it. */
-export const BOARD = "board.proven.testnet";
+export const BOARD = process.env.PROVEN_BOARD ?? "board-v2.proven.testnet";
 
 /** A readable-policy check is defense in depth; the TEE must enforce its on-chain policy too. */
 export function assertPolicy(value: unknown, escrow: string): void {

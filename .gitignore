@@ -1,4 +1,4 @@
-# Private planning and agent files: never committed or deployed
+
 CLAUDE.md
 AGENTS.md
 RULES.md
@@ -6,7 +6,7 @@ TASKS.md
 PLAN.md
 KICKOFF.md
 FACTS.md
-
+ATTACKS.md
 # Secrets
 .env
 .env.*
