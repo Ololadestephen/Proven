@@ -27,6 +27,9 @@ const MAX_HELD = 10n ** 24n; // 1 NEAR, enforced by the contract.
 const BUDGET = 35n * 10n ** 23n; // Stop above 3.5 NEAR across the new accounts.
 const MAX_POLICY_STORAGE = 5n * 10n ** 22n;
 const WORKER_KEY_ALLOWANCE = 2n * 10n ** 22n;
+/** Deploy and init stay in one transaction, so nobody can initialise the contract between them. NEAR
+ * holds back attached gas at a pessimistic price, so 100 Tgas left the balance short of storage. */
+const INIT_GAS = 12_000_000_000_000n;
 const WORKER_METHODS = [
   "deliver",
   "release",
@@ -176,7 +179,7 @@ async function deployEscrow(wasmPath: string) {
               max_job_amount: MAX_JOB.toString(),
               max_held: MAX_HELD.toString(),
             },
-            100_000_000_000_000n,
+            INIT_GAS,
             0n,
           ),
         ],
