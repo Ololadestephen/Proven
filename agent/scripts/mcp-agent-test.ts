@@ -107,6 +107,41 @@ log(
   ),
 );
 
+// Resume a job already delivered: node scripts/mcp-agent-test.ts <bid> <job>
+if (process.argv[3]) {
+  const bid = Number(process.argv[2]);
+  const job = Number(process.argv[3]);
+  const run = await tool<{ transaction_hash?: string; job?: Job }>(
+    "request_verification",
+    { job_id: job },
+  );
+  log("agent_verifies", {
+    transaction_hash: run.transaction_hash,
+    state: run.job?.state,
+    request: run.job?.verdict_request_id,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  log(
+    "agent_settles",
+    (await tool("release_or_refund", { job_id: job })).transaction_hash,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  log(
+    "agent_syncs",
+    (await tool("sync_bid", { bid_id: bid })).transaction_hash,
+  );
+  const final = await tool<Job>("job_status", { job_id: job });
+  log("final", {
+    bid,
+    job,
+    state: final.state,
+    failed_rule: final.failed_rule,
+    verdict_request: final.verdict_request_id,
+  });
+  server.kill();
+  process.exit(0);
+}
+
 // The buyer posts, separately.
 const existing = process.argv[2];
 const posted = existing ? null : await postBid("examples/swarm-job");
@@ -135,10 +170,14 @@ if (!agents.some((agent) => agent.wallet === wallet)) {
   });
   log("agent_registers", done.transaction_hash);
 }
-log(
-  "agent_claims",
-  (await tool("claim_bid", { bid_id: bidId })).transaction_hash,
-);
+const onChain = await tool<{
+  claim: { agent: string; job_id: number | null } | null;
+}>("bid_status", { bid_id: bidId });
+if (onChain.claim?.agent !== wallet)
+  log(
+    "agent_claims",
+    (await tool("claim_bid", { bid_id: bidId })).transaction_hash,
+  );
 
 // The buyer's side: the worker and amount come from the chain.
 const config = loadConfig("buyer");
@@ -147,32 +186,39 @@ const reference = readFileSync(
   `${ROOT}examples/swarm-job/reference.json`,
   "utf8",
 );
-const job = (await executeTool(
-  "post_job_for_claim",
-  { bid_id: bidId, check, reference },
-  { actor: "buyer" },
-)) as { result: number; transaction_hash: string };
-const jobId = job.result;
-log("buyer_post_job_for_claim", {
-  job_id: jobId,
-  transaction_hash: job.transaction_hash,
-});
-log(
-  "buyer_link",
-  (
-    (await executeTool(
-      "link_job",
-      { bid_id: bidId, job_id: jobId },
-      { actor: "buyer" },
-    )) as { transaction_hash: string }
-  ).transaction_hash,
-);
+let linked = onChain.claim?.job_id ?? null;
+if (linked === null) {
+  const job = (await executeTool(
+    "post_job_for_claim",
+    { bid_id: bidId, check, reference },
+    { actor: "buyer" },
+  )) as { result: number; transaction_hash: string };
+  linked = job.result;
+  log("buyer_post_job_for_claim", {
+    job_id: linked,
+    transaction_hash: job.transaction_hash,
+  });
+  log(
+    "buyer_link",
+    (
+      (await executeTool(
+        "link_job",
+        { bid_id: bidId, job_id: linked },
+        { actor: "buyer" },
+      )) as { transaction_hash: string }
+    ).transaction_hash,
+  );
+}
+const jobId: number = linked;
 const buyer = createService(createRuntime(config));
 const challenged = await buyer("challenge_check", {
   job_id: jobId,
   check,
   reference,
-}).catch(() => null);
+}).catch((error: Error) => {
+  log("buyer_challenge_error", error.message);
+  return null;
+});
 log(
   "buyer_challenge",
   (challenged as { transaction_hash?: string } | null)?.transaction_hash ??

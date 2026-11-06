@@ -315,12 +315,12 @@ export async function createHandoffHandler(
     session?: string,
   ): Promise<Record<string, unknown>> {
     let job = await deps.getJob(request.job_id);
-    // A read can lag a delivery that has just landed by a few seconds, so look again before refusing.
+    // A read can lag a job or delivery that has just landed by a few seconds, so look again before refusing.
     for (
       let read = 0;
       read < READ_RETRIES &&
-      request.action === "pin_verification" &&
-      job?.state === "Funded";
+      ((request.action === "pin_verification" && job?.state === "Funded") ||
+        (request.action === "challenge" && !job));
       read++
     ) {
       await new Promise((resolve) => setTimeout(resolve, READ_RETRY_MS));

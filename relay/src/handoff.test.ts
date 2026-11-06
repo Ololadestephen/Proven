@@ -730,3 +730,18 @@ test("a pin still refuses a job that never gets delivered", async () => {
     await f.cleanup();
   }
 });
+
+test("a challenge waits out a read that has not yet seen a new job", async () => {
+  const f = await fixture();
+  try {
+    let reads = 0;
+    const lagging = {
+      ...f.deps,
+      getJob: async () => (reads++ < 1 ? null : f.job),
+    };
+    const handle = await createHandoffHandler(lagging, f.directory);
+    assert.equal((await handle(challenge())).ok, true);
+  } finally {
+    await f.cleanup();
+  }
+});
