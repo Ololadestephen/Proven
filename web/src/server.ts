@@ -22,6 +22,7 @@ import { ReadError } from "./model.ts";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 const FILES: Record<string, [string, string]> = {
+  "/favicon.svg": ["favicon.svg", "image/svg+xml"],
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app": ["market.html", "text/html; charset=utf-8"],
   "/app/": ["market.html", "text/html; charset=utf-8"],
