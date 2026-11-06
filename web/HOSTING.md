@@ -1,6 +1,6 @@
 # Hosting the market on boxd (testnet)
 
-The market and relay run on one boxd machine, `proven`, with 1 vCPU and 4 GB. The files are in `deploy/boxd/`. Opening the site to the public needs the owner's yes.
+The market and relay run on one boxd machine, `proven`, with 1 vCPU and 4 GB, at `https://useproven.xyz`. The files are in `deploy/boxd/`. Opening the site to the public needs the owner's yes.
 
 **What the server holds.** `node deploy/boxd/make-env.mjs` writes two short env files. `.relay.env`, for the relay only, holds the key of `relay.proven.testnet`, a small account of its own that pins private inputs. `.env`, for the web server and its review step, holds a reviewer key that can only call `record_review` on the board and a NEAR AI review key. There is no buyer, worker, custody, mainnet or escrow owner key. The server can read private checks, references and deliveries, as any relay operator can, but it has no way to post a verdict.
 
@@ -8,19 +8,19 @@ The market and relay run on one boxd machine, `proven`, with 1 vCPU and 4 GB. Th
 
 **Install.** Unpack a `git archive` of the commit into `~/proven`, copy `runs/private/boxd.env` there as `.env` and `runs/private/boxd-relay.env` as `.relay.env`, and run `bash deploy/boxd/setup.sh`. The two systemd services then answer on `127.0.0.1:4173` only, and the public address stays closed.
 
-**Standby.** The machine sleeps after 10 minutes without an incoming connection (`--auto-suspend-timeout=600 --idle-ignore-outbound`), and hibernation is off. Outgoing traffic must not count as activity, or the relay's five-minute sweep would keep it awake forever. While it sleeps nothing runs, so finished private inputs are cleaned up only when it next wakes, and a sweep runs within five minutes of waking.
+**Standby.** The machine sleeps once no connection has come in for a while (`--auto-suspend-timeout=600 --idle-ignore-outbound`; one measured sleep came about 25 minutes after the last connection), and hibernation is off. A request wakes it, and in one test the first answer took under a second. Outgoing traffic must not count as activity, or the relay's five-minute sweep would keep it awake forever. While it sleeps nothing runs, so finished private inputs are cleaned up only when it next wakes, and a sweep runs within five minutes of waking.
 
 **Before opening, and again after.** Check that port 4173 cannot be reached directly on the machine's public address, and what the boxd proxy sends in `X-Forwarded-For`, because the per-client write limit depends on it. A global write limit holds either way.
 
-**Open.** These steps need the owner's yes each time:
+**Open.** These steps need the owner's yes each time. Add the domain's DNS records first (an A record at the machine's address and a wildcard CNAME at `proven.boxd.sh`):
 
 ```bash
-boxd machine exec proven -- sh -c 'echo PROVEN_WEB_FLAGS=--public > ~/proven/.web-flags && sudo systemctl restart proven-web'
+boxd machine domain add useproven.xyz --vm proven --confirm
+boxd machine exec proven -- sh -c 'printf "PROVEN_ORIGIN=https://useproven.xyz\nPROVEN_WEB_FLAGS=--public\n" > ~/proven/.web-flags && sudo systemctl restart proven-web'
 boxd machine proxy set-port --vm proven --port 4173
-boxd machine config set proven bot-protection off
 ```
 
-Bot protection must be off on the default address because its browser check would stop agents and command-line callers. A custom domain is never checked, so with one, bot protection can stay on for the default address. For a custom domain, also set `PROVEN_ORIGIN` in `~/proven/.web-flags`. The server accepts one exact origin.
+A custom domain skips boxd's browser check, so agents and command-line callers can reach it. The server accepts one exact origin, so `proven.boxd.sh` itself is refused.
 
 **Close.** Remove `.web-flags`, restart `proven-web`, and the server answers on localhost only again.
 
