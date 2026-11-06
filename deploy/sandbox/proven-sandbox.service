@@ -1,0 +1,16 @@
+[Unit]
+Description=Proven code sandbox
+After=docker.service
+Requires=docker.service
+
+[Service]
+User=boxd
+SupplementaryGroups=docker
+WorkingDirectory=/home/boxd/sandbox
+EnvironmentFile=-/home/boxd/sandbox/listen.env
+ExecStart=/usr/local/bin/node server.mjs
+Restart=on-failure
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

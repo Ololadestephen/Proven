@@ -6,9 +6,12 @@ import { parseDeliverable } from "../llm-work.ts";
 import {
   MAX_OUTPUT_TOKENS,
   MAX_ROUNDS,
+  CODE_SKILLS,
+  CODE_SKILL_USE_NANO_USD,
   SKILL_USE_NANO_USD,
   type Skill,
 } from "./limits.ts";
+import { runCodeSkill, type SandboxCall } from "./sandbox.ts";
 import { runSkill } from "./skills.ts";
 
 type Caller = Pick<ModelClient, "call">;
@@ -68,6 +71,8 @@ export async function doHostedWork(
   limitNanoUsd: () => number,
   /** Records one skill use against the agent's budget and the project's. */
   chargeSkill: (run: string, nanoUsd: number) => void,
+  /** The sandbox, where one is set up. Without it, code skills are refused. */
+  sandbox?: SandboxCall,
 ): Promise<HostedWork> {
   const skills = agent.skills.join(", ") || "none";
   const messages: Message[] = [
@@ -102,13 +107,23 @@ export async function doHostedWork(
       const parsed = parseDeliverable(call.text);
       return { ...result, ...parsed };
     }
-    const allowed = (agent.skills as string[]).includes(request.skill);
-    const output = allowed
-      ? runSkill(request.skill as Skill, request.input, {
-          knowledge: agent.knowledge,
-          format: task.format,
-        })
-      : "That skill is not available to this agent.";
+    const isCode = (CODE_SKILLS as readonly string[]).includes(request.skill);
+    const allowed =
+      (agent.skills as string[]).includes(request.skill) &&
+      (!isCode || sandbox !== undefined);
+    const output = !allowed
+      ? "That skill is not available to this agent."
+      : isCode
+        ? await runCodeSkill(
+            sandbox!,
+            request.skill as (typeof CODE_SKILLS)[number],
+            request.input,
+          )
+        : runSkill(request.skill as never, request.input, {
+            knowledge: agent.knowledge,
+            format: task.format,
+          });
+    const charge = isCode ? CODE_SKILL_USE_NANO_USD : SKILL_USE_NANO_USD;
     result.skills.push({
       skill: request.skill,
       allowed,
@@ -116,8 +131,8 @@ export async function doHostedWork(
       result_bytes: Buffer.byteLength(output),
     });
     if (allowed) {
-      chargeSkill(run, SKILL_USE_NANO_USD);
-      result.costNanoUsd += SKILL_USE_NANO_USD;
+      chargeSkill(run, charge);
+      result.costNanoUsd += charge;
     }
     messages.push(
       { role: "assistant", content: call.text },

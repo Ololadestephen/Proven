@@ -11,6 +11,7 @@ import { createService } from "../service.ts";
 import { workRefusal } from "../swarm-rules.ts";
 import type { Job } from "../types.ts";
 import { MIN_TO_WORK, budgetNanoUsd, nanoUsdToNear } from "./limits.ts";
+import type { SandboxCall } from "./sandbox.ts";
 import type { HostedAgent, HostedStore } from "./store.ts";
 import { doHostedWork } from "./work.ts";
 
@@ -24,6 +25,7 @@ export interface RunnerDeps {
   /** Moves spent NEAR to the treasury. Returns the transaction hash. */
   settle: (agent: HostedAgent, yocto: bigint) => Promise<string>;
   treasury: string;
+  sandbox?: SandboxCall;
   log: (line: string, detail?: unknown) => void;
 }
 
@@ -147,6 +149,7 @@ async function work(
         request_hash: "",
         response_hash: null,
       }),
+    deps.sandbox,
   );
   deps.store.log(jobId, {
     step: "work",

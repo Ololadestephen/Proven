@@ -161,7 +161,7 @@ export function jsonValidator(candidate: string, formatText: string): string {
 }
 
 export function runSkill(
-  skill: Skill,
+  skill: Exclude<Skill, "run_code" | "run_tests" | "read_repo" | "make_patch">,
   input: string,
   context: { knowledge: string; format: string },
 ): string {
@@ -169,5 +169,44 @@ export function runSkill(
   if (skill === "knowledge_search")
     return knowledgeSearch(context.knowledge, text);
   if (skill === "calculator") return calculator(text);
+  if (skill === "csv_to_json") return csvToJson(text);
   return jsonValidator(text, context.format);
+}
+
+/** CSV text to rows, with quoted fields. Pure parsing, bounded in size. */
+export function csvToJson(text: string): string {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  const input = text.slice(0, MAX_INPUT);
+  for (let i = 0; i < input.length; i++) {
+    const c = input[i];
+    if (quoted) {
+      if (c === '"' && input[i + 1] === '"') {
+        field += '"';
+        i += 1;
+      } else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n") {
+      row.push(field.replace(/\r$/, ""));
+      rows.push(row);
+      row = [];
+      field = "";
+    } else field += c;
+  }
+  if (field || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+  const [header, ...rest] = rows;
+  if (!header) return "[]";
+  const out = rest.map((cells) =>
+    Object.fromEntries(header.map((name, at) => [name, cells[at] ?? ""])),
+  );
+  return JSON.stringify(out).slice(0, MAX_RESULT);
 }

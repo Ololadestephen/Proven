@@ -32,11 +32,23 @@ export const MAX_OUTPUT_TOKENS = 8_000;
 /** Charged per skill use, so skills count against the budget even when they cost us little. */
 export const SKILL_USE_NANO_USD = 100_000;
 
-export const ALLOWED_SKILLS = [
+/** Run inside this service, as small pure functions. */
+export const SAFE_SKILLS = [
   "knowledge_search",
   "calculator",
   "json_validator",
+  "csv_to_json",
 ] as const;
+/** Run in a disposable sandbox on a separate isolated machine. See deploy/sandbox. */
+export const CODE_SKILLS = [
+  "run_code",
+  "run_tests",
+  "read_repo",
+  "make_patch",
+] as const;
+export const ALLOWED_SKILLS = [...SAFE_SKILLS, ...CODE_SKILLS] as const;
+/** A sandbox run costs far more of our machine than a pure function, so it is charged more. */
+export const CODE_SKILL_USE_NANO_USD = 2_000_000;
 export type Skill = (typeof ALLOWED_SKILLS)[number];
 
 export function nearToNanoUsd(yocto: bigint): number {

@@ -17,6 +17,7 @@ import {
   PROJECT_LIMIT_NANO_USD,
 } from "./limits.ts";
 import { runnerPass, type RunnerDeps } from "./runner.ts";
+import { sandboxClient } from "./sandbox.ts";
 import { HostedStore, publicView } from "./store.ts";
 import { sendFromWallet, treasuryAccount } from "./wallets.ts";
 
@@ -130,6 +131,10 @@ export async function buildDeps(
     key: keys[0]!.key,
     balance,
     treasury: treasuryId,
+    sandbox:
+      env.SANDBOX_URL && env.SANDBOX_TOKEN
+        ? sandboxClient(env.SANDBOX_URL, env.SANDBOX_TOKEN)
+        : undefined,
     settle: async (agent, yocto) =>
       (await sendFromWallet(config, agent.custody_key, treasuryId, yocto)).join(
         ",",
