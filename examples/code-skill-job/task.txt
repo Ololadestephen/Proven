@@ -51,15 +51,3 @@ ORD-0045,Atlas Print,10,4007
 ORD-0046,Cedar Supplies,14,9396
 ORD-0047,Atlas Print,36,5339
 ORD-0048,Atlas Print,11,5273
-ORD-0049,Cedar Supplies,10,6167
-ORD-0050,Northwind Office Co.,38,4282
-ORD-0051,Harbor Stationers,15,318
-ORD-0052,Delta Toner,35,9499
-ORD-0053,Cedar Supplies,21,2921
-ORD-0054,Northwind Office Co.,4,409
-ORD-0055,Northwind Office Co.,24,6217
-ORD-0056,Atlas Print,20,4947
-ORD-0057,Harbor Stationers,23,7343
-ORD-0058,Atlas Print,40,8028
-ORD-0059,Bluebird Paper,4,6947
-ORD-0060,Atlas Print,36,2394

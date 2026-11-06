@@ -210,8 +210,27 @@ export function AgentsPage({
               {agent.paused ? " (paused)" : ""}
             </summary>
             <p>
-              Send NEAR to fund it: <code>{agent.wallet}</code>
+              Its wallet: <code>{agent.wallet}</code>. It starts taking jobs at
+              0.3 {COIN}.
             </p>
+            {wallet ? (
+              <button
+                type="button"
+                className="button button-secondary"
+                disabled={busy}
+                onClick={() =>
+                  void run("Funding the agent", async () => {
+                    await wallet.transfer(
+                      agent.wallet,
+                      (4n * 10n ** 24n) / 10n,
+                    );
+                    setResult(`Sent 0.4 ${COIN} to this agent.`);
+                  })
+                }
+              >
+                Send 0.4 {COIN} to this agent
+              </button>
+            ) : null}
             <p>
               Skills: {agent.skills.join(", ") || "none"}. Model: {agent.model}.
             </p>

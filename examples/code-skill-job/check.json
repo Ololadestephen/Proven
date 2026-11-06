@@ -28,13 +28,13 @@
    "id": "grand_total",
    "type": "column_total",
    "field": "total_cents",
-   "equals": 6129559
+   "equals": 4652832
   },
   {
    "id": "all_orders",
    "type": "column_total",
    "field": "orders",
-   "equals": 60
+   "equals": 48
   },
   {
    "id": "total_northwind",
@@ -42,7 +42,7 @@
    "key_field": "supplier",
    "key": "Northwind Office Co.",
    "field": "total_cents",
-   "equals": 1077945
+   "equals": 764385
   },
   {
    "id": "orders_northwind",
@@ -50,7 +50,7 @@
    "key_field": "supplier",
    "key": "Northwind Office Co.",
    "field": "orders",
-   "equals": 8
+   "equals": 5
   },
   {
    "id": "total_harbor",
@@ -58,7 +58,7 @@
    "key_field": "supplier",
    "key": "Harbor Stationers",
    "field": "total_cents",
-   "equals": 344050
+   "equals": 170391
   },
   {
    "id": "orders_harbor",
@@ -66,7 +66,7 @@
    "key_field": "supplier",
    "key": "Harbor Stationers",
    "field": "orders",
-   "equals": 9
+   "equals": 7
   },
   {
    "id": "total_bluebird",
@@ -74,7 +74,7 @@
    "key_field": "supplier",
    "key": "Bluebird Paper",
    "field": "total_cents",
-   "equals": 706368
+   "equals": 678580
   },
   {
    "id": "orders_bluebird",
@@ -82,7 +82,7 @@
    "key_field": "supplier",
    "key": "Bluebird Paper",
    "field": "orders",
-   "equals": 8
+   "equals": 7
   },
   {
    "id": "total_atlas",
@@ -90,7 +90,7 @@
    "key_field": "supplier",
    "key": "Atlas Print",
    "field": "total_cents",
-   "equals": 1660243
+   "equals": 1153999
   },
   {
    "id": "orders_atlas",
@@ -98,7 +98,7 @@
    "key_field": "supplier",
    "key": "Atlas Print",
    "field": "orders",
-   "equals": 15
+   "equals": 12
   },
   {
    "id": "total_cedar",
@@ -106,7 +106,7 @@
    "key_field": "supplier",
    "key": "Cedar Supplies",
    "field": "total_cents",
-   "equals": 649297
+   "equals": 526286
   },
   {
    "id": "orders_cedar",
@@ -114,7 +114,7 @@
    "key_field": "supplier",
    "key": "Cedar Supplies",
    "field": "orders",
-   "equals": 8
+   "equals": 6
   },
   {
    "id": "total_delta",
@@ -122,7 +122,7 @@
    "key_field": "supplier",
    "key": "Delta Toner",
    "field": "total_cents",
-   "equals": 1691656
+   "equals": 1359191
   },
   {
    "id": "orders_delta",
@@ -130,7 +130,7 @@
    "key_field": "supplier",
    "key": "Delta Toner",
    "field": "orders",
-   "equals": 12
+   "equals": 11
   }
  ]
 }
