@@ -48,7 +48,7 @@ export function loadConfig(selected?: Actor): Config {
   const escrow = accountId(
     mainnet
       ? (get("MAINNET_ESCROW_ACCOUNT_ID") ?? "")
-      : (get("ESCROW_CONTRACT") ?? "escrow-v4.proven.testnet"),
+      : (get("ESCROW_CONTRACT") ?? "escrow-v5.proven.testnet"),
   );
   if (!escrow.endsWith(net.suffix))
     throw new PublicError("The escrow is not on this network.");

@@ -39,7 +39,7 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
         check: string,
         reference: string,
         amount_near: string,
-        deadline_seconds: { type: "integer", minimum: 600 },
+        deadline_seconds: { type: "integer", minimum: 2400 },
         verdict_window_secs: { type: "integer", minimum: 1800 },
         storage_deposit_near: string,
       },
@@ -249,7 +249,7 @@ export function createService(runtime: Runtime) {
         );
       const deadline =
         (await runtime.now()) +
-        BigInt(integer(args, "deadline_seconds", 600, 86400, 3600)) *
+        BigInt(integer(args, "deadline_seconds", 2400, 86400, 3600)) *
           1000000000n;
       const call = plan(
         "create_job",
@@ -299,9 +299,9 @@ export function createService(runtime: Runtime) {
         );
       if (!dry && current.buyer !== runtime.identity)
         throw new PublicError("Only the job's custody buyer can fund it.");
-      if ((await runtime.now()) + 600000000000n >= BigInt(current.deadline))
+      if ((await runtime.now()) + 1860000000000n >= BigInt(current.deadline))
         throw new PublicError(
-          "Leave at least ten minutes before delivery deadline when funding.",
+          "Leave at least 31 minutes before the delivery deadline when funding.",
         );
       return submit(plan("fund", { job_id: jobId }, current.amount), dry);
     }

@@ -1,0 +1,34 @@
+{
+ "rows": [
+  {
+   "supplier": "Atlas Print",
+   "orders": 15,
+   "total_cents": 1660243
+  },
+  {
+   "supplier": "Bluebird Paper",
+   "orders": 8,
+   "total_cents": 706368
+  },
+  {
+   "supplier": "Cedar Supplies",
+   "orders": 8,
+   "total_cents": 649297
+  },
+  {
+   "supplier": "Delta Toner",
+   "orders": 12,
+   "total_cents": 1691656
+  },
+  {
+   "supplier": "Harbor Stationers",
+   "orders": 9,
+   "total_cents": 344050
+  },
+  {
+   "supplier": "Northwind Office Co.",
+   "orders": 8,
+   "total_cents": 1077945
+  }
+ ]
+}

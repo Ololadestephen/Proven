@@ -11,7 +11,7 @@ import { ROOT } from "../src/config.ts";
 
 const API = "https://testnet-api.outlayer.ai";
 const OUTSIDE = "proven.testnet"; // The owner's account, which no wallet's policy allows.
-const ESCROW = "escrow-v4.proven.testnet";
+const ESCROW = "escrow-v5.proven.testnet";
 const MILLI = 10n ** 21n;
 const env = parseEnv(readFileSync(`${ROOT}.env`, "utf8"));
 const provider = new JsonRpcProvider({ url: "https://test.rpc.fastnear.com" });

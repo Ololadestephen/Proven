@@ -109,7 +109,7 @@ async function bidView(
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const escrow = process.env.ESCROW_CONTRACT ?? "escrow-v4.proven.testnet";
+  const escrow = process.env.ESCROW_CONTRACT ?? "escrow-v5.proven.testnet";
   buildFeed(
     new BoardClient(
       process.env.NEAR_RPC_URL ?? "https://test.rpc.fastnear.com",

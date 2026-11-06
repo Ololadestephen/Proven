@@ -7,7 +7,7 @@ import { parseEnv } from "node:util";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import { ROOT } from "../src/config.ts";
 
-const ESCROW = "escrow-v4.proven.testnet";
+const ESCROW = "escrow-v5.proven.testnet";
 const [released, refunded, open] = process.argv.slice(2).map(Number);
 const env = parseEnv(readFileSync(`${ROOT}.env`, "utf8"));
 const provider = new JsonRpcProvider({ url: "https://test.rpc.fastnear.com" });

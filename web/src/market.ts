@@ -24,9 +24,9 @@ import { ReadError } from "./model.ts";
 const ROOT = new URL("../../", import.meta.url).pathname;
 export const NETWORK =
   process.env.NEAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
-export const BOARD = process.env.PROVEN_BOARD ?? "board-v3.proven.testnet";
+export const BOARD = process.env.PROVEN_BOARD ?? "board-v4.proven.testnet";
 export const MARKET_ESCROW =
-  process.env.PROVEN_MARKET_ESCROW ?? "escrow-v4.proven.testnet";
+  process.env.PROVEN_MARKET_ESCROW ?? "escrow-v5.proven.testnet";
 const RPC =
   NETWORK === "mainnet"
     ? "https://rpc.mainnet.fastnear.com"

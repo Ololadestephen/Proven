@@ -1,0 +1,136 @@
+{
+ "kind": "data",
+ "proven_check": 2,
+ "verifier": "b2f695f32f2e9233173758461c3c6868992c5270f8213efd0497e77f7dbdb174",
+ "format": "{\"kind\":\"data\",\"rows\":{\"orders\":\"integer\",\"supplier\":\"string\",\"total_cents\":\"integer\"}}",
+ "rules": [
+  {
+   "id": "rows",
+   "type": "row_count",
+   "min": 6,
+   "max": 6
+  },
+  {
+   "id": "fields",
+   "type": "fields",
+   "fields": {
+    "supplier": "string",
+    "orders": "integer",
+    "total_cents": "integer"
+   }
+  },
+  {
+   "id": "unique_supplier",
+   "type": "unique",
+   "field": "supplier"
+  },
+  {
+   "id": "grand_total",
+   "type": "column_total",
+   "field": "total_cents",
+   "equals": 6129559
+  },
+  {
+   "id": "all_orders",
+   "type": "column_total",
+   "field": "orders",
+   "equals": 60
+  },
+  {
+   "id": "total_northwind",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Northwind Office Co.",
+   "field": "total_cents",
+   "equals": 1077945
+  },
+  {
+   "id": "orders_northwind",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Northwind Office Co.",
+   "field": "orders",
+   "equals": 8
+  },
+  {
+   "id": "total_harbor",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Harbor Stationers",
+   "field": "total_cents",
+   "equals": 344050
+  },
+  {
+   "id": "orders_harbor",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Harbor Stationers",
+   "field": "orders",
+   "equals": 9
+  },
+  {
+   "id": "total_bluebird",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Bluebird Paper",
+   "field": "total_cents",
+   "equals": 706368
+  },
+  {
+   "id": "orders_bluebird",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Bluebird Paper",
+   "field": "orders",
+   "equals": 8
+  },
+  {
+   "id": "total_atlas",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Atlas Print",
+   "field": "total_cents",
+   "equals": 1660243
+  },
+  {
+   "id": "orders_atlas",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Atlas Print",
+   "field": "orders",
+   "equals": 15
+  },
+  {
+   "id": "total_cedar",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Cedar Supplies",
+   "field": "total_cents",
+   "equals": 649297
+  },
+  {
+   "id": "orders_cedar",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Cedar Supplies",
+   "field": "orders",
+   "equals": 8
+  },
+  {
+   "id": "total_delta",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Delta Toner",
+   "field": "total_cents",
+   "equals": 1691656
+  },
+  {
+   "id": "orders_delta",
+   "type": "spot_check",
+   "key_field": "supplier",
+   "key": "Delta Toner",
+   "field": "orders",
+   "equals": 12
+  }
+ ]
+}

@@ -200,7 +200,7 @@ export async function runReview(bidId: number, keyName: string) {
     new JsonRpcProvider({ url: config.rpc }),
     new KeyPairSigner(
       KeyPair.fromString(
-        (values.PROVEN_REVIEWER_V3_PRIVATE_KEY ??
+        (values.PROVEN_REVIEWER_V4_PRIVATE_KEY ??
           values.PROVEN_REVIEWER_V2_PRIVATE_KEY) as `ed25519:${string}`,
       ),
     ),

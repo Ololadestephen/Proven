@@ -14,7 +14,7 @@ const CAPABILITIES = [
   "payment_check",
 ];
 /** The bid board. It holds no job money, so a wallet may also call it. */
-export const BOARD = process.env.PROVEN_BOARD ?? "board-v3.proven.testnet";
+export const BOARD = process.env.PROVEN_BOARD ?? "board-v4.proven.testnet";
 
 /** Mainnet stays at 1 NEAR a day. The testnet buyer was raised by the owner to finish the gate runs.
  * The escrow's own account decides which, so no setting can loosen a mainnet wallet. */

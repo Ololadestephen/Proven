@@ -1,0 +1,65 @@
+Summarise these orders per supplier. Use the run_code skill: do not do the arithmetic yourself. Return only JSON in exactly this form, with one row per supplier:
+{"rows":[{"supplier":"...","orders":0,"total_cents":0}]}
+total_cents is the sum of quantity times unit_price_cents for that supplier's orders. orders is how many orders it has.
+
+order_id,supplier,quantity,unit_price_cents
+ORD-0001,Delta Toner,4,1584
+ORD-0002,Harbor Stationers,16,262
+ORD-0003,Cedar Supplies,21,6786
+ORD-0004,Bluebird Paper,1,545
+ORD-0005,Northwind Office Co.,14,4603
+ORD-0006,Harbor Stationers,11,5202
+ORD-0007,Cedar Supplies,9,5690
+ORD-0008,Delta Toner,1,4104
+ORD-0009,Delta Toner,33,225
+ORD-0010,Northwind Office Co.,37,8371
+ORD-0011,Delta Toner,31,8591
+ORD-0012,Harbor Stationers,13,1305
+ORD-0013,Bluebird Paper,27,9069
+ORD-0014,Atlas Print,5,2737
+ORD-0015,Atlas Print,6,9417
+ORD-0016,Bluebird Paper,12,6561
+ORD-0017,Atlas Print,14,7541
+ORD-0018,Harbor Stationers,21,1082
+ORD-0019,Harbor Stationers,3,7525
+ORD-0020,Delta Toner,36,1038
+ORD-0021,Delta Toner,9,3315
+ORD-0022,Bluebird Paper,28,1924
+ORD-0023,Atlas Print,19,3905
+ORD-0024,Cedar Supplies,2,6702
+ORD-0025,Northwind Office Co.,6,6279
+ORD-0026,Atlas Print,39,534
+ORD-0027,Harbor Stationers,5,7907
+ORD-0028,Harbor Stationers,20,359
+ORD-0029,Atlas Print,33,4723
+ORD-0030,Delta Toner,23,9557
+ORD-0031,Bluebird Paper,23,4865
+ORD-0032,Cedar Supplies,2,6791
+ORD-0033,Atlas Print,13,1721
+ORD-0034,Cedar Supplies,40,4351
+ORD-0035,Bluebird Paper,31,5978
+ORD-0036,Delta Toner,31,6051
+ORD-0037,Northwind Office Co.,34,7515
+ORD-0038,Atlas Print,34,6228
+ORD-0039,Northwind Office Co.,24,4043
+ORD-0040,Bluebird Paper,5,671
+ORD-0041,Delta Toner,24,4861
+ORD-0042,Atlas Print,26,7806
+ORD-0043,Delta Toner,36,7987
+ORD-0044,Delta Toner,29,6766
+ORD-0045,Atlas Print,10,4007
+ORD-0046,Cedar Supplies,14,9396
+ORD-0047,Atlas Print,36,5339
+ORD-0048,Atlas Print,11,5273
+ORD-0049,Cedar Supplies,10,6167
+ORD-0050,Northwind Office Co.,38,4282
+ORD-0051,Harbor Stationers,15,318
+ORD-0052,Delta Toner,35,9499
+ORD-0053,Cedar Supplies,21,2921
+ORD-0054,Northwind Office Co.,4,409
+ORD-0055,Northwind Office Co.,24,6217
+ORD-0056,Atlas Print,20,4947
+ORD-0057,Harbor Stationers,23,7343
+ORD-0058,Atlas Print,40,8028
+ORD-0059,Bluebird Paper,4,6947
+ORD-0060,Atlas Print,36,2394
