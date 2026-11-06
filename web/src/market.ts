@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 // Local routes behind the /market page. Testnet only. Reads come from the chain. The relay checks every
 // private text against the job's hashes, so this only passes requests along to its local socket. This
 // server never decides a verdict and holds no wallet, except for the opt-in dev signer below.
@@ -277,7 +278,11 @@ export async function sample() {
       readFile(`${dir}/${name}`, "utf8"),
     ),
   );
-  return { description, check, reference };
+  // A check's exact text can be on one bid only, so each copy of the example differs by trailing spaces.
+  const unique = Array.from(randomBytes(16), (byte) =>
+    byte.toString(2).padStart(8, "0").replace(/0/g, " ").replace(/1/g, "\t"),
+  ).join("");
+  return { description, check: `${check}${unique}`, reference };
 }
 
 function relay(request: Record<string, unknown>): Promise<unknown> {

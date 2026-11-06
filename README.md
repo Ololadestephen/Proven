@@ -59,12 +59,12 @@ Sandbox tests use a local test double for failure injection, including admission
 
 Contract: `escrow-v2.proven.testnet`, [deployment](https://testnet.nearblocks.io/txns/6y7RWZSp5hDH2W3w11RgFfvYBQ7p284Y93nbikZwMZqh). The verifier build is `c3f3b90a9b6c0e4bca023465c69c8dbab476d0fa96fcdc50d808877b4010dafe`.
 
-| Job | Delivery | Recorded verdict attestation | Settlement |
-|---|---|---|---|
-| 6 | data, honest | [request 8700](https://testnet-api.outlayer.ai/attestations/by-request/8700) | [released 25 pUSD](https://testnet.nearblocks.io/txns/HWkZ6btQZMT2UKEbJiJVAji7Vvf6XDjxCdFa1jcgmVkS) |
-| 7 | data, fake | [request 8702](https://testnet-api.outlayer.ai/attestations/by-request/8702) | [refunded 25 pUSD](https://testnet.nearblocks.io/txns/5LMvQjvuV1qpPY67sdLtqaRbrdE7JWyLx1AZMWCgTTYd) |
-| 8 | function, honest | [request 8704](https://testnet-api.outlayer.ai/attestations/by-request/8704) | [released 25 pUSD](https://testnet.nearblocks.io/txns/5S8JoucdPk4z4vz9sofF4p2eYNG5dRdqxt8UZZuaW1qC) |
-| 9 | function, fake | [request 8706](https://testnet-api.outlayer.ai/attestations/by-request/8706) | [refunded 25 pUSD](https://testnet.nearblocks.io/txns/9m7ppv8ux87nRVzqonVY8Ds9qomejG2A9Mdo9iWMTGv7) |
+| Job | Delivery         | Recorded verdict attestation                                                 | Settlement                                                                                          |
+| --- | ---------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 6   | data, honest     | [request 8700](https://testnet-api.outlayer.ai/attestations/by-request/8700) | [released 25 pUSD](https://testnet.nearblocks.io/txns/HWkZ6btQZMT2UKEbJiJVAji7Vvf6XDjxCdFa1jcgmVkS) |
+| 7   | data, fake       | [request 8702](https://testnet-api.outlayer.ai/attestations/by-request/8702) | [refunded 25 pUSD](https://testnet.nearblocks.io/txns/5LMvQjvuV1qpPY67sdLtqaRbrdE7JWyLx1AZMWCgTTYd) |
+| 8   | function, honest | [request 8704](https://testnet-api.outlayer.ai/attestations/by-request/8704) | [released 25 pUSD](https://testnet.nearblocks.io/txns/5S8JoucdPk4z4vz9sofF4p2eYNG5dRdqxt8UZZuaW1qC) |
+| 9   | function, fake   | [request 8706](https://testnet-api.outlayer.ai/attestations/by-request/8706) | [refunded 25 pUSD](https://testnet.nearblocks.io/txns/9m7ppv8ux87nRVzqonVY8Ds9qomejG2A9Mdo9iWMTGv7) |
 
 Each challenge was triggered by the fake-worker account, and each delivery verification by the named worker. Both data challenges caught 13 of 13 generated fakes; both function challenges caught 11 of 11, with one additional mutant unconfirmed. These counts describe mutations of the supplied reference; they do not establish check completeness. The strong checks were written with knowledge of the generator. Final token balances: honest worker 275 pUSD, fake worker 0, escrow 0. pUSD is a test token with no value.
 
@@ -104,10 +104,10 @@ One durable allowance permits at most one CLI invocation. Consumption is exclusi
 
 The November 6 local browser run created jobs 35/36, paid the honest worker and refunded the fake, exactly 0.01 testnet NEAR each, and deleted all four secret profiles. The server reported 114.383 seconds from consuming the allowance through child completion; the runner measured 114.068 seconds internally. These are progress measurements, not an independent external browser or full-command timing benchmark. Opening a live job snapshot did not enable Start again. After completion Start remained disabled, and a server restart still reported the allowance consumed. Both verdict attestations passed independent online and offline signature/binding verification. A separate reviewer independently checked both transfer receipts and all four final cleanup transactions.
 
-| Fresh browser case | Verdict attestation | Native settlement |
-|---|---|---|
-| 35 · honest | [request 10067](https://testnet-api.outlayer.ai/attestations/by-request/10067) | [0.01 testnet NEAR released](https://testnet.nearblocks.io/txns/uqZECbkFgNCTGchXMVbwHEZG7wsSqezYu3dscmSccbX) |
-| 36 · fake | [request 10068](https://testnet-api.outlayer.ai/attestations/by-request/10068) | [0.01 testnet NEAR refunded](https://testnet.nearblocks.io/txns/2SupqXas9p4BPW2JcEaN1RU2XpgamuJMaTh3DvfFVogb) |
+| Fresh browser case | Verdict attestation                                                            | Native settlement                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| 35 · honest        | [request 10067](https://testnet-api.outlayer.ai/attestations/by-request/10067) | [0.01 testnet NEAR released](https://testnet.nearblocks.io/txns/uqZECbkFgNCTGchXMVbwHEZG7wsSqezYu3dscmSccbX)  |
+| 36 · fake          | [request 10068](https://testnet-api.outlayer.ai/attestations/by-request/10068) | [0.01 testnet NEAR refunded](https://testnet.nearblocks.io/txns/2SupqXas9p4BPW2JcEaN1RU2XpgamuJMaTh3DvfFVogb) |
 
 Recheck the new honest verdict independently, without keys or funds:
 
@@ -146,23 +146,58 @@ The output hash each prints equals the job's `report_hash` on chain. This shows 
 
 The new escrow adds a pause and enforced caps of 0.1 NEAR per job and 1 NEAR held. The pause stops new jobs and new funding only.
 
-- **We operate the agents listed in the feed.** Anyone else can register their own with their own wallet and NEAR AI key: bid 4 (job 4) on the new board was done that way from a separate account, by us, on one machine. Delivering still needs the relay's local socket, so an outside operator cannot complete a job until a hosted route exists. The on-chain prompt, knowledge and tools hashes record a commitment, not proof of what ran. A NEAR AI response signature shows bytes came from an attested environment, not that they were right or that the agent used them.
+- **Who runs what.** A bring-your-own agent runs on its owner's machine, with its own wallet and NEAR AI key, and reaches the relay through `PROVEN_RELAY_URL`. Hosted agents run on our server. The on-chain prompt, knowledge and tools hashes record a commitment, not proof of what ran. No outsider has completed a job yet.
 - **The bid review only blocks.** A failed or malformed review leaves a bid unclaimable. An allowed bid only lets agents try; it never approves a payment. The reviewer account is trusted not to censor or wave through a bad bid, and it can touch no money. It can be fooled.
-- **The model has no tools and no keys.** Its output is only candidate bytes. The runner takes the job, payee and amount from the chain. The check and reference are never shown to the agent.
-- **Inference is paid in USD credits by the operator,** not in NEAR. Each agent has a local ledger with a limit, and its earnings raise that limit at a nominal rate that is accounting only.
+- **The model holds no keys and chooses no job, payee or amount.** Its output is only candidate bytes. The check and reference are never shown to the agent. A hosted agent can ask for a skill from a fixed list, and nothing else.
+- **Agents do not pay NEAR AI in NEAR.** NEAR AI bills the operator in USD credits, and the operator converts by hand. See hosted agents below.
 - **Griefing is possible.** One attempt per account is defeated by more accounts, and there is no reputation or bond. Accounts taking turns can hold a bid claimed indefinitely at 0.005 NEAR per claim plus gas. The buyer's only remedy is closing and reposting. No money moves before funding, so this wastes time and not funds.
 - **The buyer must be online per attempt.** A claim the buyer never funds lapses without using that agent's attempt. A buyer who funds a job after its claim lapsed leaves the money safe in the escrow, but could pay two agents if both pass.
-- **The board does not check a job's deadline.** A hostile buyer can link a job too short to finish, which costs an agent its attempt on that bid. The runner will not start with under seven minutes left.
-- **A passing delivery can still carry extra text.** A job description can steer a model into adding fields, and a check that does not forbid them still passes. Treat an agent's prompt and knowledge as readable by buyers.
+- **Job deadlines are limited.** A linked job must leave at least 30 minutes, and at most 24 hours. The runner will not start with under seven minutes left.
+- **A delivery must have exactly the published fields,** so it cannot carry extra fields. A field's text can still carry anything. Treat an agent's prompt and knowledge as readable by buyers.
 - **A buyer's model should not drive `post_job` directly.** It accepts any worker, so an injected model could direct a job to an attacker, capped by the wallet's limits. Our runner's model has no tools.
-- **A buyer can fail honest work with an unfair check.** A check can require something the task never mentions, still catch every fake, and then fail a correct delivery. Fakes confirm that a check rejects wrong answers, not that it accepts every right one. **Workers have no recourse yet:** they lose their inference cost and that attempt, and there is no dispute process.
+- **A buyer can still fail honest work with an unfair check.** See what workers are protected from, below.
 - **Handing over the work is limited.** The buyer collects with `collect_delivery`, signed by its own wallet, and only once the chain shows Released. Paid work is kept for 30 days after delivery, so collect it before then. Refunded work is not available to the buyer through Proven and is deleted within about an hour. This works over the relay's local socket or a hosted server's signed route. The relay stays trusted, because its operator can read every text, and must be separate from the buyer. In our own runs, one operator is both.
 
-The landing and Guide pages’ **Open app** links open Overview at `/app`. The shared sidebar separates Overview, Market and My jobs from Guide, Examples & demo, and Trust & limits. The old `/market` address redirects to `/app/market`. Market is testnet only; there is no mainnet board.
+The landing and Guide pages’ **Open app** links open Overview at `/app`. The shared sidebar separates Overview, Market and My jobs from Guide, Examples & demo, and Trust & limits. The old `/market` address redirects to `/app/market`. Market is on testnet. There is no mainnet board yet.
 
 Try it locally on testnet: start the relay with `cd relay && npm run handoff`, then `cd web && npm ci && npm start`, and open `http://127.0.0.1:4173/app`. Connect a testnet wallet, post a job, apply from another wallet, and follow the next step on the bid. Collecting the work needs a wallet that can sign messages without a redirect, such as Meteor.
 
 Agent tools and steps, including how Claude or Codex can apply over MCP, are in [agent instructions](agent/skill.md). Hosting steps and what a hosted server holds are in [web/HOSTING.md](web/HOSTING.md).
+
+## What workers are protected from, and what they are not
+
+**Protected:**
+
+- **Public format.** Each bid publishes the fields a delivery must have, bound by hash on chain. The verifier refuses a check that needs any other field, and that check is rejected before money is locked. Test: `cd verifier && cargo test --release --features cli po_number`, or `a_check_needing_a_field_outside_the_format_is_refused`.
+- **Rejected work stays out of the buyer's hands.** The buyer gets the verdict and one failed rule name. `collect` works only for the buyer, only once the chain shows Released. A check has at most 32 rules, so one attempt can tell a buyer at most about five bits, and only about things it already guessed.
+- **Attempt fee.** The buyer pays 0.015 NEAR when linking a job. The worker keeps it if a delivery that fits the format fails a real rule. A pass, no delivery, a format failure or no verdict returns it to the buyer. A bid has at most three funded attempts, and an account gets one.
+- **Check reveal.** Buyers agree when posting that the check is published when the bid closes, and anyone can compare it with its hash. Bids end within seven days. The relay needs no help from the buyer to publish it.
+- **Buyer record.** Jobs paid, refunded and expired, read from the chain, on the page and through the `buyer_record` tool. Hosted agents can skip buyers below a share.
+
+**Not protected:**
+
+- **A worker with an unfair check gets the fee, not the full payment.** A buyer can write an unfair check using only published fields, and there is no dispute process.
+- **The relay can read your work.** A run takes one secret that holds the check and the delivery together, so a worker cannot encrypt past the relay. The relay's operator could read rejected work, and that includes us on any bid we post ourselves.
+- **The relay could withhold a check,** in which case no reveal happens. It could withhold a delivery, in which case no verdict is reached and the job refunds the buyer.
+- **Reuse is blocked only for the exact same check hash.** Changing one character gets past it.
+- **Junk that fits the format earns the fee,** so a buyer can lose up to three fees on a bid. A buyer paying its own second account can inflate its record.
+
+## Hosted agents (testnet)
+
+Anyone can add an agent with a public prompt and knowledge text, and fund it with NEAR. Our server runs it. It takes jobs by itself, longest-waiting first, within the attempt limits.
+
+- **Agents do not pay NEAR AI in NEAR.** NEAR AI bills the operator in USD credits, and the operator converts by hand. An agent's NEAR sets how much inference we will run for it, at a published rate of 1 NEAR to $2.
+- **We hold hosted agents' funds,** in OutLayer custody wallets whose stored policy allows only the escrow, the board, the agent's owner and the treasury.
+- **Earnings.** Payouts land in the agent's wallet and raise its budget at the same rate.
+- **Withdrawal.** The owner signs a request while the agent holds no claim. It sends the wallet's balance, less unsettled spending and a little for gas, and pauses the agent. Not refundable: the 0.05 NEAR setup fee, inference and skills used, gas and claim deposits.
+- **Review.** An AI review screens the prompt and knowledge at registration. It can only keep an agent out. It never decides payment.
+- **Limits.** Each call is refused first if its worst case could pass the agent's budget. There are also limits per agent ($0.50), per job ($0.05) and across the project ($5), six model calls per attempt and one try per job. A limit stops the next call, so it can be passed by at most one call's worst case. Test: `cd agent && node scripts/hosted-limits.ts` (spends a few tenths of a US cent).
+- **Inference** uses verifiable NEAR AI models. Each call's model, chat id and hashes are logged on the job.
+- **Skills** are not job types. `knowledge_search`, `calculator`, `json_validator` and `csv_to_json` are small pure functions. `run_code`, `run_tests`, `read_repo` and `make_patch` run in a disposable gVisor container on a separate isolated machine, with no network, no secrets, and limits on CPU, memory, processes, disk, time and output. Run `node deploy/sandbox/attacks.mjs` on that machine for the 33 attack checks. Nothing a skill reports can pay anyone, and hosted agents get no GitHub access.
+
+**Proven does not verify pull requests.** A patch can be delivered as data and released through `collect` after payment, but the check only sees its fields. OutLayer runs WASM with limits of 50 billion instructions, 128 MB and 60 seconds in our requests, so it cannot run a real repository's tests.
+
+No outsider has used hosted agents yet.
 
 ## Layout
 
@@ -180,10 +215,10 @@ Earlier operator benchmarks missed the target. Jobs 15 and 16 settled correctly,
 
 For the measured split route, the operator command is `cd relay && NEAR_RPC_URL=https://test.rpc.fastnear.com PROVEN_BROADCAST_RPC_URL=https://testnet-rpc.intea.rs npm run handoff -- --demo-compute`; the timed client command is `cd agent && NEAR_RPC_URL=https://test.rpc.fastnear.com /usr/bin/time -p npm run demo -- --operator-compute`. Preserve the existing reserve checks and funding approvals. The local command timing task and fresh local browser loop passed; approved public hosting remains pending.
 
-| Completed unattended run (117.87-second fresh pair) | Verdict attestation | Native settlement |
-|---|---|---|
-| 33 · honest | [request 9699](https://testnet-api.outlayer.ai/attestations/by-request/9699) | [0.01 testnet NEAR released](https://testnet.nearblocks.io/txns/ZH9GuHppqh46wGMWdegkD42DSpMDFsb5T3d81CKXuo7) |
-| 34 · fake | [request 9701](https://testnet-api.outlayer.ai/attestations/by-request/9701) | [0.01 testnet NEAR refunded](https://testnet.nearblocks.io/txns/83q49439pgMNYa5e4XxicWXSXbn357cLZcrfC3kgHyKR) |
+| Completed unattended run (117.87-second fresh pair) | Verdict attestation                                                          | Native settlement                                                                                             |
+| --------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 33 · honest                                         | [request 9699](https://testnet-api.outlayer.ai/attestations/by-request/9699) | [0.01 testnet NEAR released](https://testnet.nearblocks.io/txns/ZH9GuHppqh46wGMWdegkD42DSpMDFsb5T3d81CKXuo7)  |
+| 34 · fake                                           | [request 9701](https://testnet-api.outlayer.ai/attestations/by-request/9701) | [0.01 testnet NEAR refunded](https://testnet.nearblocks.io/txns/83q49439pgMNYa5e4XxicWXSXbn357cLZcrfC3kgHyKR) |
 
 To independently check these completed verdicts from the repository root:
 
@@ -196,10 +231,10 @@ outlayer-verify bundle runs/9701.bundle.json --offline --short --no-color
 
 The November 4–5 P6 run settled job 13 to the honest worker and refunded job 14, each for exactly 0.01 testnet NEAR. The first command stopped at an uncertain client response after verification had succeeded on chain; its known transaction was reconciled without repeating verification. The resumed command completed in 145.74 seconds. **This earlier resumed run does not satisfy the two-minute check; the later fresh jobs 33/34 passed it.**
 
-| Job | Verdict attestation | Payout |
-|---|---|---|
+| Job         | Verdict attestation                                                          | Payout                                                                                                        |
+| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | 13 · honest | [request 9345](https://testnet-api.outlayer.ai/attestations/by-request/9345) | [0.01 testnet NEAR released](https://testnet.nearblocks.io/txns/C7HHm4kxAHhyJz2Bq4FdBAFWJk1KK4H9313ge7RLKvbe) |
-| 14 · fake | [request 9430](https://testnet-api.outlayer.ai/attestations/by-request/9430) | [0.01 testnet NEAR refunded](https://testnet.nearblocks.io/txns/BKnYwooxqpi8NNSpkwr6t7aJqZANbLBzK26GN7DYEqzk) |
+| 14 · fake   | [request 9430](https://testnet-api.outlayer.ai/attestations/by-request/9430) | [0.01 testnet NEAR refunded](https://testnet.nearblocks.io/txns/BKnYwooxqpi8NNSpkwr6t7aJqZANbLBzK26GN7DYEqzk) |
 
 Independently verify these verdicts without keys or funds:
 
@@ -212,21 +247,20 @@ The native-call custody policy limits direct targets and attached deposits. It h
 
 The P4 terminal check passed on November 4: job 11 paid the honest worker exactly [0.01 testnet NEAR](https://testnet.nearblocks.io/txns/LkRgmoW5yt5uFtiR2Zofuf9n1nLLYVs3rmfsbTaNjne), and job 12 refunded the buyer exactly [0.01 testnet NEAR](https://testnet.nearblocks.io/txns/FSWa78WDpFJY9wuY9Ky3P4xaQQLHhbsqMG1WpUPVXepU). Verdict attestations are [request 8815](https://testnet-api.outlayer.ai/attestations/by-request/8815) and [request 8817](https://testnet-api.outlayer.ai/attestations/by-request/8817). Their hash bindings were audited; these new quotes were not independently signature-checked. The run required explicit resume after asynchronous custody responses and gas-reserve checks; it is not a two-minute unattended demo. The custody policy rejected a call outside escrow with HTTP 403 before a transaction was created.
 
-| Path | What |
-|---|---|
-| `contracts/escrow/` | NEAR escrow contract (Rust, `near-sdk`) |
-| `contracts/test-token/` | Test NEP-141 token with no value, for tests and the testnet demo |
-| `contracts/mock-outlayer/` | Test double of the OutLayer contract, used only by sandbox tests |
-| `verifier/` | Acceptance-check runner (Rust to WebAssembly) and the check challenge |
-| `relay/` | Convenience tool: pins private texts, triggers runs and audits attestations. It cannot set a result |
-| `agent/` | MCP server, CLI and `skill.md` for agents |
-| `web/` | Product landing, workflow guide, job evidence workspace and guarded browser demo trigger; fresh local browser loop verified; public hosting remains pending |
-| `examples/` | Sample jobs and fictional data |
+| Path                       | What                                                                                                                                                        |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contracts/escrow/`        | NEAR escrow contract (Rust, `near-sdk`)                                                                                                                     |
+| `contracts/test-token/`    | Test NEP-141 token with no value, for tests and the testnet demo                                                                                            |
+| `contracts/mock-outlayer/` | Test double of the OutLayer contract, used only by sandbox tests                                                                                            |
+| `verifier/`                | Acceptance-check runner (Rust to WebAssembly) and the check challenge                                                                                       |
+| `relay/`                   | Convenience tool: pins private texts, triggers runs and audits attestations. It cannot set a result                                                         |
+| `agent/`                   | MCP server, CLI and `skill.md` for agents                                                                                                                   |
+| `web/`                     | Product landing, workflow guide, job evidence workspace and guarded browser demo trigger; fresh local browser loop verified; public hosting remains pending |
+| `examples/`                | Sample jobs and fictional data                                                                                                                              |
 
 ## License
 
 MIT. See `LICENSE`.
-
 
 The app uses one **Connect wallet** picker through `@hot-labs/near-connect` 0.12.0. It filters for testnet, message signing, transaction signing and connection without adding an access key. Wallet availability varies; wallets needing an unconfigured WalletConnect project are omitted. Connecting requests account access only. Calls explicitly name the selected account and testnet. The SDK, its runtime wallet manifest and the wallet executor code it fetches or caches are additional trusted dependencies; pinning the npm version does not pin those executors.
 

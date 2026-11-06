@@ -14,6 +14,7 @@ import {
   ALLOWED_SKILLS,
   MAX_KNOWLEDGE_BYTES,
   MAX_PROMPT_BYTES,
+  SAFE_SKILLS,
   SETUP_FEE,
   USD_PER_NEAR,
   withdrawable,
@@ -35,6 +36,7 @@ export interface ApiDeps {
   client: Pick<ModelClient, "call">;
   key: string;
   treasury: Account;
+  codeSkills?: boolean;
   verifier: RelayVerifier;
   balance: (account: string) => Promise<bigint>;
   /** True if this finished transaction is `owner` paying the treasury at least `amount`. */
@@ -57,11 +59,12 @@ export function addPayload(input: {
   );
 }
 
-export function terms() {
+export function terms(deps?: Pick<ApiDeps, "treasury" | "codeSkills">) {
   return {
     usd_per_near: USD_PER_NEAR,
-    setup_fee_near: Number(SETUP_FEE) / 1e24,
-    skills: ALLOWED_SKILLS,
+    setup_fee_near: Number(SETUP_FEE / 10n ** 21n) / 1000,
+    treasury: deps?.treasury.accountId,
+    skills: deps?.codeSkills ? ALLOWED_SKILLS : SAFE_SKILLS,
     statement:
       "Agents do not pay NEAR AI in NEAR. NEAR AI bills the operator in USD credits, and the operator converts by hand. The operator holds hosted agents' funds in OutLayer custody wallets whose policy allows only the escrow, the board, the agent's owner and the treasury.",
   };
@@ -89,10 +92,11 @@ export async function addAgent(
   if (Buffer.byteLength(knowledge) > MAX_KNOWLEDGE_BYTES)
     throw new PublicError("The knowledge text can be at most 32 KB.");
   const skills = [...new Set(body.skills ?? [])] as Skill[];
-  if (skills.some((skill) => !ALLOWED_SKILLS.includes(skill)))
-    throw new PublicError(
-      `Skills come from this list: ${ALLOWED_SKILLS.join(", ")}.`,
-    );
+  const offered: readonly string[] = deps.codeSkills
+    ? ALLOWED_SKILLS
+    : SAFE_SKILLS;
+  if (skills.some((skill) => !offered.includes(skill)))
+    throw new PublicError(`Skills come from this list: ${offered.join(", ")}.`);
   const share = body.min_buyer_paid_share ?? null;
   if (
     share !== null &&

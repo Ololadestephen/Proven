@@ -77,6 +77,7 @@ export async function buildDeps(
     client,
     key: keys[0]!.key,
     treasury,
+    codeSkills: Boolean(env.SANDBOX_URL && env.SANDBOX_TOKEN),
     verifier: new RelayVerifier(async (accountId, publicKey) => {
       try {
         await provider.viewAccessKey({
@@ -161,7 +162,7 @@ export function serve(api: ApiDeps) {
     try {
       const url = new URL(req.url ?? "/", "http://hosted");
       if (req.method === "GET") {
-        if (url.pathname === "/terms") return json(res, 200, terms());
+        if (url.pathname === "/terms") return json(res, 200, terms(api));
         if (url.pathname === "/agents")
           return json(res, 200, api.store.inOrder().map(publicView));
         const agent = /^\/agents\/([a-z0-9._-]{2,64})$/.exec(url.pathname);

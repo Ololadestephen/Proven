@@ -232,7 +232,7 @@ async function serveRead(
 }
 
 export function isAppPath(path: string) {
-  return /^\/app(?:\/|\/(?:market|jobs|post)|\/bids\/[0-9]{1,10})?$/.test(path);
+  return /^\/app(?:\/|\/(?:market|jobs|post|agents)|\/bids\/[0-9]{1,10})?$/.test(path);
 }
 
 /** Loopback only. Optional fixed demo launcher; no wallet or arbitrary command routes. */

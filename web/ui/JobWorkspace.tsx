@@ -109,10 +109,10 @@ export function JobWorkspace({
           </p>
           <p>
             <strong>What a worker is protected from.</strong> A check cannot use
-            a field outside this format. The buyer gets rejected work only
-            through this relay’s operator, never through Proven. If well-formed
-            work fails a rule, you keep the 0.015 NEAR attempt fee. The check is
-            published when the bid closes, so unfair ones can be seen.
+            a field outside this format. Proven never gives the buyer rejected
+            work. If well-formed work fails a rule, you keep the 0.015 NEAR
+            attempt fee. The check is published when the bid closes, so unfair
+            ones can be seen.
           </p>
           <p>
             <strong>What a worker is not protected from.</strong> A buyer can

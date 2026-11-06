@@ -67,7 +67,7 @@ export function adaptWallet(
         typeof outcome.status === "object" &&
         "Failure" in outcome.status
       )
-        throw new Error(
+        throw new DefinitiveWalletFailure(
           "The transaction reported failure. Refresh the job and check wallet history before retrying.",
         );
       if (
