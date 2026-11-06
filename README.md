@@ -84,19 +84,21 @@ For an existing real 1Click deposit, `npm run --silent settlement -- status '{"d
 
 P5 is incomplete: there is no cross-chain payout integration or mainnet settlement evidence. [1Click has no testnet deployment](https://docs.near-intents.org/resources/faqs), so these estimates concern mainnet assets and cannot spend the testnet escrow's funds. The existing worker receives NEAR or the job's token through the escrow. Mainnet funding, destination/refund addresses and the connection to an escrow payout still need an approved design. The preview trusts the 1Click HTTPS API for estimates; it does not verify settlement on either chain.
 
-## Local job evidence page
+## Local product pages
 
-Run `cd web && npm ci && npm start`, then open `http://127.0.0.1:4173`. Node 22.18 or newer is required. No `.env`, wallet or API key is needed. Click **Job 33** to read the existing honest payout, or **Job 34** for the fake delivery's refund. These are existing jobs read live, not newly triggered demos. Refresh is manual; old results are cleared on a new lookup or error.
+Run `cd web && npm ci && npm start`, then open `http://127.0.0.1:4173`. Node 22.18 or newer is required. No `.env`, wallet or API key is needed. The landing page is at `/`, the workspace at `/app`, and the workflow guide at `/guide`. Open the workspace and click **Job 35** to read the existing honest payout, or **Job 36** for the fake delivery's refund. These are existing jobs read live, not newly triggered demos. Refresh is manual; old results are cleared on a new lookup or error.
 
 The page shows the amount, confirmed or pending payout state, current attempt, retry/expiry eligibility, check-challenge counts, hashes and evidence links. It reads the job at a fixed final testnet block and compares each stored request's attestation with that job's input, verifier and output hashes, secret profile and quote commitments. **Bindings matched** means those field comparisons passed. The page does not verify Intel signatures, worker-measurement approval or NEAR light-client proofs; it relies on the public RPC and OutLayer API. Job lookups cannot start runs, set verdicts, release funds or read private input files. A separate opt-in browser control can launch the fixed scripted demo through the existing CLI; only the escrow callback can record a verdict. The read-only API uses Node built-ins and the repository's existing pure attestation/hash helpers. The opt-in demo child uses the existing agent and relay dependencies.
+
+The local server builds the self-hosted React presentation bundle before starting; `npm run build` also builds it explicitly. The landing page explains supported checks, the payment lifecycle, agent tools, recorded evidence and trust limits. React Bits AnimatedList provides the workspace navigation; SpotlightCard and StarBorder provide presentation effects, with reduced-motion support. Reviso and Confam are visual references only; no source or assets from either are reused. Adapted React Bits code retains its MIT plus Commons Clause terms, alongside the React and Motion notices in [third-party notices](web/THIRD_PARTY_NOTICES.md). Proven’s root license does not replace those terms.
 
 For checks, run `cd web && npm test && npm run typecheck && npm run format:check`. P6 remains incomplete: the guarded browser trigger passed a fresh local testnet loop, but public hosting is not yet deployed or verified. P5's real cross-chain payout remains pending. Stop the local server with Ctrl-C when finished.
 
 ## Local browser demo
 
-The default `cd web && npm start` keeps live demos disabled. The page reads completed jobs 33/34 as existing records; those buttons do not create a new demo. The guarded Start control passed local unit, HTTP and browser-control tests and a fresh user-started testnet loop on November 6. It does not make the earlier 117.87-second command result a browser benchmark.
+The default `cd web && npm start` keeps live demos disabled. The workspace reads completed jobs 35/36 as existing records; those buttons do not create a new demo. The guarded Start control passed local unit, HTTP and browser-control tests and a fresh user-started testnet loop on November 6. It does not make the earlier 117.87-second command result a browser benchmark.
 
-For an owner-approved fresh test, first start the private operator broker using the split RPC command below and confirm the unchanged reserves and funding cap. Then run `cd web && npm run demo:arm`, followed by `npm start -- --demo`. Open `http://127.0.0.1:4173` and press Start live demo. Arming alone sends no transaction. Start launches only the two fixed scripted cases, with 0.01 testnet NEAR per job and four sponsored compute attempts; the browser cannot choose amounts, recipients, inputs or commands.
+For an owner-approved fresh test, first start the private operator broker using the split RPC command below and confirm the unchanged reserves and funding cap. Then run `cd web && npm run demo:arm`, followed by `npm start -- --demo`. Open `http://127.0.0.1:4173/app#demo` and press Start live demo. Arming alone sends no transaction. Start launches only the two fixed scripted cases, with 0.01 testnet NEAR per job and four sponsored compute attempts; the browser cannot choose amounts, recipients, inputs or commands.
 
 One durable allowance permits at most one CLI invocation. Consumption is exclusive and synced before launch. Repeated clicks, separate server processes and restarts cannot spend it again. Missing allowance storage disables the control. There is no browser reset, resume or automatic POST retry. If a response or process outcome is uncertain, use Check demo status and have the operator reconcile private evidence before any new session. The wrapper's elapsed timer is progress only. Completion requires the CLI's two exact payout proofs and four secret cleanup results; those proofs are produced by the existing runner, not independently revalidated by the web wrapper. Open each job for a public chain snapshot.
 
@@ -172,7 +174,7 @@ The P4 terminal check passed on November 4: job 11 paid the honest worker exactl
 | `verifier/` | Acceptance-check runner (Rust to WebAssembly) and the check challenge |
 | `relay/` | Convenience tool: pins private texts, triggers runs and audits attestations. It cannot set a result |
 | `agent/` | MCP server, CLI and `skill.md` for agents |
-| `web/` | Local job evidence page and guarded browser demo trigger; fresh local browser loop verified; public hosting remains pending |
+| `web/` | Product landing, workflow guide, job evidence workspace and guarded browser demo trigger; fresh local browser loop verified; public hosting remains pending |
 | `examples/` | Sample jobs and fictional data |
 
 ## License

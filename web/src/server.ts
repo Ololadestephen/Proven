@@ -14,6 +14,30 @@ import { ReadError } from "./model.ts";
 const PUBLIC = new URL("../public/", import.meta.url);
 const FILES: Record<string, [string, string]> = {
   "/": ["index.html", "text/html; charset=utf-8"],
+  "/app": ["app.html", "text/html; charset=utf-8"],
+  "/app/": ["app.html", "text/html; charset=utf-8"],
+  "/guide": ["guide.html", "text/html; charset=utf-8"],
+  "/guide/": ["guide.html", "text/html; charset=utf-8"],
+  "/theme.css": ["theme.css", "text/css; charset=utf-8"],
+  "/landing.css": ["landing.css", "text/css; charset=utf-8"],
+  "/product-sections.css": ["product-sections.css", "text/css; charset=utf-8"],
+  "/product-details.css": ["product-details.css", "text/css; charset=utf-8"],
+  "/product-responsive.css": [
+    "product-responsive.css",
+    "text/css; charset=utf-8",
+  ],
+  "/landing-sections.css": ["landing-sections.css", "text/css; charset=utf-8"],
+  "/guide.css": ["guide.css", "text/css; charset=utf-8"],
+  "/landing-responsive.css": [
+    "landing-responsive.css",
+    "text/css; charset=utf-8",
+  ],
+  "/build/ui.js": ["../dist/ui.js", "text/javascript; charset=utf-8"],
+  "/build/ui.css": ["../dist/ui.css", "text/css; charset=utf-8"],
+  "/third-party-notices.txt": [
+    "../dist/third-party-notices.txt",
+    "text/plain; charset=utf-8",
+  ],
   "/demo.js": ["demo.js", "text/javascript; charset=utf-8"],
   "/demo.css": ["demo.css", "text/css; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],

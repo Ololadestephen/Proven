@@ -1,0 +1,32 @@
+/* Adapted React Bits SpotlightCard. See web/licenses/react-bits-LICENSE.md. */
+.card-spotlight {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: white;
+  overflow: hidden;
+  isolation: isolate;
+}
+.card-spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    420px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(112, 98, 237, 0.12),
+    transparent 76%
+  );
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  pointer-events: none;
+  z-index: -1;
+}
+.card-spotlight:hover::before,
+.card-spotlight:focus-within::before {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce), (hover: none) {
+  .card-spotlight::before {
+    display: none;
+  }
+}

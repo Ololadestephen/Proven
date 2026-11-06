@@ -1,0 +1,142 @@
+@media (max-width: 900px) {
+  .product-challenge {
+    gap: 40px;
+  }
+  .product-section-heading {
+    gap: 40px;
+  }
+  .product-job-type {
+    padding: 24px;
+  }
+  .product-job-type h3 {
+    font-size: 22px;
+  }
+  .product-function-sheet {
+    padding-inline: 12px;
+  }
+}
+@media (max-width: 620px) {
+  .product-challenge {
+    grid-template-columns: 1fr;
+    padding-block: 65px;
+    gap: 30px;
+  }
+  .product-challenge-copy h2,
+  .product-section-heading h2 {
+    font-size: 32px;
+    letter-spacing: -1.3px;
+  }
+  .product-challenge-copy > p:not(.lp-kicker) {
+    font-size: 13px;
+  }
+  .challenge-proof {
+    padding: 22px;
+  }
+  .challenge-proof-tag {
+    font-size: 7px;
+  }
+  .challenge-count strong {
+    font-size: 60px;
+  }
+  .challenge-count strong span {
+    font-size: 38px;
+  }
+  .product-jobs-band {
+    padding-block: 60px;
+  }
+  .product-section-heading {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .product-section-heading > p {
+    font-size: 13px;
+  }
+  .product-job-types {
+    grid-template-columns: 1fr;
+    margin-top: 30px;
+    gap: 18px;
+  }
+  .product-job-type {
+    padding: 25px;
+  }
+  .product-function-sheet {
+    padding: 18px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .lifecycle-stages {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .lifecycle-stages li:nth-child(4) {
+    border-left: 0;
+  }
+  .lifecycle-stages li:nth-child(n + 4) {
+    border-top: 1px solid #e5e0ed;
+  }
+  .product-builders {
+    gap: 45px;
+  }
+  .product-faq-layout {
+    gap: 45px;
+  }
+}
+@media (max-width: 620px) {
+  .product-lifecycle {
+    padding-block: 60px;
+  }
+  .lifecycle-stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 30px;
+  }
+  .lifecycle-stages li {
+    padding: 20px 17px;
+  }
+  .lifecycle-stages li:nth-child(2n + 1) {
+    border-left: 0;
+  }
+  .lifecycle-stages li:nth-child(4) {
+    border-left: 1px solid #e5e0ed;
+  }
+  .lifecycle-stages li:nth-child(n + 3) {
+    border-top: 1px solid #e5e0ed;
+  }
+  .lifecycle-stages h3 {
+    font-size: 14px;
+  }
+  .lifecycle-stages p {
+    font-size: 11px;
+  }
+  .lifecycle-footnote {
+    align-items: flex-start;
+  }
+  .product-builders-band {
+    padding-block: 60px;
+  }
+  .product-builders,
+  .product-faq-layout {
+    grid-template-columns: 1fr;
+    gap: 30px;
+  }
+  .product-builder-copy h2,
+  .product-faq-heading h2 {
+    font-size: 32px;
+    letter-spacing: -1.3px;
+  }
+  .product-interface-panel {
+    padding: 16px;
+  }
+  .interface-console pre {
+    font-size: 9px;
+  }
+  .interface-tabs {
+    gap: 20px;
+  }
+  .product-faq-band {
+    padding-block: 60px;
+  }
+  .product-faq-list summary {
+    padding-block: 20px;
+    font-size: 13px;
+  }
+}

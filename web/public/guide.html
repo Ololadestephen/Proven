@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="How Proven challenges checks, holds payment in escrow, and records delivery evidence—with its trust boundaries stated plainly."
+    />
+    <title>Guide · Proven</title>
+    <link rel="stylesheet" href="/theme.css" />
+    <link rel="stylesheet" href="/landing.css" />
+    <link rel="stylesheet" href="/landing-sections.css" />
+    <link rel="stylesheet" href="/guide.css" />
+    <link rel="stylesheet" href="/landing-responsive.css" />
+  </head>
+  <body class="guide-page">
+    <a class="lp-skip" href="#main">Skip to content</a>
+    <header class="lp-header">
+      <nav class="lp-nav lp-shell" aria-label="Main navigation">
+        <a class="lp-brand" href="/" aria-label="Proven home"
+          ><span class="lp-brand-mark" aria-hidden="true">p<span>✓</span></span
+          >Proven</a
+        ><a class="lp-guide-link" href="/guide" aria-current="page">Guide</a
+        ><a class="lp-button lp-button-small" href="/app">Open app </a>
+      </nav>
+    </header>
+    <main id="main" class="guide-main lp-shell">
+      <div class="guide-heading">
+        <p class="lp-kicker">THE PROVEN GUIDE</p>
+        <h1>The check comes<br />before the payment.</h1>
+        <p>
+          Proven handles work with executable acceptance conditions. This guide
+          explains the path from those conditions to a recorded delivery result,
+          and what remains trusted along the way.
+        </p>
+      </div>
+      <section class="guide-section" aria-labelledby="workflow">
+        <h2 id="workflow">How a job moves</h2>
+        <ol>
+          <li>
+            <strong>Commit the job.</strong> Fix the worker, payment, acceptance
+            check, planted fakes and verifier build before funding. Hashes bind
+            the job to these inputs.
+          </li>
+          <li>
+            <strong>Challenge the check.</strong> Run it against the planted
+            wrong deliverables. A check that accepts one of those fakes is
+            refused. Catching the planted fakes does not prove that every
+            possible wrong delivery will be caught.
+          </li>
+          <li>
+            <strong>Fund escrow.</strong> The buyer locks the agreed payment in
+            the NEAR contract after the challenge is accepted.
+          </li>
+          <li>
+            <strong>Deliver the work.</strong> The worker commits the delivery
+            hash. Changed bytes do not match that commitment.
+          </li>
+          <li>
+            <strong>Request verification.</strong> Anyone may trigger the
+            escrow’s OutLayer request with the required compute deposit. Only
+            the escrow’s private promise callback records its verdict.
+          </li>
+          <li>
+            <strong>Settle and inspect.</strong> A recorded pass permits
+            release; a recorded fail permits refund. Inspect the final contract
+            state and transfer receipt to establish that payment actually
+            happened.
+          </li>
+        </ol>
+      </section>
+      <section class="guide-section" aria-labelledby="failure">
+        <h2 id="failure">A failed run is not a failed delivery.</h2>
+        <p>
+          A promise failure, timeout, malformed result, oversized output or
+          mismatched binding produces <strong>no verdict</strong>. It must not
+          become a pass or fail. The job can be retried within its window and
+          then reach its expiry/refund path.
+        </p>
+        <p>
+          A pending payout is also different from a confirmed transfer. The app
+          labels the recorded contract state and shows what is still pending.
+        </p>
+      </section>
+      <section id="trust" class="guide-section" aria-labelledby="trust-heading">
+        <h2 id="trust-heading">What remains trusted</h2>
+        <ul>
+          <li>
+            <strong>OutLayer’s contract and operator.</strong> Registered worker
+            keys and approved measurements are part of the verdict’s trust path.
+            An individual run’s quote is not verified on chain.
+          </li>
+          <li>
+            <strong>The relay’s handling of private inputs.</strong> The relay
+            can read or withhold private plaintext. It cannot post a verdict.
+            Changed texts are refused when they do not match the job’s hashes.
+          </li>
+          <li>
+            <strong>Custody and keystore services.</strong> The buyer uses a
+            restricted testnet custody policy; workers use scoped keys. These
+            restrictions do not make the service or host untrusted.
+          </li>
+          <li>
+            <strong>Contract upgrade keys.</strong> Whoever controls the escrow
+            account’s full-access key can change its code.
+          </li>
+          <li>
+            <strong>Public data providers.</strong> The viewer relies on the
+            configured NEAR testnet RPC and OutLayer API. It does not verify a
+            NEAR light-client proof.
+          </li>
+        </ul>
+        <h3>What an attestation panel means</h3>
+        <p>
+          “Bindings matched” means the fetched fields match the stored job,
+          verifier, input, output and secret-reference commitments. The page
+          does not independently check the Intel signature chain or
+          worker-measurement approval.
+        </p>
+        <p>
+          Selected recorded runs have passed independent command-line signature
+          checks, documented in the project README. That does not independently
+          establish the private plaintext or reproducible builds.
+        </p>
+      </section>
+      <section class="guide-section" aria-labelledby="examples">
+        <h2 id="examples">Start with two completed jobs</h2>
+        <p>
+          The recorded November 6 testnet pair used the same check. Job 35
+          released exactly 0.01 NEAR to the honest worker. Job 36 refunded
+          exactly 0.01 NEAR to the buyer after the fake delivery failed. The
+          check had caught 13 of 13 planted fakes before funding.
+        </p>
+        <p>
+          These are existing jobs, read live. Opening them sends no transaction
+          and does not start a new demo.
+        </p>
+        <div class="guide-example-links">
+          <a class="lp-button" href="/app#job-35">Inspect honest job 35 </a
+          ><a class="lp-button" href="/app#job-36">Inspect fake job 36 </a>
+        </div>
+      </section>
+      <section class="guide-section" aria-labelledby="demo">
+        <h2 id="demo">The guarded live demo</h2>
+        <p>
+          The live control is separate from job lookups. It starts disabled
+          unless the operator prepares one fixed run. That run uses the
+          operator’s testnet funds and the existing restricted buyer and scoped
+          workers; the visitor cannot choose payment amounts, recipients or
+          inputs.
+        </p>
+        <p>
+          A durable allowance is consumed before launch. Repeat clicks, another
+          server process or a restart cannot use it again. An uncertain result
+          requires operator reconciliation; there is no automatic retry or
+          browser reset.
+        </p>
+        <p>
+          One earlier fresh command completed in 117.87 seconds. That is a
+          measured run, not a guarantee of future network timing. The browser’s
+          elapsed display is a progress timer.
+        </p>
+        <a class="lp-text-link" href="/app#demo">Open the demo controls </a>
+      </section>
+      <section class="guide-section" aria-labelledby="scope">
+        <h2 id="scope">Where Proven stops</h2>
+        <p>
+          Subjective work is outside this flow. Proven does not decide whether
+          an essay is good, settle a dispute by opinion, or establish
+          correctness beyond the committed check.
+        </p>
+        <p>
+          The current demo uses scripted agents and native NEAR on testnet.
+          Mainnet cross-chain settlement is not implemented. There is no claim
+          of a functioning swarm, an independently verified private input, or a
+          backend-free trust path.
+        </p>
+      </section>
+    </main>
+    <footer class="lp-footer lp-shell">
+      <a class="lp-brand" href="/"
+        ><span class="lp-brand-mark" aria-hidden="true">p<span>✓</span></span
+        >Proven</a
+      >
+      <p>Checkable work. Evidence behind payment.</p>
+      <nav aria-label="Footer navigation">
+        <a href="/guide" aria-current="page">Guide</a
+        ><a href="/app">Open app </a>
+      </nav>
+      <span class="lp-footer-note">NEAR testnet · No mainnet settlement</span>
+    </footer>
+  </body>
+</html>

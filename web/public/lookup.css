@@ -5,7 +5,7 @@
   gap: 30px;
   padding: 32px;
   position: relative;
-  box-shadow: 0 6px 16px #14212b06;
+  box-shadow: 0 1px 2px #19152e04;
 }
 .lookup-title {
   display: flex;
@@ -13,7 +13,7 @@
   gap: 13px;
 }
 .section-number {
-  color: var(--green);
+  color: var(--purple);
   font: 11px var(--mono);
   margin-top: 5px;
 }
@@ -43,8 +43,8 @@
   display: flex;
   align-items: center;
   background: var(--ivory);
-  border: 1px solid #c9d1c8;
-  border-radius: 5px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
   min-width: 0;
   flex: 1;
 }
@@ -63,50 +63,11 @@
   color: var(--ink);
 }
 .job-input:focus-within {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--purple);
   outline-offset: 2px;
 }
 .job-input input:focus-visible {
   outline: none;
-}
-.button {
-  min-height: 42px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 17px;
-  border-radius: 5px;
-  padding: 10px 16px;
-  font-size: 11px;
-  font-weight: 600;
-  border: 1px solid transparent;
-  white-space: nowrap;
-  transition: background 0.12s;
-}
-.button-primary {
-  color: var(--paper);
-  background: var(--green);
-}
-.button-primary:hover {
-  background: #215b40;
-}
-.button-secondary {
-  background: transparent;
-  color: var(--ink);
-  border-color: #bcc8bc;
-}
-.button-secondary:hover,
-.button-quiet:hover {
-  background: #e9eee4;
-}
-.button-quiet {
-  min-height: 32px;
-  padding: 6px 10px;
-  background: var(--ivory);
-  color: var(--ink);
-  border-color: var(--line);
-  gap: 12px;
-  font: 11px var(--mono);
 }
 .small-note {
   margin-top: 9px;
@@ -167,14 +128,12 @@
   margin-bottom: 24px;
 }
 .empty-state .eyebrow {
-  color: var(--green);
+  color: var(--purple);
   margin-bottom: 12px;
 }
 .empty-state h2 {
-  font:
-    30px Georgia,
-    "Times New Roman",
-    serif;
+  font-size: 27px;
+  font-weight: 550;
   letter-spacing: -0.6px;
   margin-bottom: 13px;
 }
@@ -197,5 +156,5 @@
 .empty-details span::before {
   content: "+";
   margin-right: 6px;
-  color: var(--green);
+  color: var(--purple);
 }

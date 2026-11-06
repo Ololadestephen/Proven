@@ -1,0 +1,92 @@
+.guide-page {
+  margin: 0;
+  color: var(--ink, #202530);
+  background: #f6f6fb;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.guide-page .lp-header {
+  background: #0d1029;
+  color: white;
+}
+.guide-main {
+  max-width: 840px;
+  padding-block: 70px 80px;
+}
+.guide-heading {
+  padding-bottom: 36px;
+}
+.guide-heading h1 {
+  font-size: clamp(36px, 4.6vw, 54px);
+  line-height: 1.12;
+  letter-spacing: -2px;
+  font-weight: 550;
+  margin: 17px 0 20px;
+}
+.guide-heading > p:last-child {
+  color: #676779;
+  font-size: 15px;
+  line-height: 1.8;
+  max-width: 670px;
+}
+.guide-section {
+  padding: 30px 34px;
+  border: 1px solid #e1ddea;
+  border-radius: 14px;
+  margin-top: 18px;
+  background: #fff;
+  box-shadow: inset 0 0 0 3px #fbfaff;
+  scroll-margin-top: 25px;
+}
+.guide-section h2 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.8px;
+  margin-bottom: 15px;
+}
+.guide-section h3 {
+  font-size: 15px;
+  font-weight: 650;
+  margin-block: 20px 8px;
+}
+.guide-section p,
+.guide-section li {
+  color: #676174;
+  font-size: 13px;
+  line-height: 1.9;
+}
+.guide-section p + p {
+  margin-top: 12px;
+}
+.guide-section ol,
+.guide-section ul {
+  padding-left: 20px;
+  margin: 10px 0 0;
+}
+.guide-section li + li {
+  margin-top: 10px;
+}
+.guide-section strong {
+  color: #514b60;
+  font-weight: 600;
+}
+.guide-section a {
+  color: #6b61d4;
+}
+.guide-example-links {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.guide-example-links .lp-button {
+  background: #f0edff;
+  border-color: #e0daf8;
+  color: #6256b7;
+  font-size: 12px;
+}

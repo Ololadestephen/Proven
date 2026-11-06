@@ -1,0 +1,80 @@
+/* Adapted React Bits AnimatedList: light workspace palette and semantic native links. */
+.animated-navigation {
+  width: 100%;
+}
+.animated-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.animated-list li {
+  position: relative;
+}
+.animated-link {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 13px 14px;
+  position: relative;
+  isolation: isolate;
+  border-radius: 11px;
+  color: #666a7a;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.animated-link svg {
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+}
+.animated-link:hover {
+  color: #5c51bd;
+  background: #f8f6ff;
+}
+.animated-link[aria-current] {
+  color: #6455cd;
+}
+.animated-active {
+  position: absolute;
+  inset: 0;
+  background: #efedff;
+  border: 1px solid #e8e3ff;
+  border-radius: 11px;
+  z-index: -1;
+  pointer-events: none;
+}
+@media (max-width: 760px) {
+  .animated-list {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .animated-link {
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 4px;
+    font-size: 10px;
+  }
+  .animated-link svg {
+    width: 18px;
+    height: 18px;
+  }
+  .animated-active {
+    border-radius: 9px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animated-list li {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .animated-active {
+    transform: none !important;
+  }
+}

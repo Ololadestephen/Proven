@@ -10,10 +10,8 @@
   margin-bottom: 10px;
 }
 .snapshot-heading h2 {
-  font:
-    40px Georgia,
-    "Times New Roman",
-    serif;
+  font-size: 30px;
+  font-weight: 600;
   letter-spacing: -1px;
 }
 .snapshot-meta {
@@ -34,12 +32,12 @@
   padding: 24px;
   background: var(--paper);
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 14px;
 }
 .metric:first-child {
-  background: var(--navy);
-  color: var(--paper);
-  border-color: var(--navy);
+  background: #f0edff;
+  color: #6155b0;
+  border-color: #dcd5f3;
 }
 .metric-label {
   font-size: 10px;
@@ -48,7 +46,7 @@
 }
 .metric:first-child .metric-label,
 .metric:first-child .metric-detail {
-  color: #c1cdcd;
+  color: #8b83a9;
 }
 .metric-value {
   font-size: 23px;
@@ -103,7 +101,7 @@
 }
 .progress-item {
   min-width: 0;
-  border-top: 2px solid #b8c9b2;
+  border-top: 2px solid #dad4f3;
   padding-top: 13px;
 }
 .progress-item h4 {
@@ -151,7 +149,7 @@
   grid-template-columns: 170px 1fr;
   gap: 20px;
   padding: 14px 0;
-  border-bottom: 1px solid #e9ece5;
+  border-bottom: 1px solid #eeedf4;
 }
 .commitment:last-child {
   border-bottom: 0;
@@ -202,9 +200,9 @@
 }
 .badge {
   font: 9px var(--mono);
-  background: #edf0e8;
-  color: #4b5c50;
-  border-radius: 3px;
+  background: #f0eff7;
+  color: #76718c;
+  border-radius: 100px;
   padding: 5px 8px;
 }
 .badge.matched {

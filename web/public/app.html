@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="Inspect a Proven testnet job, its recorded verdict, and the limits of its evidence."
+    />
+    <title>Proven · Workspace</title>
+    <link rel="stylesheet" href="/theme.css" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/build/ui.css" />
+    <link rel="stylesheet" href="/lookup.css" />
+    <link rel="stylesheet" href="/evidence.css" />
+    <link rel="stylesheet" href="/responsive.css" />
+    <link rel="stylesheet" href="/demo.css" />
+    <script src="/app.js" defer></script>
+    <script src="/build/ui.js" type="module"></script>
+    <script src="/demo.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#lookup">Skip to job lookup</a>
+    <div class="app-frame">
+      <aside class="app-sidebar" aria-label="Workspace navigation">
+        <a class="wordmark" href="/" aria-label="Proven home"
+          ><span class="brand-mark" aria-hidden="true">p.</span>Proven</a
+        >
+        <p class="sidebar-label">YOUR WORKSPACE</p>
+        <div id="workspace-navigation">
+          <nav class="sidebar-nav" aria-label="App navigation">
+            <a href="#workspace" aria-current="page"
+              ><span class="nav-icon" aria-hidden="true">▦</span>Overview</a
+            >
+            <a href="#lookup"
+              ><span class="nav-icon" aria-hidden="true">▤</span>Job evidence</a
+            >
+            <a href="#demo"
+              ><span class="nav-icon" aria-hidden="true">●</span>Live demo</a
+            >
+            <a href="#trust"
+              ><span class="nav-icon" aria-hidden="true">◇</span>Trust &amp;
+              limits</a
+            >
+          </nav>
+        </div>
+        <div class="sidebar-bottom">
+          <a href="/guide">How Proven works </a>
+          <p>Checkable work.<br />Payment with a record.</p>
+        </div>
+      </aside>
+      <div class="app-area">
+        <header class="workspace-topbar">
+          <span
+            >Proven <span aria-hidden="true">/</span>
+            <strong>Workspace</strong></span
+          >
+          <div class="environment">
+            <span class="signal-dot" aria-hidden="true"></span>NEAR testnet<span
+              class="divider"
+              aria-hidden="true"
+              >/</span
+            >Demo opt-in
+          </div>
+        </header>
+        <main class="shell main-content" id="workspace">
+          <section class="workspace-intro" aria-labelledby="workspace-title">
+            <div>
+              <p class="eyebrow">Good work. Clear evidence.</p>
+              <h1 id="workspace-title">Your work, with proof.</h1>
+              <p>
+                Inspect a job, follow its acceptance check, and see where the
+                payment went.
+              </p>
+            </div>
+            <div id="reactbits-cta">
+              <a class="button button-secondary" href="#demo"
+                >Explore the demo
+              </a>
+            </div>
+          </section>
+          <section class="workspace-section" aria-labelledby="recorded-heading">
+            <div class="workspace-section-heading">
+              <h2 id="recorded-heading">A real run. Two different outcomes.</h2>
+              <p>Recorded examples · read current state</p>
+            </div>
+            <div id="workspace-cards">
+              <div class="record-grid">
+                <a class="panel record-card" href="#job-35"
+                  >Honest delivery · Job 35 · 0.01 NEAR released </a
+                ><a class="panel record-card" href="#job-36"
+                  >Fake delivery · Job 36 · 0.01 NEAR refunded
+                </a>
+              </div>
+            </div>
+          </section>
+          <section
+            id="lookup"
+            class="lookup panel"
+            aria-labelledby="lookup-heading"
+          >
+            <div class="lookup-title">
+              <span class="section-number" aria-hidden="true">01</span>
+              <div>
+                <h2 id="lookup-heading">Open a job</h2>
+                <p>Read its current public state. No wallet required.</p>
+              </div>
+            </div>
+            <form id="job-form" class="lookup-form">
+              <label for="job-id">Job ID</label>
+              <div class="input-row">
+                <div class="job-input">
+                  <span aria-hidden="true">#</span
+                  ><input
+                    id="job-id"
+                    name="job_id"
+                    type="text"
+                    inputmode="numeric"
+                    pattern="[0-9]+"
+                    maxlength="16"
+                    placeholder="Enter a job ID"
+                    required
+                    autocomplete="off"
+                    aria-describedby="lookup-help"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  id="load-button"
+                  class="button button-primary"
+                >
+                  Load job
+                </button>
+              </div>
+              <p id="lookup-help" class="small-note">
+                Job lookups only read public state. The separate live demo is
+                opt-in.
+              </p>
+            </form>
+            <div class="recorded-jobs">
+              <span class="small-label"
+                >Existing recorded jobs · read live</span
+              >
+              <div class="quick-buttons">
+                <button
+                  class="button button-quiet"
+                  type="button"
+                  data-job-id="35"
+                >
+                  Job 35</button
+                ><button
+                  class="button button-quiet"
+                  type="button"
+                  data-job-id="36"
+                >
+                  Job 36
+                </button>
+              </div>
+              <p>These open existing jobs. They do not run a new demo.</p>
+            </div>
+          </section>
+
+          <div
+            id="feedback"
+            class="feedback"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <span class="feedback-dot" aria-hidden="true"></span
+            ><span id="feedback-text">Ready to read a job.</span>
+          </div>
+          <noscript
+            ><p class="feedback">
+              Enable JavaScript to load public job snapshots from the local API.
+            </p></noscript
+          >
+
+          <section
+            id="empty-state"
+            class="empty-state"
+            aria-labelledby="empty-heading"
+          >
+            <div class="empty-symbol" aria-hidden="true">[ &nbsp;#&nbsp; ]</div>
+            <p class="eyebrow">Evidence begins with a job</p>
+            <h2 id="empty-heading">A clear view of the current state.</h2>
+            <p>
+              Enter a job ID or open a recorded example to inspect its funds,
+              commitments, verdict, and attestation checks.
+            </p>
+            <div class="empty-details">
+              <span>Public job data</span><span>Stored request IDs</span
+              ><span>Explicit trust limits</span>
+            </div>
+          </section>
+
+          <section
+            id="job-results"
+            hidden
+            aria-label="Job evidence snapshot"
+            aria-busy="false"
+          >
+            <div class="snapshot-heading">
+              <div>
+                <p class="eyebrow">
+                  Current snapshot · not a transaction history
+                </p>
+                <h2 id="job-title">Job</h2>
+                <p id="snapshot-meta" class="snapshot-meta"></p>
+              </div>
+              <button
+                id="refresh-button"
+                type="button"
+                class="button button-secondary"
+              >
+                Refresh snapshot
+              </button>
+            </div>
+            <div id="summary" class="summary-grid"></div>
+            <section
+              class="panel section-panel"
+              aria-labelledby="state-heading"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">02 / State and timing</p>
+                  <h3 id="state-heading">What is recorded now</h3>
+                </div>
+                <span class="small-label">No inferred transaction history</span>
+              </div>
+              <div id="progress" class="progress-grid"></div>
+              <div id="timing" class="detail-grid timing-grid"></div>
+            </section>
+            <section
+              class="panel section-panel"
+              aria-labelledby="commitments-heading"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">03 / Public commitments</p>
+                  <h3 id="commitments-heading">Accounts and fixed hashes</h3>
+                </div>
+              </div>
+              <div id="accounts" class="detail-grid accounts-grid"></div>
+              <div id="commitments" class="commitment-list"></div>
+            </section>
+            <section
+              class="attestation-section"
+              aria-labelledby="attestation-heading"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">04 / Attestation evidence</p>
+                  <h3 id="attestation-heading">Compare the recorded runs</h3>
+                </div>
+              </div>
+              <p class="attestation-note">
+                A matched audit means the listed bindings matched. This page
+                does not independently verify the Intel signature chain.
+              </p>
+              <div id="attestations" class="attestation-grid"></div>
+            </section>
+          </section>
+
+          <section
+            id="demo"
+            class="panel demo-panel"
+            aria-labelledby="demo-heading"
+          >
+            <div class="demo-heading">
+              <div>
+                <p class="eyebrow">Live scripted demo · real testnet calls</p>
+                <h2 id="demo-heading">
+                  Watch an honest delivery paid and a fake refunded.
+                </h2>
+                <p>
+                  The fixed example runs two scripted workers through the same
+                  acceptance check. Starting it uses the operator’s testnet
+                  funds. No wallet is required in your browser.
+                </p>
+              </div>
+              <span class="small-label">One operator-enabled run</span>
+            </div>
+            <div class="demo-actions">
+              <button
+                id="demo-start"
+                class="button button-primary"
+                type="button"
+                disabled
+              >
+                Start live demo
+              </button>
+              <button
+                id="demo-check"
+                class="button button-secondary"
+                type="button"
+              >
+                Check demo status
+              </button>
+            </div>
+            <p id="demo-status" role="status" aria-live="polite">
+              Checking whether the operator has enabled a live run.
+            </p>
+            <p id="demo-elapsed"></p>
+            <p class="small-note">
+              One earlier fresh command completed in 117.87 seconds. Network and
+              service latency vary; this is not a time guarantee. Repeated
+              clicks do not create another run.
+            </p>
+            <ul
+              id="demo-jobs"
+              class="demo-jobs"
+              aria-label="Live demo cases"
+            ></ul>
+          </section>
+          <aside id="trust" class="trust-panel" aria-labelledby="trust-heading">
+            <div>
+              <p class="eyebrow">Keep the trust boundaries visible</p>
+              <h2 id="trust-heading">Evidence has limits.</h2>
+              <p>
+                Only the escrow’s private callback can record a verdict. A
+                worker’s claim of success does not decide payment.
+              </p>
+            </div>
+            <ul>
+              <li>
+                The OutLayer contract and its operator remain trusted, along
+                with registered worker keys and approved measurements. A
+                per-call quote is not verified on chain.
+              </li>
+              <li>
+                The relay can read or withhold private inputs. It cannot set a
+                verdict.
+              </li>
+              <li>
+                The holder of the escrow’s full-access key can change its code.
+              </li>
+              <li>
+                Independent Intel signature verification is not performed by
+                this page.
+              </li>
+              <li>
+                This viewer relies on the public testnet RPC and OutLayer API.
+                It does not verify a NEAR light-client proof.
+              </li>
+            </ul>
+            <div class="settlement-note">
+              <span class="small-label">Cross-chain settlement</span>
+              <p>Quotes only. No mainnet payout is implemented.</p>
+            </div>
+          </aside>
+        </main>
+        <footer class="shell footer">
+          <span class="footer-brand">proven.</span>
+          <p>Checkable work. Public commitments. Explicit trust.</p>
+          <span>Testnet workspace</span>
+        </footer>
+      </div>
+    </div>
+  </body>
+</html>

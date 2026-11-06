@@ -94,7 +94,7 @@
       const open = document.createElement("button");
       open.type = "button";
       open.className = "button button-quiet";
-      open.textContent = `Inspect job ${job.id} ↗`;
+      open.textContent = `Inspect job ${job.id} `;
       open.addEventListener("click", () => {
         document.dispatchEvent(
           new CustomEvent("proven-job", { detail: job.id }),

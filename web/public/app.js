@@ -238,7 +238,7 @@ function renderAudit(title, audit) {
     ),
   );
   const link = secureLink(
-    "Open attestation evidence ↗",
+    "Open attestation evidence ",
     audit.url,
     "audit-link",
   );
@@ -392,3 +392,11 @@ document.addEventListener("proven-job", (event) => {
   if (Number.isSafeInteger(event.detail) && event.detail >= 0)
     void loadJob(event.detail);
 });
+
+// A recorded-job link requests public evidence only; it never arms or starts a demo.
+function openLinkedJob() {
+  const match = /^#job-([0-9]{1,16})$/.exec(window.location.hash);
+  if (match) void loadJob(match[1]);
+}
+window.addEventListener("hashchange", openLinkedJob);
+openLinkedJob();

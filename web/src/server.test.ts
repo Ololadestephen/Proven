@@ -20,6 +20,21 @@ test("local HTTP only exposes allowed read routes, never private files or transa
   const base = `http://127.0.0.1:${address.port}`;
   for (const path of [
     "/",
+    "/app",
+    "/app/",
+    "/guide",
+    "/guide/",
+    "/theme.css",
+    "/landing.css",
+    "/product-sections.css",
+    "/product-details.css",
+    "/product-responsive.css",
+    "/landing-sections.css",
+    "/guide.css",
+    "/landing-responsive.css",
+    "/build/ui.js",
+    "/build/ui.css",
+    "/third-party-notices.txt",
     "/app.js",
     "/style.css",
     "/lookup.css",
@@ -29,6 +44,10 @@ test("local HTTP only exposes allowed read routes, never private files or transa
     assert.equal((await fetch(base + path)).status, 200);
   for (const path of [
     "/.env",
+    "/ui/ui.tsx",
+    "/build/../ui/ui.tsx",
+    "/dist/ui.js.map",
+    "/licenses/react-bits-LICENSE.md",
     "/RULES.md",
     "/runs/private/relay.sock",
     "/src/server.ts",
