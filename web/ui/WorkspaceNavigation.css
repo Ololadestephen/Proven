@@ -1,0 +1,50 @@
+.workspace-menu-toggle {
+  display: none;
+}
+@media (max-width: 760px) {
+  .app-sidebar:has(.workspace-navigation-panel) {
+    position: relative;
+    gap: 0;
+  }
+  .app-sidebar:has(.workspace-navigation-panel) .wordmark {
+    min-height: 40px;
+  }
+  .workspace-menu-toggle {
+    position: absolute;
+    top: 16px;
+    right: 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 8px 12px;
+    background: #f7f6ff;
+    color: #5145ad;
+    border: 1px solid #e5e0f5;
+    border-radius: 10px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .workspace-menu-toggle svg {
+    width: 18px;
+    height: 18px;
+  }
+  .workspace-navigation-panel[data-open="false"] .workspace-menu-content {
+    display: none;
+  }
+  .workspace-navigation-panel[data-open="true"] .workspace-menu-content {
+    margin-top: 16px;
+  }
+  .workspace-menu-content .animated-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .workspace-menu-content .animated-link {
+    flex-direction: row;
+    justify-content: flex-start;
+    padding: 12px 14px;
+    gap: 12px;
+    font-size: 13px;
+  }
+}

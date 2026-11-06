@@ -89,7 +89,13 @@ function AnimatedItem({
     </motion.li>
   );
 }
-export function AnimatedList({ preview = false }: { preview?: boolean }) {
+export function AnimatedList({
+  preview = false,
+  onNavigate,
+}: {
+  preview?: boolean;
+  onNavigate?: () => void;
+}) {
   const [active, setActive] = useState<WorkspaceSection>(() =>
     preview ? "workspace" : sectionFromHash(window.location.hash),
   );
@@ -120,6 +126,7 @@ export function AnimatedList({ preview = false }: { preview?: boolean }) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
       return;
     setActive(sectionFromHash(event.currentTarget.hash));
+    onNavigate?.();
   }
   return (
     <MotionConfig reducedMotion="user">

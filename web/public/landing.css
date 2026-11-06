@@ -245,7 +245,7 @@
   padding-top: 19px;
 }
 
-.landing-page > .lp-header {
+:is(.landing-page, .guide-page) > .lp-header {
   background: var(--navy);
   color: white;
   position: sticky;
@@ -256,7 +256,7 @@
     background-color 180ms ease,
     border-color 180ms ease;
 }
-.landing-page .lp-header .lp-nav {
+:is(.landing-page, .guide-page) .lp-header .lp-nav {
   transition:
     background-color 180ms ease,
     color 180ms ease,
@@ -264,37 +264,42 @@
     border-radius 180ms ease,
     transform 180ms ease;
 }
-.landing-page > .lp-header.is-scrolled {
+:is(.landing-page, .guide-page) > .lp-header.is-scrolled {
   background: transparent;
   border-color: transparent;
 }
-.landing-page .is-scrolled .lp-nav {
+:is(.landing-page, .guide-page) .is-scrolled .lp-nav {
+  height: 62px;
+  width: min(1040px, calc(100% - 80px));
   background: #fff;
   color: #202530;
   border: 1px solid #e7e5ef;
   border-radius: 100px;
-  padding-inline: 20px 10px;
+  padding-inline: 16px 8px;
   box-shadow: 0 8px 32px #0d10291a;
-  transform: translateY(12px);
+  transform: translateY(10px);
 }
-.landing-page .is-scrolled .lp-button-small {
+:is(.landing-page, .guide-page) .is-scrolled .lp-button-small {
+  min-height: 36px;
+  padding: 9px 18px;
   background: #6554ed;
   color: #fff;
   border-color: #6554ed;
 }
 @media (max-width: 620px) {
-  .landing-page > .lp-header {
+  :is(.landing-page, .guide-page) > .lp-header {
     min-height: 71px;
   }
-  .landing-page .is-scrolled .lp-nav {
+  :is(.landing-page, .guide-page) .is-scrolled .lp-nav {
     padding-inline: 14px 8px;
     transform: translateY(8px);
-    height: 62px;
+    height: 56px;
+    width: calc(100% - 28px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .landing-page > .lp-header,
-  .landing-page .lp-header .lp-nav {
+  :is(.landing-page, .guide-page) > .lp-header,
+  :is(.landing-page, .guide-page) .lp-header .lp-nav {
     transition: none;
   }
 }

@@ -41,7 +41,6 @@
   margin-top: 18px;
   background: #fff;
   box-shadow: inset 0 0 0 3px #fbfaff;
-  scroll-margin-top: 25px;
 }
 .guide-section h2 {
   font-size: 24px;
@@ -89,4 +88,9 @@
   border-color: #e0daf8;
   color: #6256b7;
   font-size: 12px;
+}
+
+.guide-section,
+.guide-section [id] {
+  scroll-margin-top: 96px;
 }

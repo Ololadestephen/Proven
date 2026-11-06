@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { SpotlightCard } from "./react-bits/SpotlightCard.tsx";
+import { WorkspaceNavigation } from "./WorkspaceNavigation.tsx";
 import { AnimatedList } from "./react-bits/AnimatedList.tsx";
 import { StarBorder } from "./react-bits/StarBorder.tsx";
 import "./ui.css";
@@ -117,15 +118,15 @@ if (cta)
   );
 
 const navigation = document.getElementById("workspace-navigation");
-if (navigation) createRoot(navigation).render(<AnimatedList />);
+if (navigation) createRoot(navigation).render(<WorkspaceNavigation />);
 
-// Keep the header in its original layout slot while its navigation floats on scroll.
-const landingHeader = document.querySelector<HTMLElement>(
-  ".landing-page > .lp-header",
+// Keep public headers in their original layout slots while navigation floats on scroll.
+const publicHeader = document.querySelector<HTMLElement>(
+  ".landing-page > .lp-header, .guide-page > .lp-header",
 );
-if (landingHeader) {
+if (publicHeader) {
   const syncHeader = () =>
-    landingHeader.classList.toggle("is-scrolled", window.scrollY > 40);
+    publicHeader.classList.toggle("is-scrolled", window.scrollY > 40);
   syncHeader();
   window.addEventListener("scroll", syncHeader, { passive: true });
   window.addEventListener("pageshow", syncHeader);
