@@ -2,8 +2,9 @@
 // The hosted agents service: a small local API and the runner loop. It listens on this machine only; the
 // web server forwards to it. It holds hosted agents' custody keys, the treasury key and a NEAR AI key, and
 // no relay key, buyer key or escrow owner key.
+import { chainProvider } from "../rpc.ts";
 import { createServer } from "node:http";
-import { JsonRpcProvider } from "near-api-js";
+import {} from "near-api-js";
 import { RelayVerifier } from "../../../relay/src/buyer-auth.ts";
 import { BoardClient } from "../board.ts";
 import { loadConfig, ROOT } from "../config.ts";
@@ -49,7 +50,7 @@ export async function buildDeps(
     },
     `${root}/key-events.jsonl`,
   );
-  const provider = new JsonRpcProvider({ url: config.rpc });
+  const provider = chainProvider(config.rpc);
   const store = new HostedStore(root);
   const treasury = treasuryAccount(config, treasuryId, treasuryKey);
   const balance = async (account: string) => {

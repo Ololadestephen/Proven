@@ -1,4 +1,5 @@
 // Scripted agents using exactly the public CLI. Private inputs travel through stdin, never argv.
+import { chainProvider } from "./rpc.ts";
 import { spawn } from "node:child_process";
 import {
   readFileSync,
@@ -11,7 +12,7 @@ import {
 } from "node:fs";
 import { basename, dirname } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { JsonRpcProvider } from "near-api-js";
+import {} from "near-api-js";
 import { ROOT, loadConfig } from "./config.ts";
 import { PublicError, publicMessage } from "./errors.ts";
 import type { Actor } from "./types.ts";
@@ -146,7 +147,7 @@ async function main() {
   const reference = readFileSync(`${base}reference.json`, "utf8");
   const build = parseLocalJson(check) as { verifier?: unknown };
   const config = loadConfig("buyer");
-  const provider = new JsonRpcProvider({ url: config.rpc });
+  const provider = chainProvider(config.rpc);
   if (!dry) {
     if (!config.account || !config.custodyKey)
       throw new PublicError("Restricted custody buyer is not configured.");

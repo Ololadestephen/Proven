@@ -1,5 +1,6 @@
 // Reads and calls on the bid board. Every write here is signed through a custody wallet whose policy
 // allows only the escrow and the board. The board holds no job money and cannot record a verdict.
+import { chainProvider } from "./rpc.ts";
 import { JsonRpcProvider } from "near-api-js";
 import { BOARD, custodyCall } from "./custody.ts";
 import { PublicError } from "./errors.ts";
@@ -95,7 +96,7 @@ export function fundRefusal(
 export class BoardClient {
   private readonly provider: JsonRpcProvider;
   constructor(rpc: string) {
-    this.provider = new JsonRpcProvider({ url: rpc });
+    this.provider = chainProvider(rpc);
   }
 
   async view<T>(

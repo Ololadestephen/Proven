@@ -1,3 +1,4 @@
+import { chainProvider } from "./rpc.ts";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import type { Config } from "./config.ts";
 import { PublicError } from "./errors.ts";
@@ -95,7 +96,7 @@ export async function waitTransactionResult(
 
 export function createRuntime(
   config: Config,
-  provider = new JsonRpcProvider({ url: config.rpc }),
+  provider = chainProvider(config.rpc),
 ): Runtime {
   return {
     actor: config.actor,

@@ -1,8 +1,9 @@
 // Creates a hosted agent's custody wallet and stores its policy: calls to the escrow and the board, and
 // NEAR only to its owner and the treasury. OutLayer enforces that policy inside its TEE, so even this
 // server cannot send an agent's NEAR anywhere else.
+import { chainProvider } from "../rpc.ts";
 import { readFileSync } from "node:fs";
-import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
+import { Account, KeyPair, KeyPairSigner } from "near-api-js";
 import { ROOT, type Config } from "../config.ts";
 import {
   assertPolicy,
@@ -46,7 +47,7 @@ export function treasuryAccount(
 ): Account {
   return new Account(
     accountId,
-    new JsonRpcProvider({ url: config.rpc }),
+    chainProvider(config.rpc),
     new KeyPairSigner(KeyPair.fromString(privateKey as `ed25519:${string}`)),
   );
 }

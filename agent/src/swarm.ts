@@ -1,3 +1,4 @@
+import { chainProvider } from "./rpc.ts";
 import { randomBytes } from "node:crypto";
 // One attempt on one bid, driven from what the chain says at each step, so an interrupted attempt
 // resumes without repeating a signed call. The buyer's steps and the agent's steps use separate
@@ -8,7 +9,7 @@ export { workRefusal };
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
-import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
+import { Account, KeyPair, KeyPairSigner } from "near-api-js";
 import { BoardClient, fundRefusal, type Bid, type Wallet } from "./board.ts";
 import { nearText } from "./board-tools.ts";
 import { keysFrom, KeyPool } from "./key-pool.ts";
@@ -165,9 +166,13 @@ export async function postBid(
   });
   // The exact text a job on this bid must use.
   mkdirSync(`${ROOT}runs/private`, { recursive: true, mode: 0o700 });
-  writeFileSync(`${ROOT}runs/private/bid-${String(result.result)}-check.json`, check, {
-    mode: 0o600,
-  });
+  writeFileSync(
+    `${ROOT}runs/private/bid-${String(result.result)}-check.json`,
+    check,
+    {
+      mode: 0o600,
+    },
+  );
   return {
     bid_id: result.result,
     transaction_hash: result.transaction_hash,
@@ -204,7 +209,7 @@ export async function runReview(bidId: number, keyName: string) {
   if (!answer) return { ...summary, recorded: false, state: "Unreviewed" };
   const signer = new Account(
     values.NEAR_ACCOUNT_ID ?? "",
-    new JsonRpcProvider({ url: config.rpc }),
+    chainProvider(config.rpc),
     new KeyPairSigner(
       KeyPair.fromString(
         (values.PROVEN_REVIEWER_V4_PRIVATE_KEY ??
