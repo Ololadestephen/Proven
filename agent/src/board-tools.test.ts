@@ -33,7 +33,6 @@ test("a dry post_bid fixes the hashes and the verifier named in the check", asyn
     config,
     never,
     never,
-    never,
     true,
   )) as { call: { receiver_id: string; args: Record<string, unknown> } };
   assert.equal(result.call.receiver_id, BOARD);
