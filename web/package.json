@@ -4,13 +4,20 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22.18" },
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "start": "node src/server.ts",
-    "test": "node --test src/*.test.ts",
+    "demo:arm": "node src/demo-arm.ts",
+    "test": "node --test src/*.test.ts src/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write src test-fixtures public",
     "format:check": "prettier --check src test-fixtures public"
   },
-  "devDependencies": { "@types/node": "22.18.0", "typescript": "5.9.3", "prettier": "3.9.10" }
+  "devDependencies": {
+    "@types/node": "22.18.0",
+    "typescript": "5.9.3",
+    "prettier": "3.9.10"
+  }
 }

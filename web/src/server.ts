@@ -4,13 +4,18 @@ import {
   type ServerResponse,
 } from "node:http";
 import { readFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { BrowserDemo } from "./demo.ts";
+import { launchFixedDemo } from "./demo-process.ts";
+import { demoRoute } from "./demo-routes.ts";
 import { loadJob } from "./evidence.ts";
 import { ReadError } from "./model.ts";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 const FILES: Record<string, [string, string]> = {
   "/": ["index.html", "text/html; charset=utf-8"],
+  "/demo.js": ["demo.js", "text/javascript; charset=utf-8"],
+  "/demo.css": ["demo.css", "text/css; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/style.css": ["style.css", "text/css; charset=utf-8"],
   "/lookup.css": ["lookup.css", "text/css; charset=utf-8"],
@@ -31,54 +36,87 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
 }
-function sameHost(req: IncomingMessage) {
+export function approvedOrigin(value: string): string {
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    url.origin !== value ||
+    url.username ||
+    url.password
+  )
+    throw new Error("Use one exact HTTPS origin without a path.");
+  return value;
+}
+function sameHost(req: IncomingMessage, origin?: string) {
   const port = req.socket.localPort;
-  const allowed = [`127.0.0.1:${port}`, `localhost:${port}`];
+  const allowed = origin
+    ? [new URL(origin).host]
+    : [`127.0.0.1:${port}`, `localhost:${port}`];
   if (!allowed.includes(req.headers.host ?? "")) return false;
   return (
     req.headers.origin === undefined ||
-    req.headers.origin === `http://${req.headers.host}`
+    req.headers.origin === (origin ?? `http://${req.headers.host}`)
   );
 }
 
-/** Loopback only. No .env, private files, wallet endpoints, write RPC or demo signer. */
-export function createApp(getJob: typeof loadJob = loadJob) {
-  let active = 0;
+async function serveRead(
+  path: string,
+  res: ServerResponse,
+  getJob: typeof loadJob,
+  reads: { active: number },
+) {
+  const file = FILES[path];
+  if (file) {
+    const bytes = await readFile(new URL(file[0], PUBLIC));
+    res.writeHead(200, { "Content-Type": file[1] });
+    res.end(bytes);
+    return;
+  }
+  const job = /^\/api\/jobs\/([0-9]+)$/.exec(path);
+  if (!job) throw new ReadError("Route not found.", 404);
+  if (reads.active >= 4)
+    throw new ReadError(
+      "Too many active reads. Try again after the current lookup.",
+      429,
+    );
+  reads.active++;
+  try {
+    json(res, 200, await getJob(job[1]!));
+  } finally {
+    reads.active--;
+  }
+}
+
+/** Loopback only. Optional fixed demo launcher; no wallet or arbitrary command routes. */
+export function createApp(
+  getJob: typeof loadJob = loadJob,
+  demo?: BrowserDemo,
+  origin?: string,
+) {
+  if (origin) approvedOrigin(origin);
+  const reads = { active: 0 };
   return createServer(async (req, res) => {
     headers(res);
-    if (!sameHost(req)) {
-      json(res, 403, { error: "Only same-origin local access is allowed." });
-      return;
-    }
-    if (req.method !== "GET") {
-      res.setHeader("Allow", "GET");
-      json(res, 405, { error: "This page supports reads only." });
+    if (!sameHost(req, origin)) {
+      json(res, 403, {
+        error: "Only the configured same-origin access is allowed.",
+      });
       return;
     }
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
       if (url.search)
         throw new ReadError("Query parameters are not supported.", 400);
-      const file = FILES[url.pathname];
-      if (file) {
-        const bytes = await readFile(new URL(file[0], PUBLIC));
-        res.writeHead(200, { "Content-Type": file[1] });
-        res.end(bytes);
+      if (url.pathname === "/api/demo" || url.pathname === "/api/demo/start") {
+        const reply = await demoRoute(req, url.pathname, demo, origin);
+        json(res, reply.code, reply.body);
         return;
       }
-      const job = /^\/api\/jobs\/([0-9]+)$/.exec(url.pathname);
-      if (!job) throw new ReadError("Route not found.", 404);
-      if (active >= 4)
-        throw new ReadError(
-          "Too many active reads. Try again after the current lookup.",
-          429,
-        );
-      active++;
-      try {
-        json(res, 200, await getJob(job[1]!));
-      } finally {
-        active--;
+      if (req.method !== "GET") {
+        res.setHeader("Allow", "GET");
+        throw new ReadError("This route supports reads only.", 405);
       }
+      await serveRead(url.pathname, res, getJob, reads);
     } catch (error) {
       if (res.headersSent) {
         res.end();
@@ -98,7 +136,26 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const server = createApp();
+  const args = process.argv.slice(2);
+  if (
+    args.some((arg) => arg !== "--demo" && !arg.startsWith("--origin=")) ||
+    new Set(args).size !== args.length ||
+    args.filter((arg) => arg.startsWith("--origin=")).length > 1
+  )
+    throw new Error(
+      "Use npm start -- [--demo] [--origin=https://approved-host]",
+    );
+  const originArg = args.find((arg) => arg.startsWith("--origin="));
+  const origin = originArg
+    ? approvedOrigin(originArg.slice("--origin=".length))
+    : undefined;
+  const demo = process.argv.includes("--demo")
+    ? await BrowserDemo.create(
+        fileURLToPath(new URL("../../runs/private/", import.meta.url)),
+        launchFixedDemo,
+      )
+    : undefined;
+  const server = createApp(loadJob, demo, origin);
   server.requestTimeout = 60_000;
   server.headersTimeout = 15_000;
   server.on("error", () => {
@@ -110,7 +167,7 @@ if (
   });
   server.listen(4173, "127.0.0.1", () =>
     console.log(
-      "Proven job evidence: http://127.0.0.1:4173 (read-only, testnet)",
+      "Proven job evidence: http://127.0.0.1:4173 (testnet; live demo requires a separate operator allowance)",
     ),
   );
 }

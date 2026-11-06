@@ -6,7 +6,11 @@ const results = document.getElementById("job-results");
 const empty = document.getElementById("empty-state");
 const feedback = document.getElementById("feedback");
 const feedbackText = document.getElementById("feedback-text");
-const controls = [...document.querySelectorAll("button")];
+const controls = [
+  ...document.querySelectorAll(
+    "#job-form button, .recorded-jobs button, #refresh-button",
+  ),
+];
 let loadedId = null;
 let activeRequest = null;
 
@@ -381,4 +385,10 @@ document.querySelectorAll("[data-job-id]").forEach((button) => {
 });
 document.getElementById("refresh-button").addEventListener("click", () => {
   if (loadedId !== null) void loadJob(loadedId);
+});
+
+// Demo controls own their request state; job reads must not enable a new demo.
+document.addEventListener("proven-job", (event) => {
+  if (Number.isSafeInteger(event.detail) && event.detail >= 0)
+    void loadJob(event.detail);
 });

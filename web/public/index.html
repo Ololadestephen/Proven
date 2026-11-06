@@ -13,7 +13,9 @@
     <link rel="stylesheet" href="/lookup.css" />
     <link rel="stylesheet" href="/evidence.css" />
     <link rel="stylesheet" href="/responsive.css" />
+    <link rel="stylesheet" href="/demo.css" />
     <script src="/app.js" defer></script>
+    <script src="/demo.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#lookup">Skip to job lookup</a>
@@ -31,7 +33,7 @@
               class="divider"
               aria-hidden="true"
               >/</span
-            >Read only
+            >Demo opt-in
           </div>
         </nav>
         <div class="intro">
@@ -87,20 +89,61 @@
             </button>
           </div>
           <p id="lookup-help" class="small-note">
-            Manual reads only. This page does not start runs or move funds.
+            Job lookups only read public state. The separate live demo is
+            opt-in.
           </p>
         </form>
         <div class="recorded-jobs">
           <span class="small-label">Existing recorded jobs · read live</span>
           <div class="quick-buttons">
-            <button class="button button-quiet" type="button" data-job-id="11">
-              Job 11 <span aria-hidden="true">↗</span></button
-            ><button class="button button-quiet" type="button" data-job-id="12">
-              Job 12 <span aria-hidden="true">↗</span>
+            <button class="button button-quiet" type="button" data-job-id="33">
+              Job 33 <span aria-hidden="true">↗</span></button
+            ><button class="button button-quiet" type="button" data-job-id="34">
+              Job 34 <span aria-hidden="true">↗</span>
             </button>
           </div>
           <p>These open existing jobs. They do not run a new demo.</p>
         </div>
+      </section>
+
+      <section class="panel demo-panel" aria-labelledby="demo-heading">
+        <div class="demo-heading">
+          <div>
+            <p class="eyebrow">Live scripted demo · real testnet calls</p>
+            <h2 id="demo-heading">
+              Watch an honest delivery paid and a fake refunded.
+            </h2>
+            <p>
+              The fixed example runs two scripted workers through the same
+              acceptance check. Starting it uses the operator’s testnet funds.
+              No wallet is required in your browser.
+            </p>
+          </div>
+          <span class="small-label">One operator-enabled run</span>
+        </div>
+        <div class="demo-actions">
+          <button
+            id="demo-start"
+            class="button button-primary"
+            type="button"
+            disabled
+          >
+            Start live demo
+          </button>
+          <button id="demo-check" class="button button-secondary" type="button">
+            Check demo status
+          </button>
+        </div>
+        <p id="demo-status" role="status" aria-live="polite">
+          Checking whether the operator has enabled a live run.
+        </p>
+        <p id="demo-elapsed"></p>
+        <p class="small-note">
+          One earlier fresh command completed in 117.87 seconds. Network and
+          service latency vary; this is not a time guarantee. Repeated clicks do
+          not create another run.
+        </p>
+        <ul id="demo-jobs" class="demo-jobs" aria-label="Live demo cases"></ul>
       </section>
 
       <div
