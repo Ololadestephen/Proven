@@ -96,7 +96,7 @@ export async function waitTransactionResult(
 
 export function createRuntime(
   config: Config,
-  provider = chainProvider(config.rpc),
+  provider: JsonRpcProvider = chainProvider(config.rpc),
 ): Runtime {
   return {
     actor: config.actor,
