@@ -104,14 +104,6 @@
   top: 4px;
   color: #efecff;
 }
-.lp-guide-link {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 13px;
-  color: #e5e3f3;
-  text-decoration: none;
-}
 .lp-button {
   display: inline-flex;
   justify-content: center;
