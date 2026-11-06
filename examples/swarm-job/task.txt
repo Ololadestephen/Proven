@@ -4,7 +4,7 @@ Extract these supplier invoices into JSON, exactly in this format and nothing el
 Rules:
 - One row per valid invoice, in any order. Amounts are in US cents, as integers.
 - A line's amount is quantity times unit price. A credit or discount is its own line with a negative amount.
-- total_cents is the sum of that invoice's lines. Ignore any "balance due", previous balance or shipping-free note: they are not lines.
+- total_cents is the sum of that invoice's lines. Ignore any "balance due" or previous balance: they are not lines.
 - Leave out voided invoices. A reprint repeats an earlier invoice: count it once.
 - Keep each supplier's name and each line's description as printed.
 
