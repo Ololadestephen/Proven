@@ -105,11 +105,13 @@ export function AnimatedList({
   onNavigate,
   items = ITEMS,
   defaultSection = "workspace",
+  activeSection,
 }: {
   preview?: boolean;
   onNavigate?: () => void;
   items?: ReadonlyArray<NavigationItem>;
   defaultSection?: WorkspaceSection;
+  activeSection?: WorkspaceSection;
 }) {
   const [active, setActive] = useState<WorkspaceSection>(() =>
     preview
@@ -120,6 +122,7 @@ export function AnimatedList({
           defaultSection,
         ),
   );
+  const selected = activeSection ?? active;
   const anchors = useRef<Array<HTMLAnchorElement | null>>([]);
   const reduced = useReducedMotion();
   useEffect(() => {
@@ -176,10 +179,10 @@ export function AnimatedList({
                 className="animated-link"
                 href={preview ? undefined : (item.href ?? `#${item.id}`)}
                 data-section={item.id}
-                aria-current={active === item.id ? "location" : undefined}
+                aria-current={selected === item.id ? "location" : undefined}
                 onClick={preview ? undefined : select}
               >
-                {active === item.id && (
+                {selected === item.id && (
                   <motion.span
                     className="animated-active"
                     layoutId="workspace-active-pill"

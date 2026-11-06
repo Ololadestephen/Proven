@@ -4,6 +4,11 @@ import { WorkspaceNavigation } from "./WorkspaceNavigation.tsx";
 import { AnimatedList } from "./react-bits/AnimatedList.tsx";
 import { StarBorder } from "./react-bits/StarBorder.tsx";
 import "./ui.css";
+import {
+  APP_NAVIGATION,
+  SUPPORT_NAVIGATION,
+  type WorkspaceSection,
+} from "./navigation-state.ts";
 
 function JobCard({
   id,
@@ -14,14 +19,6 @@ function JobCard({
   fake?: boolean;
   landing?: boolean;
 }) {
-  function inspect() {
-    document.dispatchEvent(new CustomEvent("proven-job", { detail: id }));
-    document.getElementById("lookup")?.scrollIntoView({
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        ? "auto"
-        : "smooth",
-    });
-  }
   return (
     <SpotlightCard className={`record-card ${fake ? "record-fake" : ""}`}>
       <div className="record-top">
@@ -52,9 +49,9 @@ function JobCard({
           Recorded evidence
         </span>
       ) : (
-        <button type="button" className="record-open" onClick={inspect}>
+        <a className="record-open" href={`/evidence#job-${id}`}>
           Open job {id}
-        </button>
+        </a>
       )}
     </SpotlightCard>
   );
@@ -114,11 +111,20 @@ if (jobs) createRoot(jobs).render(<RecordedJobs />);
 const cta = document.getElementById("reactbits-cta");
 if (cta)
   createRoot(cta).render(
-    <StarBorder href="/evidence#demo">Explore the demo</StarBorder>,
+    <StarBorder href="/examples">Explore the demo</StarBorder>,
   );
 
 const navigation = document.getElementById("workspace-navigation");
-if (navigation) createRoot(navigation).render(<WorkspaceNavigation />);
+if (navigation)
+  createRoot(navigation).render(
+    <WorkspaceNavigation
+      items={APP_NAVIGATION}
+      secondaryItems={SUPPORT_NAVIGATION}
+      activeSection={
+        (navigation.dataset.workspaceSection as WorkspaceSection) || "lookup"
+      }
+    />,
+  );
 
 // Keep public headers in their original layout slots while navigation floats on scroll.
 const publicHeader = document.querySelector<HTMLElement>(

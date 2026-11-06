@@ -1,18 +1,28 @@
 import type { ReactNode } from "react";
 import { WorkspaceNavigation } from "./WorkspaceNavigation.tsx";
-import { MARKET_NAVIGATION } from "./navigation-state.ts";
+import {
+  APP_NAVIGATION,
+  SUPPORT_NAVIGATION,
+  type WorkspaceSection,
+} from "./navigation-state.ts";
 
 export function MarketLayout({
   walletControls,
   children,
+  title,
+  subtitle,
+  active,
 }: {
   walletControls: ReactNode;
   children: ReactNode;
+  title: string;
+  subtitle?: string;
+  active: WorkspaceSection;
 }) {
   return (
-    <div className="app-frame">
-      <a className="skip-link" href="#market-overview">
-        Skip to market
+    <div className="app-frame workspace-app">
+      <a className="skip-link" href="#workspace-content">
+        Skip to workspace
       </a>
       <aside className="app-sidebar" aria-label="Workspace navigation">
         <a className="wordmark" href="/" aria-label="Proven home">
@@ -21,62 +31,33 @@ export function MarketLayout({
           </span>
           Proven
         </a>
-        <p className="sidebar-label">YOUR WORKSPACE</p>
         <WorkspaceNavigation
-          items={MARKET_NAVIGATION}
-          defaultSection="market"
+          items={APP_NAVIGATION}
+          defaultSection={active}
+          activeSection={active}
+          secondaryItems={SUPPORT_NAVIGATION}
         />
-        <div className="sidebar-bottom">
-          <a href="/guide">How Proven works</a>
-          <p>
-            Checkable work.
-            <br />
-            Payment with a record.
-          </p>
-        </div>
       </aside>
       <div className="app-area">
-        <main className="shell main-content market" id="market-overview">
-          <section className="workspace-intro" aria-labelledby="market-title">
-            <div>
-              <p className="eyebrow">Good work. Clear evidence.</p>
-              <h1 id="market-title">Your work, with proof.</h1>
-              <p className="market-lead">
-                Browse checkable work, post a job, and follow its delivery
-                through the recorded payment.
-              </p>
+        <main className="shell main-content market" id="workspace-content">
+          <div className="workspace-toolbar">
+            <span className="workspace-network">Testnet</span>
+            <div className="workspace-toolbar-actions">
+              <div className="workspace-wallet">{walletControls}</div>
+              {active !== "post" && (
+                <a className="button button-primary" href="/app/post">
+                  Post a job
+                </a>
+              )}
             </div>
-            <div className="market-account">
-              <span className="market-network">Market · Testnet</span>
-              {walletControls}
-            </div>
-          </section>
-          {children}
-          <section
-            className="market-trust panel"
-            id="market-trust"
-            aria-labelledby="market-trust-title"
-          >
-            <p className="eyebrow">TRUST & LIMITS</p>
-            <h2 id="market-trust-title">Clear conditions. Explicit trust.</h2>
-            <p>
-              Only the escrow’s private callback records a verdict. OutLayer’s
-              contract, registered worker keys and approved measurements remain
-              trusted; individual quotes are not verified on chain. The relay
-              can read or withhold private texts and cannot set a verdict.
-            </p>
-            <p>
-              The separate mainnet escrow is an unaudited, owner-funded
-              deployment. This market’s browser workflow is currently configured
-              for testnet. A buyer’s check can reject honest work; workers have
-              no recourse yet.
-            </p>
-            <a href="/guide#trust">Read the full trust boundaries</a>
-          </section>
+          </div>
+          <header className="workspace-heading">
+            <h1>{title}</h1>
+            {subtitle && <p>{subtitle}</p>}
+          </header>
+          <div className="workspace-content">{children}</div>
         </main>
-        <footer className="market-footer">
-          Proven · Checkable work. Evidence behind payment.
-        </footer>
+        <footer className="workspace-footer">Proven · Testnet</footer>
       </div>
     </div>
   );

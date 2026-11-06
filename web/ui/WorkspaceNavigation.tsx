@@ -11,9 +11,13 @@ import {
 export function WorkspaceNavigation({
   items = EVIDENCE_NAVIGATION,
   defaultSection = "lookup",
+  activeSection,
+  secondaryItems = [],
 }: {
   items?: ReadonlyArray<NavigationItem>;
   defaultSection?: WorkspaceSection;
+  activeSection?: WorkspaceSection;
+  secondaryItems?: ReadonlyArray<NavigationItem>;
 }) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -61,7 +65,25 @@ export function WorkspaceNavigation({
           onNavigate={close}
           items={items}
           defaultSection={defaultSection}
+          activeSection={activeSection}
         />
+        {secondaryItems.length ? (
+          <nav
+            className="workspace-secondary-nav"
+            aria-label="Help and information"
+          >
+            {secondaryItems.map((item) => (
+              <a
+                key={item.id}
+                href={item.href}
+                onClick={close}
+                aria-current={activeSection === item.id ? "page" : undefined}
+              >
+                {item.label}
+              </a>
+            ))}
+          </nav>
+        ) : null}
       </div>
     </div>
   );

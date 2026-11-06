@@ -91,18 +91,10 @@
       const phase = document.createElement("span");
       phase.textContent =
         phases.get(job.phase) ?? "In progress; inspect the job snapshot.";
-      const open = document.createElement("button");
-      open.type = "button";
+      const open = document.createElement("a");
       open.className = "button button-quiet";
-      open.textContent = `Inspect job ${job.id} `;
-      open.addEventListener("click", () => {
-        document.dispatchEvent(
-          new CustomEvent("proven-job", { detail: job.id }),
-        );
-        document
-          .getElementById("lookup")
-          .scrollIntoView({ behavior: "smooth" });
-      });
+      open.textContent = `Inspect job ${job.id}`;
+      open.href = `/evidence#job-${job.id}`;
       item.append(title, phase, open);
       jobs.append(item);
     }

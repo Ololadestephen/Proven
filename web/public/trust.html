@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="The trust assumptions, evidence boundaries and product limits of Proven."
+    />
+    <title>Proven · Trust &amp; limits</title>
+    <link rel="stylesheet" href="/theme.css" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/build/ui.css" />
+    <link rel="stylesheet" href="/lookup.css" />
+    <link rel="stylesheet" href="/evidence.css" />
+    <link rel="stylesheet" href="/responsive.css" />
+    <link rel="stylesheet" href="/workspace.css" />
+
+    <script src="/build/ui.js" type="module"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace-content"
+      >Skip to trust &amp; limits</a
+    >
+    <div class="app-frame workspace-app">
+      <aside class="app-sidebar" aria-label="Workspace navigation">
+        <a class="wordmark" href="/" aria-label="Proven home"
+          ><span class="brand-mark" aria-hidden="true">p.</span>Proven</a
+        >
+        <div id="workspace-navigation" data-workspace-section="trust">
+          <nav class="sidebar-nav" aria-label="App navigation">
+            <a href="/app"
+              ><span class="nav-icon" aria-hidden="true">▦</span>Overview</a
+            >
+            <a href="/app/market"
+              ><span class="nav-icon" aria-hidden="true">▤</span>Market</a
+            >
+            <a href="/app/jobs"
+              ><span class="nav-icon" aria-hidden="true">◇</span>My jobs</a
+            >
+          </nav>
+          <nav class="workspace-secondary-nav" aria-label="Support navigation">
+            <a href="/guide">How Proven works</a>
+            <a href="/examples">Examples &amp; demo</a>
+            <a href="/trust" aria-current="page">Trust &amp; limits</a>
+          </nav>
+        </div>
+      </aside>
+      <div class="app-area">
+        <main class="shell main-content" id="workspace-content">
+          <div class="workspace-toolbar">
+            <span class="workspace-network">Testnet workspace</span
+            ><a class="button button-secondary" href="/app">Back to overview</a>
+          </div>
+          <header class="workspace-heading">
+            <h1>Trust &amp; limits</h1>
+            <p>
+              What the recorded evidence establishes, who remains trusted, and
+              where the product’s boundaries are.
+            </p>
+          </header>
+          <div class="workspace-content workspace-queue">
+            <section class="workspace-card" aria-labelledby="verdict-heading">
+              <h2 id="verdict-heading">The escrow records the verdict</h2>
+              <p>
+                Only the private callback of the escrow’s own request to
+                OutLayer can record a pass or fail. The output must match the
+                escrow, job, check and deliverable. The buyer, worker and relay
+                cannot post a verdict.
+              </p>
+              <p>
+                A failed, timed-out or invalid execution gives no verdict. It
+                can be retried within the job’s window; without a verdict,
+                expiry follows the escrow’s refund path. A payout that cannot
+                reach its fixed recipient remains retryable and cannot be
+                redirected.
+              </p>
+            </section>
+            <section class="workspace-card" aria-labelledby="outlayer-heading">
+              <h2 id="outlayer-heading">
+                OutLayer is part of the trust boundary
+              </h2>
+              <p>
+                The OutLayer contract, its operator account, registered worker
+                keys and approved measurements remain trusted. The OutLayer
+                owner can change the operator. The quote for an individual run
+                is not verified on chain.
+              </p>
+              <p>
+                The escrow requests the verifier by URL and SHA-256. An honest
+                OutLayer worker checks the bytes, but the escrow callback cannot
+                inspect which WASM actually ran or its quote. Attestations
+                provide those fields for an off-chain audit.
+              </p>
+              <p>
+                The verifier host is also needed for availability when a worker
+                has no cached copy. The holder of an escrow account’s
+                full-access key can redeploy its code.
+              </p>
+            </section>
+            <section class="workspace-card" aria-labelledby="privacy-heading">
+              <h2 id="privacy-heading">
+                Private inputs still have an operator
+              </h2>
+              <p>
+                The relay can read or withhold the private check, reference and
+                deliverable. It pins encrypted, verifier-bound secrets using
+                OutLayer’s keystore. The keystore and the API supplying its
+                public key remain trusted.
+              </p>
+              <p>
+                Changing committed text causes a hash mismatch; withholding it
+                can stop verification and leave an honest worker unpaid when the
+                buyer is refunded. Public hashes may reveal low-entropy text
+                through guessing. Outputs expose counts and rule identifiers;
+                encrypted input lengths are also visible.
+              </p>
+            </section>
+            <section class="workspace-card">
+              <h2>Your wallet is a separate trust boundary</h2>
+              <p>
+                The wallet picker uses NEAR Connect. Its SDK, runtime wallet
+                manifest, and fetched or cached wallet executor code are trusted
+                dependencies. The app requests account access without adding an
+                access key, and explicitly names testnet and your selected
+                account for signing. Check every request in your wallet.
+              </p>
+              <p>
+                Browser locks and saved pending actions guard repeat submissions
+                in cooperating tabs. They cannot coordinate another browser or
+                device. An unknown transaction outcome stays blocked until
+                reconciled; reloading does not resend it.
+              </p>
+            </section>
+            <section class="workspace-card" aria-labelledby="evidence-heading">
+              <h2 id="evidence-heading">
+                A binding match is not a signature check
+              </h2>
+              <p>
+                The evidence viewer compares public job commitments with the
+                selected attestation’s fields. It relies on the public testnet
+                RPC and OutLayer API; it does not verify NEAR light-client
+                proofs, Intel signatures or worker-measurement approval.
+              </p>
+              <p>
+                Separate command-line checks of the recorded verdict
+                attestations for historical jobs 35 and 36 passed online and
+                offline Intel signature-chain, measurement and execution-binding
+                verification. Those checks cover those attestations, not every
+                run, and they do not make a buyer’s check fair.
+              </p>
+              <p>
+                The stored request ID helps locate an attestation. That ID is
+                reported by the run and is not independently checked on chain.
+              </p>
+            </section>
+            <section class="workspace-card" aria-labelledby="fairness-heading">
+              <h2 id="fairness-heading">A passing check has a defined scope</h2>
+              <p>
+                Proven supports work that can be checked by execution. Planted
+                wrong deliveries test whether a check catches those fakes; they
+                do not prove it accepts every correct delivery. A buyer can
+                write an unfair check that rejects honest work. Workers
+                currently have no dispute or recourse process.
+              </p>
+              <p>
+                Bid review only permits or blocks attempts. Its reviewer is
+                trusted not to censor or admit a harmful bid, can be fooled, and
+                cannot decide payment. Model output is candidate data, not
+                authority to change the payee or amount in the runner.
+              </p>
+              <p>
+                One attempt per account is not one attempt per person.
+                Additional accounts can evade that limit, hold claims and waste
+                time. A buyer and a worker controlled by the same person can
+                transact with each other; a recorded payout alone does not
+                establish independent parties or useful work.
+              </p>
+            </section>
+            <section class="workspace-card" aria-labelledby="delivery-heading">
+              <h2 id="delivery-heading">
+                Delivery and agent operations have limits
+              </h2>
+              <p>
+                Proven operates the agents shown in its recorded examples.
+                Commitments to prompt, knowledge and tools do not prove what an
+                agent actually ran. A model response signature authenticates
+                bytes, not their correctness. Inference uses the operator’s USD
+                credits; earnings-based limits are accounting, not an on-chain
+                inference payment.
+              </p>
+              <p>
+                The buyer must fund each selected attempt. Claim timing and
+                escrow funding are separate; funding a lapsed claim can result
+                in multiple payable jobs. A delivery may also include extra text
+                if the fixed check does not forbid it.
+              </p>
+              <p>
+                Buyer collection requires a wallet signature and a Released job.
+                Paid deliveries are retained for 30 days. Refunded deliveries
+                are unavailable to the buyer through Proven and are deleted
+                within about an hour. The relay operator can still read the
+                text.
+              </p>
+            </section>
+            <section class="workspace-card" aria-labelledby="network-heading">
+              <h2 id="network-heading">Market is testnet only</h2>
+              <p>
+                There is no deployed mainnet Market board. The separate mainnet
+                escrow, proven-escrow.near, is unaudited and owner-funded. Its
+                recorded direct jobs do not establish a mainnet Market or
+                support for outside funds.
+              </p>
+              <p>
+                Cross-chain settlement currently offers read-only quote and
+                status previews. Cross-chain payouts are not integrated, and a
+                quote does not prove settlement or a refund.
+              </p>
+            </section>
+          </div>
+        </main>
+        <footer class="workspace-footer">Proven · Testnet</footer>
+      </div>
+    </div>
+  </body>
+</html>

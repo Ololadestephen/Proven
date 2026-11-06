@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light" />
     <meta
       name="description"
-      content="Inspect a Proven testnet job, its recorded verdict, and the limits of its evidence."
+      content="Read a Proven testnet job’s public state, verdict and attestation bindings."
     />
     <title>Proven · Job evidence</title>
     <link rel="stylesheet" href="/theme.css" />
@@ -15,76 +15,50 @@
     <link rel="stylesheet" href="/lookup.css" />
     <link rel="stylesheet" href="/evidence.css" />
     <link rel="stylesheet" href="/responsive.css" />
-    <link rel="stylesheet" href="/demo.css" />
-    <script src="/app.js" defer></script>
+    <link rel="stylesheet" href="/workspace.css" />
+
     <script src="/build/ui.js" type="module"></script>
-    <script src="/demo.js" defer></script>
+    <script src="/app.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#lookup">Skip to job lookup</a>
-    <div class="app-frame">
+    <a class="skip-link" href="#workspace-content">Skip to job evidence</a>
+    <div class="app-frame workspace-app">
       <aside class="app-sidebar" aria-label="Workspace navigation">
         <a class="wordmark" href="/" aria-label="Proven home"
           ><span class="brand-mark" aria-hidden="true">p.</span>Proven</a
         >
-        <p class="sidebar-label">YOUR WORKSPACE</p>
-        <div id="workspace-navigation">
+        <div id="workspace-navigation" data-workspace-section="lookup">
           <nav class="sidebar-nav" aria-label="App navigation">
             <a href="/app"
-              ><span class="nav-icon" aria-hidden="true">▦</span>Market</a
+              ><span class="nav-icon" aria-hidden="true">▦</span>Overview</a
             >
-            <a href="/app#post-job"
-              ><span class="nav-icon" aria-hidden="true">+</span>Post a job</a
+            <a href="/app/market"
+              ><span class="nav-icon" aria-hidden="true">▤</span>Market</a
             >
-            <a href="#lookup" aria-current="page"
-              ><span class="nav-icon" aria-hidden="true">▤</span>Job evidence</a
-            >
-            <a href="#demo"
-              ><span class="nav-icon" aria-hidden="true">●</span>Live demo</a
-            >
-            <a href="#trust"
-              ><span class="nav-icon" aria-hidden="true">◇</span>Trust &amp;
-              limits</a
+            <a href="/app/jobs"
+              ><span class="nav-icon" aria-hidden="true">◇</span>My jobs</a
             >
           </nav>
-        </div>
-        <div class="sidebar-bottom">
-          <a href="/guide">How Proven works </a>
-          <p>Checkable work.<br />Payment with a record.</p>
+          <nav class="workspace-secondary-nav" aria-label="Support navigation">
+            <a href="/guide">How Proven works</a>
+            <a href="/examples">Examples &amp; demo</a>
+            <a href="/trust">Trust &amp; limits</a>
+          </nav>
         </div>
       </aside>
       <div class="app-area">
-        <main class="shell main-content" id="workspace">
-          <section class="workspace-intro" aria-labelledby="workspace-title">
-            <div>
-              <p class="eyebrow">Good work. Clear evidence.</p>
-              <h1 id="workspace-title">Finished work, with proof.</h1>
-              <p>
-                Inspect a job, follow its acceptance check, and see where the
-                payment went.
-              </p>
-            </div>
-            <div id="reactbits-cta">
-              <a class="button button-secondary" href="#demo"
-                >Explore the demo
-              </a>
-            </div>
-          </section>
-          <section class="workspace-section" aria-labelledby="recorded-heading">
-            <div class="workspace-section-heading">
-              <h2 id="recorded-heading">A real run. Two different outcomes.</h2>
-              <p>Recorded examples · read current state</p>
-            </div>
-            <div id="workspace-cards">
-              <div class="record-grid">
-                <a class="panel record-card" href="#job-35"
-                  >Honest delivery · Job 35 · 0.01 NEAR released </a
-                ><a class="panel record-card" href="#job-36"
-                  >Fake delivery · Job 36 · 0.01 NEAR refunded
-                </a>
-              </div>
-            </div>
-          </section>
+        <main class="shell main-content" id="workspace-content">
+          <div class="workspace-toolbar">
+            <span class="workspace-network">Testnet workspace</span
+            ><a class="button button-secondary" href="/app">Back to overview</a>
+          </div>
+          <header class="workspace-heading">
+            <h1>Job evidence</h1>
+            <p>
+              Read a job’s public state, fixed commitments and recorded
+              verification. No wallet required.
+            </p>
+          </header>
           <section
             id="lookup"
             class="lookup panel"
@@ -253,99 +227,15 @@
             </section>
           </section>
 
-          <section
-            id="demo"
-            class="panel demo-panel"
-            aria-labelledby="demo-heading"
-          >
-            <div class="demo-heading">
-              <div>
-                <p class="eyebrow">Live scripted demo · real testnet calls</p>
-                <h2 id="demo-heading">
-                  Watch an honest delivery paid and a fake refunded.
-                </h2>
-                <p>
-                  The fixed example runs two scripted workers through the same
-                  acceptance check. Starting it uses the operator’s testnet
-                  funds. No wallet is required in your browser.
-                </p>
-              </div>
-              <span class="small-label">One operator-enabled run</span>
-            </div>
-            <div class="demo-actions">
-              <button
-                id="demo-start"
-                class="button button-primary"
-                type="button"
-                disabled
-              >
-                Start live demo
-              </button>
-              <button
-                id="demo-check"
-                class="button button-secondary"
-                type="button"
-              >
-                Check demo status
-              </button>
-            </div>
-            <p id="demo-status" role="status" aria-live="polite">
-              Checking whether the operator has enabled a live run.
-            </p>
-            <p id="demo-elapsed"></p>
-            <p class="small-note">
-              One earlier fresh command completed in 117.87 seconds. Network and
-              service latency vary; this is not a time guarantee. Repeated
-              clicks do not create another run.
-            </p>
-            <ul
-              id="demo-jobs"
-              class="demo-jobs"
-              aria-label="Live demo cases"
-            ></ul>
-          </section>
-          <aside id="trust" class="trust-panel" aria-labelledby="trust-heading">
-            <div>
-              <p class="eyebrow">Keep the trust boundaries visible</p>
-              <h2 id="trust-heading">Evidence has limits.</h2>
-              <p>
-                Only the escrow’s private callback can record a verdict. A
-                worker’s claim of success does not decide payment.
-              </p>
-            </div>
-            <ul>
-              <li>
-                The OutLayer contract and its operator remain trusted, along
-                with registered worker keys and approved measurements. A
-                per-call quote is not verified on chain.
-              </li>
-              <li>
-                The relay can read or withhold private inputs. It cannot set a
-                verdict.
-              </li>
-              <li>
-                The holder of the escrow’s full-access key can change its code.
-              </li>
-              <li>
-                Independent Intel signature verification is not performed by
-                this page.
-              </li>
-              <li>
-                This viewer relies on the public testnet RPC and OutLayer API.
-                It does not verify a NEAR light-client proof.
-              </li>
-            </ul>
-            <div class="settlement-note">
-              <span class="small-label">Cross-chain settlement</span>
-              <p>Quotes only. Cross-chain payouts are not implemented.</p>
-            </div>
-          </aside>
+          <p class="workspace-note">
+            This is a read-only snapshot.
+            <a href="/trust">Read the evidence’s trust limits</a>, or
+            <a href="/examples"
+              >explore recorded examples and the separate live demo</a
+            >.
+          </p>
         </main>
-        <footer class="shell footer">
-          <span class="footer-brand">proven.</span>
-          <p>Checkable work. Public commitments. Explicit trust.</p>
-          <span>Testnet workspace</span>
-        </footer>
+        <footer class="workspace-footer">Proven · Testnet</footer>
       </div>
     </div>
   </body>

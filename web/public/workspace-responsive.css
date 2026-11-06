@@ -1,0 +1,90 @@
+/* Viewport and user-preference overrides for the workspace. */
+@media (max-width: 760px) {
+  .workspace-app .app-sidebar {
+    padding: 16px 20px;
+  }
+  .workspace-app .workspace-navigation-panel {
+    display: block;
+    margin-top: 0;
+  }
+  .workspace-app .workspace-menu-content {
+    display: flex;
+  }
+  .workspace-app .workspace-secondary-nav {
+    gap: 2px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .workspace-app .main-content {
+    padding-top: 23px;
+  }
+  .workspace-app .workspace-toolbar {
+    align-items: flex-start;
+    margin-bottom: 28px;
+    gap: 12px 18px;
+  }
+  .workspace-app .workspace-toolbar-actions {
+    gap: 9px;
+  }
+  .workspace-app .workspace-heading h1 {
+    font-size: 29px;
+    letter-spacing: -1px;
+  }
+  .workspace-app .workspace-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .workspace-app .workspace-card,
+  .workspace-app .workspace-empty {
+    padding: 21px;
+  }
+  .workspace-app .workspace-list-row {
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .workspace-app .workspace-row-actions {
+    justify-content: flex-start;
+  }
+  .workspace-app .workspace-footer {
+    padding-inline: 18px;
+  }
+}
+@media (max-width: 390px) {
+  .workspace-app .workspace-toolbar-actions {
+    justify-content: flex-start;
+  }
+  .workspace-app .workspace-heading h1 {
+    font-size: 27px;
+  }
+  .workspace-app .workspace-card,
+  .workspace-app .workspace-empty {
+    padding: 18px;
+  }
+  .workspace-app .workspace-tabs {
+    gap: 18px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-app *,
+  .workspace-app *::before,
+  .workspace-app *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@media (max-width: 390px) {
+  .workspace-app .workspace-review {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+  .workspace-app .workspace-review dd + dt {
+    margin-top: 9px;
+  }
+}
+@media (max-width: 390px) {
+  .workspace-app .market-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

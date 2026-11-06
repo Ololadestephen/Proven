@@ -40,6 +40,7 @@ await build({
 
 const licenses = [
   "react-bits-LICENSE.md",
+  "near-connect-LICENSE.txt",
   "react-LICENSE.txt",
   "react-dom-LICENSE.txt",
   "motion-LICENSE.md",

@@ -33,29 +33,25 @@ test("navigation wraps focus and leaves Tab and unrelated keys native", () => {
   assert.equal(navigationIndex("ArrowDown", 0, 0), null);
 });
 
-test("the market and evidence pages share one list, each opening on its own section", () => {
+test("primary navigation is quiet and page destinations stay distinct", () => {
   assert.deepEqual(
     MARKET_NAVIGATION.map((item) => item.label),
-    EVIDENCE_NAVIGATION.map((item) => item.label),
-  );
-  assert.equal(MARKET_NAVIGATION[0]?.label, "Market");
-  assert.equal(sectionFromHash("", MARKET_NAVIGATION, "market"), "market");
-  assert.equal(
-    sectionFromHash("#market-trust", MARKET_NAVIGATION, "market"),
-    "trust",
+    ["Overview", "Market", "My jobs"],
   );
   assert.equal(
-    sectionFromHash("#post-job", MARKET_NAVIGATION, "market"),
-    "post",
+    MARKET_NAVIGATION.find((item) => item.id === "market")?.href,
+    "/app/market",
   );
-  assert.equal(sectionFromHash("", EVIDENCE_NAVIGATION, "lookup"), "lookup");
+  assert.equal(
+    EVIDENCE_NAVIGATION.find((item) => item.id === "demo")?.href,
+    "/examples",
+  );
+  assert.equal(
+    EVIDENCE_NAVIGATION.find((item) => item.id === "trust")?.href,
+    "/trust",
+  );
   assert.equal(
     sectionFromHash("#job-35", EVIDENCE_NAVIGATION, "lookup"),
     "lookup",
-  );
-  assert.equal(EVIDENCE_NAVIGATION[0]?.href, "/app");
-  assert.equal(
-    MARKET_NAVIGATION.find((item) => item.id === "lookup")?.href,
-    "/evidence#lookup",
   );
 });

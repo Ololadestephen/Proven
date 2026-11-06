@@ -3,6 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserDemo } from "./demo.ts";
@@ -26,6 +27,21 @@ const FILES: Record<string, [string, string]> = {
   "/app/": ["market.html", "text/html; charset=utf-8"],
   "/evidence": ["app.html", "text/html; charset=utf-8"],
   "/evidence/": ["app.html", "text/html; charset=utf-8"],
+  "/examples": ["examples.html", "text/html; charset=utf-8"],
+  "/examples/": ["examples.html", "text/html; charset=utf-8"],
+  "/trust": ["trust.html", "text/html; charset=utf-8"],
+  "/trust/": ["trust.html", "text/html; charset=utf-8"],
+  "/workspace-layout.css": ["workspace-layout.css", "text/css; charset=utf-8"],
+  "/workspace-surfaces.css": [
+    "workspace-surfaces.css",
+    "text/css; charset=utf-8",
+  ],
+  "/workspace-forms.css": ["workspace-forms.css", "text/css; charset=utf-8"],
+  "/workspace-responsive.css": [
+    "workspace-responsive.css",
+    "text/css; charset=utf-8",
+  ],
+  "/workspace.css": ["workspace.css", "text/css; charset=utf-8"],
   "/market.css": ["market.css", "text/css; charset=utf-8"],
   "/build/market.css": ["../dist/market.css", "text/css; charset=utf-8"],
   "/build/market.js": ["../dist/market.js", "text/javascript; charset=utf-8"],
@@ -64,7 +80,7 @@ const CSP =
 
 /** The market page talks to the wallets' own endpoints and to testnet RPC. No other page does. */
 const MARKET_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:; img-src 'self' data: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self' 'nonce-__WALLET_NONCE__'; frame-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:; img-src 'self' data: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 function headers(res: ServerResponse) {
   res.setHeader("Cache-Control", "no-store");
@@ -174,12 +190,17 @@ async function serveRead(
   res: ServerResponse,
   getJob: typeof loadJob,
   reads: { active: number },
+  walletNonce?: string,
 ) {
-  const file = FILES[path];
+  const file = isAppPath(path) ? FILES["/app"] : FILES[path];
   if (file) {
     const bytes = await readFile(new URL(file[0], PUBLIC));
     res.writeHead(200, { "Content-Type": file[1] });
-    res.end(bytes);
+    res.end(
+      walletNonce
+        ? bytes.toString("utf8").replace("__WALLET_NONCE__", walletNonce)
+        : bytes,
+    );
     return;
   }
   const job = /^\/api\/jobs\/([0-9]+)$/.exec(path);
@@ -195,6 +216,10 @@ async function serveRead(
   } finally {
     reads.active--;
   }
+}
+
+export function isAppPath(path: string) {
+  return /^\/app(?:\/|\/(?:market|jobs|post)|\/bids\/[0-9]{1,10})?$/.test(path);
 }
 
 /** Loopback only. Optional fixed demo launcher; no wallet or arbitrary command routes. */
@@ -220,12 +245,18 @@ export function createApp(
         throw new ReadError("Query parameters are not supported.", 400);
       // The market moved to /app. The old address keeps working.
       if (url.pathname === "/market" || url.pathname === "/market/") {
-        res.writeHead(308, { Location: "/app" });
+        res.writeHead(308, { Location: "/app/market" });
         res.end();
         return;
       }
-      if (url.pathname === "/app" || url.pathname === "/app/")
-        res.setHeader("Content-Security-Policy", MARKET_CSP);
+      const walletNonce = isAppPath(url.pathname)
+        ? randomBytes(24).toString("base64")
+        : undefined;
+      if (walletNonce)
+        res.setHeader(
+          "Content-Security-Policy",
+          MARKET_CSP.replace("__WALLET_NONCE__", walletNonce),
+        );
       if (url.pathname.startsWith("/api/market")) {
         json(res, 200, await marketRoute(req, url.pathname, devWallet, origin));
         return;
@@ -239,7 +270,7 @@ export function createApp(
         res.setHeader("Allow", "GET");
         throw new ReadError("This route supports reads only.", 405);
       }
-      await serveRead(url.pathname, res, getJob, reads);
+      await serveRead(url.pathname, res, getJob, reads, walletNonce);
     } catch (error) {
       if (res.headersSent) {
         res.end();

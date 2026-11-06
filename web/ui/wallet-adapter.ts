@@ -1,0 +1,105 @@
+import type {
+  NearWalletBase,
+  NearConnectorOptions,
+} from "@hot-labs/near-connect";
+import { DefinitiveWalletFailure } from "./action-guard.ts";
+import type { Wallet } from "./market-types.ts";
+import { b64, randomNonce, RELAY_RECIPIENT } from "./market-client.ts";
+
+export function connectorOptions(cspNonce: string): NearConnectorOptions {
+  return {
+    network: "testnet",
+    autoConnect: false,
+    cspNonce,
+    features: {
+      testnet: true,
+      signMessage: true,
+      signAndSendTransaction: true,
+      signInWithoutAddKey: true,
+    },
+  };
+}
+/** The selected account and network are explicit on every signing request. Connecting adds no access key. */
+export function adaptWallet(
+  chosen: NearWalletBase,
+  accountId: string,
+  signOut: () => Promise<void>,
+): Wallet {
+  if (
+    !chosen.manifest.features.testnet ||
+    !chosen.manifest.features.signMessage
+  )
+    throw new Error("Choose a testnet wallet that supports message signing.");
+  async function checkAccount() {
+    const accounts = await chosen.getAccounts({ network: "testnet" });
+    if (!accounts.some((account) => account.accountId === accountId))
+      throw new DefinitiveWalletFailure(
+        "Your wallet account changed. Reconnect before continuing.",
+      );
+  }
+  return {
+    accountId,
+    label: chosen.manifest.name,
+    signOut,
+    async call(call) {
+      await checkAccount();
+      const outcome = await chosen.signAndSendTransaction({
+        network: "testnet",
+        signerId: accountId,
+        receiverId: call.receiver,
+        actions: [
+          {
+            type: "FunctionCall",
+            params: {
+              methodName: call.method,
+              args: call.args,
+              gas: call.gas.toString(),
+              deposit: call.deposit.toString(),
+            },
+          },
+        ],
+      });
+      if (
+        outcome &&
+        typeof outcome.status === "object" &&
+        "Failure" in outcome.status
+      )
+        throw new Error(
+          "The transaction reported failure. Refresh the job and check wallet history before retrying.",
+        );
+      if (
+        !outcome ||
+        typeof outcome.status !== "object" ||
+        !("SuccessValue" in outcome.status)
+      )
+        throw new Error(
+          "The wallet did not confirm a successful transaction. Check the chain before retrying.",
+        );
+    },
+    async signForRelay(message) {
+      await checkAccount();
+      const nonce = randomNonce();
+      const result = await chosen.signMessage({
+        network: "testnet",
+        signerId: accountId,
+        message,
+        recipient: RELAY_RECIPIENT,
+        nonce,
+      });
+      if (
+        !result ||
+        result.accountId !== accountId ||
+        !result.publicKey ||
+        !result.signature
+      )
+        throw new Error(
+          "The wallet returned a signature for a different or missing account.",
+        );
+      return {
+        public_key: result.publicKey,
+        signature_base64: result.signature,
+        nonce_base64: b64(nonce),
+      };
+    },
+  };
+}

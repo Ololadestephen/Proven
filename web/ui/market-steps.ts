@@ -2,6 +2,7 @@
 // the page, so nothing here depends on memory. A step never decides a verdict.
 export interface MarketJob {
   id?: number;
+  attempt?: number;
   buyer: string;
   worker: string;
   amount: string;

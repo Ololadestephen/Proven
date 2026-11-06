@@ -122,7 +122,7 @@ test("the market is the app, keeps its old address, and only it gets the wallet 
   );
   const moved = await fetch(`${base}/market`, { redirect: "manual" });
   assert.equal(moved.status, 308);
-  assert.equal(moved.headers.get("location"), "/app");
+  assert.equal(moved.headers.get("location"), "/app/market");
 });
 
 test("one IPv6 visitor counts as one client across its /64", () => {
@@ -132,4 +132,52 @@ test("one IPv6 visitor counts as one client across its /64", () => {
   );
   assert.notEqual(clientKey("2001:db8:1:2::1"), clientKey("2001:db8:1:3::1"));
   assert.equal(clientKey("203.0.113.9"), "203.0.113.9");
+});
+
+test("workspace routes carry fresh nonce CSP; support pages stay read-only and arbitrary app paths stay private", async (t) => {
+  const app = createApp(async () => ({}) as never);
+  app.listen(0, "127.0.0.1");
+  await once(app, "listening");
+  t.after(() => app.close());
+  const addr = app.address();
+  assert.ok(addr && typeof addr === "object");
+  const base = `http://127.0.0.1:${addr.port}`;
+  let previous = "";
+  for (const path of [
+    "/app",
+    "/app/market",
+    "/app/jobs",
+    "/app/post",
+    "/app/bids/12",
+  ]) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    const nonce = /name="wallet-csp-nonce" content="([^"]+)"/.exec(html)?.[1];
+    assert.ok(nonce);
+    assert.notEqual(nonce, previous);
+    previous = nonce;
+    const csp = response.headers.get("content-security-policy")!;
+    assert.ok(csp.includes(`'nonce-${nonce}'`));
+    assert.ok(!csp.includes("unsafe-eval"));
+    assert.ok(!csp.includes("script-src 'self' 'unsafe-inline'"));
+  }
+  for (const path of ["/examples", "/trust"]) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 200);
+    assert.ok(
+      !response.headers.get("content-security-policy")!.includes("nonce-"),
+    );
+  }
+  for (const path of [
+    "/app/secrets",
+    "/app/bids/NaN",
+    "/app/bids/12/private",
+    "/app/post/private",
+  ]) {
+    assert.equal((await fetch(base + path)).status, 404);
+  }
+  const evidence = await (await fetch(base + "/evidence")).text();
+  assert.ok(!evidence.includes('id="demo"'));
+  assert.ok(!evidence.includes('id="trust"'));
 });

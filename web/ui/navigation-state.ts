@@ -1,26 +1,33 @@
 export type WorkspaceSection =
-  "workspace" | "market" | "post" | "lookup" | "demo" | "trust";
+  | "workspace"
+  | "market"
+  | "jobs"
+  | "guide"
+  | "post"
+  | "lookup"
+  | "demo"
+  | "trust";
 export interface NavigationItem {
   id: WorkspaceSection;
   label: string;
   href?: string;
   icon?: WorkspaceSection;
 }
-/** The market is the app at /app. Finished work and the demo are one page further, at /evidence.
- * Both pages show the same list in the same order, so the sidebar never moves under the reader. */
-export const MARKET_NAVIGATION: ReadonlyArray<NavigationItem> = [
-  { id: "market", label: "Market", href: "#market-overview", icon: "market" },
-  { id: "post", label: "Post a job", href: "#post-job", icon: "post" },
-  { id: "lookup", label: "Job evidence", href: "/evidence#lookup" },
-  { id: "demo", label: "Live demo", href: "/evidence#demo" },
-  { id: "trust", label: "Trust & limits", href: "#market-trust" },
+export const APP_NAVIGATION: ReadonlyArray<NavigationItem> = [
+  { id: "workspace", label: "Overview", href: "/app" },
+  { id: "market", label: "Market", href: "/app/market" },
+  { id: "jobs", label: "My jobs", href: "/app/jobs", icon: "lookup" },
 ];
+export const SUPPORT_NAVIGATION: ReadonlyArray<NavigationItem> = [
+  { id: "guide", label: "Guide", href: "/guide", icon: "lookup" },
+  { id: "demo", label: "Examples & demo", href: "/examples" },
+  { id: "trust", label: "Trust & limits", href: "/trust" },
+];
+export const MARKET_NAVIGATION = APP_NAVIGATION;
 export const EVIDENCE_NAVIGATION: ReadonlyArray<NavigationItem> = [
-  { id: "market", label: "Market", href: "/app", icon: "market" },
-  { id: "post", label: "Post a job", href: "/app#post-job", icon: "post" },
+  ...APP_NAVIGATION,
   { id: "lookup", label: "Job evidence", href: "#lookup" },
-  { id: "demo", label: "Live demo", href: "#demo" },
-  { id: "trust", label: "Trust & limits", href: "#trust" },
+  ...SUPPORT_NAVIGATION,
 ];
 /** Fragments select visible sections only; they never invoke demo actions. */
 export function sectionFromHash(
