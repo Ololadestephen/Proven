@@ -60,12 +60,31 @@ export interface HandoffDependencies {
   deleteSecret(verifierHash: string, profile: string): Promise<string>;
   /** Whether this key is on the account, per the chain. */
   isAccessKey(account: string, publicKey: string): Promise<boolean>;
+  /** Set while the market is limited: only these buyers can start a job. Unset, anyone can. Nothing else
+   * depends on it, so a job already running can always finish. */
+  allowedBuyers?: Set<string>;
+  /** The bid a check belongs to, for publishing a check once its bid has ended. */
+  getBid?(bidId: number): Promise<RevealBid | null>;
   /** On for a relay reachable from the internet: every action needs the right account's signature. */
   requireSignatures?: boolean;
   demoCompute?: DemoCompute;
   isSigningSuspended?: () => boolean;
   /** Checks a signed transaction whose outcome was unknown, and resumes signing once it is settled. */
   reconcile?: () => Promise<void>;
+}
+
+/** What the reveal rule reads about a bid. */
+export interface RevealBid {
+  check_hash: string;
+  state: string;
+  expires_at: string;
+  claim: { job_id: number | null } | null;
+}
+
+/** A bid's check becomes public when the bid has ended, or has expired with nothing in progress. */
+export function revealAllowed(bid: RevealBid, nowNanos: bigint): boolean {
+  if (["Done", "Closed", "Cancelled"].includes(bid.state)) return true;
+  return nowNanos >= BigInt(bid.expires_at) && bid.claim?.job_id == null;
 }
 
 type Request =
@@ -244,6 +263,14 @@ const MAX_CHALLENGE_BYTES = 64 * 1024;
 const MAX_OPEN_PINS_PER_BUYER = 5;
 const MAX_SIGNINGS_PER_JOB_PER_DAY = 8;
 
+/** A check that a job was run against, kept to publish when its bid ends. Named by its own hash, so what
+ * comes back can be checked by anyone. */
+async function keepForReveal(directory: string, text: string): Promise<void> {
+  const dir = join(directory, "reveal");
+  await privateDirectory(dir);
+  await writePrivate(join(dir, `${sha256Hex(text)}.json`), text);
+}
+
 /** Deletes refunded, expired and cancelled work, paid work past retention, and every private check
  * once its job has ended. A failed read deletes nothing. Returns the deleted deliverables' job ids. */
 export async function sweepDeliveries(
@@ -268,8 +295,12 @@ export async function sweepDeliveries(
           refused ||
           job?.state === "Released" ||
           job?.state === "CheckRejected"
-        )
+        ) {
+          // A job that reached a worker keeps its check for the reveal. One never run has no one to answer to.
+          if (job?.challenge_request_id != null)
+            await keepForReveal(directory, await readPrivate(file));
           await unlink(file);
+        }
         continue;
       }
       const old = now - (await lstat(file)).mtimeMs > COLLECT_RETENTION_MS;
@@ -509,7 +540,11 @@ export async function createHandoffHandler(
             : (["check", "deliverable"] as const);
         for (const kind of kinds) {
           const file = path(request.job_id, kind);
-          if (await safeExistingFile(file)) await unlink(file);
+          if (await safeExistingFile(file)) {
+            if (kind === "check" && job.challenge_request_id != null)
+              await keepForReveal(directory, await readPrivate(file));
+            await unlink(file);
+          }
         }
       }
       return { profile: name, transaction_hash: transactionHash };
@@ -533,6 +568,10 @@ export async function createHandoffHandler(
     );
     const kind: RunKind = challenge ? "Challenge" : "Verify";
     const pinFile = pinPath(request.job_id, kind);
+    if (challenge && deps.allowedBuyers)
+      requireSafe(
+        typeof job.buyer === "string" && deps.allowedBuyers.has(job.buyer),
+      );
     if (!internal && deps.requireSignatures) {
       if (challenge) {
         requireSafe(
@@ -674,7 +713,48 @@ export async function createHandoffHandler(
     }
   }
 
+  /** Anyone. Needs no signature and no cooperation from the buyer: only the chain's word that the bid ended.
+   * The relay could still withhold this, and that is stated wherever reveal is described. */
+  async function reveal(bidId: unknown): Promise<HandoffReply> {
+    if (!deps.getBid || !Number.isSafeInteger(bidId) || (bidId as number) < 0)
+      return refused();
+    try {
+      const bid = await deps.getBid(bidId as number);
+      if (!bid || !isHash(bid.check_hash)) return refused();
+      const now = BigInt(Date.now()) * 1_000_000n;
+      if (!revealAllowed(bid, now))
+        return {
+          ok: true,
+          result: { revealed: false, reason: "The bid has not ended." },
+        };
+      const file = join(directory, "reveal", `${bid.check_hash}.json`);
+      if (!(await safeExistingFile(file)))
+        return {
+          ok: true,
+          result: {
+            revealed: false,
+            reason: "No job was run against this check.",
+          },
+        };
+      const check = await readPrivate(file);
+      requireSafe(sha256Hex(check) === bid.check_hash);
+      return {
+        ok: true,
+        result: { revealed: true, check, check_hash: bid.check_hash },
+      };
+    } catch {
+      return refused();
+    }
+  }
+
   return async (value, internal = false) => {
+    if (
+      object(value) &&
+      value.action === "reveal" &&
+      Object.keys(value).length === 2 &&
+      "bid_id" in value
+    )
+      return reveal(value.bid_id);
     if (internal && object(value) && value.action === "expire_pins") {
       await expirePins();
       return { ok: true, result: {} };
@@ -839,6 +919,22 @@ export async function startHandoffServer(
   }
 }
 
+/** The one setting that opens the market. `open`, or a comma-separated list of buyers. Mainnet has no
+ * default, so forgetting it leaves the market closed to everyone. */
+export function marketAccess(
+  setting: string | undefined,
+  network = process.env.NEAR_NETWORK,
+): Set<string> | undefined {
+  if (setting === "open") return undefined;
+  if (setting === undefined && network !== "mainnet") return undefined;
+  return new Set(
+    (setting ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   requireSafe(
@@ -997,6 +1093,14 @@ async function main(): Promise<void> {
     accountId: account.accountId,
     escrow: config.escrowContract,
     getJob: (jobId) => near.readJob(account, config, jobId, timing),
+    getBid: process.env.PROVEN_BOARD
+      ? (bidId) =>
+          account.provider.callFunction({
+            contractId: process.env.PROVEN_BOARD!,
+            method: "get_bid",
+            args: { bid_id: bidId },
+          }) as Promise<RevealBid | null>
+      : undefined,
     isAccessKey: (accountId, publicKey) =>
       near.isAccessKey(account, accountId, publicKey),
     storeSecret: (hash, name, variables) =>
@@ -1023,6 +1127,7 @@ async function main(): Promise<void> {
         ),
       ),
     demoCompute,
+    allowedBuyers: marketAccess(process.env.PROVEN_MARKET_ACCESS),
     isSigningSuspended: () => signingSuspended,
     reconcile,
     requireSignatures: process.env.PROVEN_RELAY_REQUIRE_SIGNATURES === "yes",

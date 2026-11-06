@@ -24,6 +24,8 @@ import test from "node:test";
 import {
   COLLECT_RETENTION_MS,
   createHandoffHandler,
+  marketAccess,
+  revealAllowed,
   deleteOnce,
   isDefiniteRefusal,
   sweepDeliveries,
@@ -1034,4 +1036,94 @@ test("a new pin stays while its job can still use it, even with an older result 
   await handle({ action: "expire_pins" }, true);
   assert.equal(f.deletions.length, 0);
   await f.cleanup();
+});
+
+test("a check is published only once its bid has ended, and is provably the one on chain", async () => {
+  const f = await fixture();
+  let bid = {
+    check_hash: sha256Hex(check),
+    state: "Open",
+    expires_at: (BigInt(Date.now() + 3_600_000) * 1_000_000n).toString(),
+    claim: null as { job_id: number | null } | null,
+  };
+  const handle = await createHandoffHandler(
+    { ...f.deps, getBid: async () => bid },
+    f.directory,
+  );
+  const read = () => handle({ action: "reveal", bid_id: 0 });
+  // A job has run and ended, but the bid is still open: the next worker must not see the check.
+  assert.equal((await handle(challenge())).ok, true);
+  Object.assign(f.job, { challenge_request_id: "9", state: "Refunded" });
+  assert.equal(
+    (await handle({ action: "cleanup", job_id: 1, kind: "Challenge" }, true))
+      .ok,
+    true,
+  );
+  let reply = await read();
+  assert.ok(reply.ok && reply.result.revealed === false);
+  // Ended: no signature, and no help from the buyer.
+  bid = { ...bid, state: "Closed" };
+  reply = await read();
+  assert.ok(reply.ok && reply.result.revealed === true);
+  assert.equal(reply.result.check, check);
+  assert.equal(sha256Hex(String(reply.result.check)), bid.check_hash);
+  // Nothing else is reachable this way.
+  assert.equal((await handle({ action: "reveal", bid_id: -1 })).ok, false);
+  assert.equal(
+    (await handle({ action: "reveal", bid_id: 0, extra: 1 })).ok,
+    false,
+  );
+  await f.cleanup();
+});
+
+test("an expired bid reveals only when nothing is in progress", () => {
+  const past = "1";
+  const future = (BigInt(Date.now() + 3_600_000) * 1_000_000n).toString();
+  const now = BigInt(Date.now()) * 1_000_000n;
+  const bid = (state: string, expires_at: string, job: number | null) => ({
+    check_hash: "x",
+    state,
+    expires_at,
+    claim: job === null ? null : { job_id: job },
+  });
+  assert.equal(revealAllowed(bid("Open", future, null), now), false);
+  assert.equal(revealAllowed(bid("Claimed", future, 1), now), false);
+  assert.equal(revealAllowed(bid("Open", past, null), now), true);
+  assert.equal(revealAllowed(bid("Claimed", past, 1), now), false);
+  for (const ended of ["Done", "Closed", "Cancelled"])
+    assert.equal(revealAllowed(bid(ended, future, null), now), true);
+});
+
+test("while the market is limited, only allowed buyers can start a job, and running jobs can finish", async () => {
+  const f = await fixture();
+  const handle = await createHandoffHandler(
+    { ...f.deps, allowedBuyers: new Set(["someone-else.testnet"]) },
+    f.directory,
+  );
+  assert.equal((await handle(challenge())).ok, false);
+  assert.equal(f.stores.length, 0);
+  const open = await createHandoffHandler(
+    { ...f.deps, allowedBuyers: new Set(["buyer.testnet"]) },
+    f.directory,
+  );
+  assert.equal((await open(challenge())).ok, true);
+  // A delivery for a job already running is not affected by who is allowed to start new ones.
+  Object.assign(f.job, { state: "Delivered" });
+  const limited = await createHandoffHandler(
+    { ...f.deps, allowedBuyers: new Set() },
+    f.directory,
+  );
+  assert.equal((await limited(delivery())).ok, true);
+  await f.cleanup();
+});
+
+test("mainnet stays closed unless the one setting says otherwise", () => {
+  assert.deepEqual(marketAccess(undefined, "mainnet"), new Set());
+  assert.deepEqual(marketAccess("", "mainnet"), new Set());
+  assert.deepEqual(
+    marketAccess("a.near, b.near", "mainnet"),
+    new Set(["a.near", "b.near"]),
+  );
+  assert.equal(marketAccess("open", "mainnet"), undefined);
+  assert.equal(marketAccess(undefined, "testnet"), undefined);
 });
