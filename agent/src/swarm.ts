@@ -160,6 +160,13 @@ export async function postBid(
     expires_at: ((await board.now()) + 72n * 3_600_000_000_000n).toString(),
     reveal_agreed: true,
     claim_window_secs: CLAIM_WINDOW_SECS,
+    // A test can keep a bid to named workers, so hosted agents do not take it.
+    allowed_workers: process.env.PROVEN_BID_WORKERS?.split(",") ?? null,
+  });
+  // The exact text a job on this bid must use.
+  mkdirSync(`${ROOT}runs/private`, { recursive: true, mode: 0o700 });
+  writeFileSync(`${ROOT}runs/private/bid-${String(result.result)}-check.json`, check, {
+    mode: 0o600,
   });
   return {
     bid_id: result.result,
@@ -266,7 +273,11 @@ export async function attempt(
   const board = new BoardClient(buyerConfig.rpc);
   const buyerTool = createService(createRuntime(buyerConfig));
   const agentTool = createService(createRuntime(agent.config));
-  const check = readFileSync(`${ROOT}${jobDir}/check.json`, "utf8");
+  const saved = `${ROOT}runs/private/bid-${bidId}-check.json`;
+  const check = readFileSync(
+    existsSync(saved) ? saved : `${ROOT}${jobDir}/check.json`,
+    "utf8",
+  );
   const reference = readFileSync(`${ROOT}${jobDir}/reference.json`, "utf8");
   const account = agent.wallet.account;
 
@@ -282,6 +293,7 @@ export async function attempt(
       knowledge_hash: sha256(agent.knowledge),
       tools_hash: sha256(AGENT_TOOLS),
       model: DEFAULT_MODEL,
+      owner: null,
     });
     log("register_agent", registered.transaction_hash);
   }

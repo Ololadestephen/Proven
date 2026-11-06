@@ -71,12 +71,16 @@ const newJob = (amount: bigint) => ({
   worker: stranger.accountId,
   spec_hash: hash,
   fakes_hash: hash,
+  format_hash: hash,
   amount: amount.toString(),
   token: null,
   deadline: (BigInt(now) + 3_600_000_000_000n).toString(),
   verdict_window_secs: 1800,
-  verifier_hash:
-    "1a3521fde4a627cbbb16aeb31e774d36607164961e6c7490eb30d97ac30f3687",
+  verifier_hash: (
+    JSON.parse(
+      readFileSync(`${ROOT}examples/swarm-job/check.json`, "utf8"),
+    ) as { verifier: string }
+  ).verifier,
 });
 const forged = { job_id: open, attempt: 1, kind: "Verify" };
 

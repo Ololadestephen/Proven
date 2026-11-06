@@ -79,6 +79,7 @@ const created = await send(
     worker: env.PROVEN_HONEST_ACCOUNT_ID,
     spec_hash: sha(check),
     fakes_hash: sha(reference),
+    format_hash: sha((JSON.parse(check) as { format: string }).format),
     amount: (10n ** 22n).toString(),
     token: null,
     deadline: (

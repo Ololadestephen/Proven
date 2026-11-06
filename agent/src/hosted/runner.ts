@@ -106,11 +106,16 @@ async function work(
   const board = new BoardClient(deps.config.rpc);
   const refusal = workRefusal(bid, jobId, job, agent.wallet, await board.now());
   if (refusal) return deps.log("not_starting", { job: jobId, refusal });
-  // One try per job, whatever happened. A failed try must never turn into repeated spending.
-  const tried = deps.store
-    .readLog(jobId)
-    .some((entry) => (entry as { step?: string }).step === "work_started");
-  if (tried) return;
+  // One try per job, so a failed try never turns into repeated spending. The exception is a call that
+  // never finished, such as a dropped connection: it gets one more try, and its worst case is still charged.
+  const entries = deps.store.readLog(jobId) as Array<{ step?: string }>;
+  const started = entries.filter(
+    (entry) => entry.step === "work_started",
+  ).length;
+  const interrupted = entries.filter(
+    (entry) => entry.step === "work_interrupted",
+  ).length;
+  if (started > interrupted || started >= 2) return;
   deps.store.log(jobId, { step: "work_started", agent: agent.wallet });
   const spender = spenderOf(agent.wallet);
   const balance = await deps.balance(agent.wallet);
@@ -150,7 +155,11 @@ async function work(
         response_hash: null,
       }),
     deps.sandbox,
-  );
+  ).catch((error: Error) => {
+    if (/did not complete/.test(error.message))
+      deps.store.log(jobId, { step: "work_interrupted" });
+    throw error;
+  });
   deps.store.log(jobId, {
     step: "work",
     agent: agent.wallet,
