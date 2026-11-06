@@ -264,7 +264,7 @@ test("explicit storage deposit reduces attachment without widening the custody c
   )) as { call: CallPlan };
   assert.equal(custom.call.deposit, "20000000000000000000000");
   const defaults = (await f.run("post_job", args, true)) as { call: CallPlan };
-  assert.equal(defaults.call.deposit, "50000000000000000000000");
+  assert.equal(defaults.call.deposit, "20000000000000000000000");
   await assert.rejects(
     f.run(
       "post_job",

@@ -265,7 +265,7 @@ export function createService(runtime: Runtime) {
           verifier_hash: cfg.verifier_hash,
         },
         args.storage_deposit_near === undefined
-          ? "50000000000000000000000"
+          ? "20000000000000000000000"
           : yocto(text(args, "storage_deposit_near", 30)),
       );
       if (BigInt(call.deposit) > 50000000000000000000000n)
