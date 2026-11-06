@@ -1,4 +1,5 @@
-export const ESCROW = "escrow-v2.proven.testnet";
+export const ESCROW =
+  globalThis.process?.env?.PROVEN_ESCROW ?? "escrow-v2.proven.testnet";
 export const RUN_TIMEOUT_NS = 900_000_000_000n;
 const NS_PER_SEC = 1_000_000_000n;
 const HASH = /^[0-9a-f]{64}$/;
