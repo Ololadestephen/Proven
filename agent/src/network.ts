@@ -36,5 +36,6 @@ export function networkSettings(
   return { network: network as Network, ...NETWORKS[network] };
 }
 
-export const attestationUrl = (request: string) =>
-  `${process.env.NEAR_NETWORK === "mainnet" ? NETWORKS.mainnet.custodyApi : NETWORKS.testnet.custodyApi}/attestations/by-request/${request}`;
+/** The escrow's own account decides the network, so a link can never point at the wrong one. */
+export const attestationUrl = (request: string, escrow: string) =>
+  `${escrow.endsWith(".near") ? NETWORKS.mainnet.custodyApi : NETWORKS.testnet.custodyApi}/attestations/by-request/${request}`;

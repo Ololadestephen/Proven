@@ -403,3 +403,12 @@ test("transient status-read failure is retried without submitting the call again
     globalThis.fetch = original;
   }
 });
+
+test("a mainnet wallet's daily limit stays at 1 NEAR whatever the environment says", () => {
+  const over = policy();
+  over.rules.addresses.list = ["escrow.near"];
+  over.rules.limits.daily.native = (2n * 10n ** 24n).toString();
+  assert.throws(() => assertPolicy(over, "escrow.near"));
+  over.rules.limits.daily.native = (10n ** 24n).toString();
+  assert.doesNotThrow(() => assertPolicy(over, "escrow.near"));
+});

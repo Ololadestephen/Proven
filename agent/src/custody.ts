@@ -16,9 +16,10 @@ const CAPABILITIES = [
 /** The bid board. It holds no job money, so a wallet may also call it. */
 export const BOARD = process.env.PROVEN_BOARD ?? "board-v2.proven.testnet";
 
-/** Mainnet stays at 1 NEAR a day. The testnet buyer was raised by the owner to finish the gate runs. */
-const maxDaily = () =>
-  process.env.NEAR_NETWORK === "mainnet" ? 10n ** 24n : 3n * 10n ** 24n;
+/** Mainnet stays at 1 NEAR a day. The testnet buyer was raised by the owner to finish the gate runs.
+ * The escrow's own account decides which, so no setting can loosen a mainnet wallet. */
+const maxDaily = (escrow: string) =>
+  escrow.endsWith(".testnet") ? 3n * 10n ** 24n : 10n ** 24n;
 
 /** A readable-policy check is defense in depth; the TEE must enforce its on-chain policy too. */
 export function assertPolicy(value: unknown, escrow: string): void {
@@ -60,7 +61,7 @@ export function assertPolicy(value: unknown, escrow: string): void {
     !daily ||
     !/^\d+$/.test(daily) ||
     BigInt(daily) <= 0n ||
-    BigInt(daily) > maxDaily() ||
+    BigInt(daily) > maxDaily(escrow) ||
     CAPABILITIES.some(
       (name) =>
         p.capabilities?.[name]?.allowed !== false && !relaySigning(name, p),

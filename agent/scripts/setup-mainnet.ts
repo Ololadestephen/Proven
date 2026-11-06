@@ -23,7 +23,8 @@ import { networkSettings } from "../src/network.ts";
 
 const MAX_JOB = 10n ** 23n; // 0.1 NEAR, enforced by the contract.
 const MAX_HELD = 10n ** 24n; // 1 NEAR, enforced by the contract.
-const BUDGET = 35n * 10n ** 23n; // 3.5 NEAR across the new accounts.
+// The owner approved 4 NEAR but funds 3.45, and using the extra needs showing why first.
+const BUDGET = 35n * 10n ** 23n; // Stop above 3.5 NEAR across the new accounts.
 const MAX_POLICY_STORAGE = 5n * 10n ** 22n;
 const WORKER_KEY_ALLOWANCE = 2n * 10n ** 22n;
 const WORKER_METHODS = [

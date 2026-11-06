@@ -27,9 +27,10 @@ export function loadConfig(selected?: Actor): Config {
     /* Read-only/dry-run use needs no credentials. */
   }
   const get = (name: string) => process.env[name] ?? file[name];
+  // The Stage 2 flag counts only when set for this command, never from the .env file.
   const net = networkSettings(
     get("NEAR_NETWORK"),
-    get("PROVEN_STAGE2_APPROVED"),
+    process.env.PROVEN_STAGE2_APPROVED,
   );
   const mainnet = net.network === "mainnet";
   const actor = selected ?? get("PROVEN_ACTOR") ?? "buyer";

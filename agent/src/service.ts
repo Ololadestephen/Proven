@@ -136,9 +136,9 @@ function checkedFiles(
       "Private texts or verifier build do not match the job commitments.",
     );
 }
-function status(job: Job) {
+function status(job: Job, escrow: string) {
   const attestation = (request: string | null) =>
-    request ? attestationUrl(request) : null;
+    request ? attestationUrl(request, escrow) : null;
   return {
     ...job,
     challenge_attestation: attestation(job.challenge_request_id),
@@ -274,7 +274,7 @@ export function createService(runtime: Runtime) {
     }
     const jobId = integer(args, "job_id", 0, Number.MAX_SAFE_INTEGER);
     const current = await job(jobId);
-    if (name === "job_status") return status(current);
+    if (name === "job_status") return status(current, runtime.escrow);
     if (name === "collect_delivery") {
       if (current.state !== "Released")
         throw new PublicError(
@@ -338,7 +338,7 @@ export function createService(runtime: Runtime) {
         after = await job(jobId);
       return {
         ...transaction,
-        job: status(after),
+        job: status(after, runtime.escrow),
         private_secret_deleted: await clean(jobId, "Challenge", after),
       };
     }
@@ -416,7 +416,7 @@ export function createService(runtime: Runtime) {
         after = await job(jobId);
       return {
         ...transaction,
-        job: status(after),
+        job: status(after, runtime.escrow),
         private_secret_deleted: await clean(jobId, "Verify", after),
       };
     }

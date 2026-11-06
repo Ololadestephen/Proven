@@ -9,6 +9,7 @@ import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import { BoardClient, fundRefusal, type Bid, type Wallet } from "./board.ts";
 import { nearText } from "./board-tools.ts";
 import { keysFrom, KeyPool } from "./key-pool.ts";
+import { attestationUrl } from "./network.ts";
 import { loadConfig, ROOT, type Config } from "./config.ts";
 import { BOARD } from "./custody.ts";
 import { PublicError } from "./errors.ts";
@@ -489,9 +490,12 @@ export async function attempt(
           bid_state: after.state,
           failed_rule: final.failed_rule,
           fakes: `${final.fakes_caught} of ${final.fakes_total}`,
-          challenge_attestation: `https://testnet-api.outlayer.ai/attestations/by-request/${final.challenge_request_id}`,
+          challenge_attestation: attestationUrl(
+            final.challenge_request_id ?? "",
+            buyerConfig.escrow,
+          ),
           verdict_attestation: final.verdict_request_id
-            ? `https://testnet-api.outlayer.ai/attestations/by-request/${final.verdict_request_id}`
+            ? attestationUrl(final.verdict_request_id ?? "", buyerConfig.escrow)
             : null,
           deliverable_hash: final.deliverable_hash,
           report_hash: final.report_hash,

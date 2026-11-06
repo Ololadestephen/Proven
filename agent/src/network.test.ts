@@ -14,5 +14,6 @@ test("mainnet is refused without the Stage 2 flag", () => {
 });
 
 test("attestation links follow the network", () => {
-  assert.match(attestationUrl("7"), /testnet-api/);
+  assert.match(attestationUrl("7", "e.testnet"), /testnet-api/);
+  assert.match(attestationUrl("7", "e.near"), /\/\/api\.outlayer/);
 });

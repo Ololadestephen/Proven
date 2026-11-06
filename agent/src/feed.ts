@@ -8,12 +8,11 @@ import { BoardClient, type Bid } from "./board.ts";
 import { ROOT } from "./config.ts";
 import { BOARD } from "./custody.ts";
 import { publicMessage } from "./errors.ts";
+import { attestationUrl } from "./network.ts";
 import { Ledger, usd } from "./inference.ts";
 import type { Job } from "./types.ts";
 
-const ATTESTATION = "https://testnet-api.outlayer.ai/attestations/by-request/";
-
-function jobView(jobId: number, job: Job | null) {
+function jobView(jobId: number, job: Job | null, escrow: string) {
   if (!job) return { job_id: jobId, state: "Cancelled" };
   return {
     job_id: jobId,
@@ -26,10 +25,10 @@ function jobView(jobId: number, job: Job | null) {
     deliverable_hash: job.deliverable_hash,
     report_hash: job.report_hash,
     challenge_attestation: job.challenge_request_id
-      ? `${ATTESTATION}${job.challenge_request_id}`
+      ? attestationUrl(job.challenge_request_id, escrow)
       : null,
     verdict_attestation: job.verdict_request_id
-      ? `${ATTESTATION}${job.verdict_request_id}`
+      ? attestationUrl(job.verdict_request_id, escrow)
       : null,
   };
 }
@@ -51,6 +50,7 @@ export async function buildFeed(board: BoardClient, escrow: string) {
     jobView(
       jobId,
       await board.view<Job | null>("get_job", { job_id: jobId }, escrow),
+      escrow,
     );
   const bids: unknown[] = [];
   for (let from = 0; ; from += 50) {
@@ -65,7 +65,7 @@ export async function buildFeed(board: BoardClient, escrow: string) {
     if (page.length < 50) break;
   }
   return {
-    network: "testnet",
+    network: escrow.endsWith(".near") ? "mainnet" : "testnet",
     board: BOARD,
     escrow,
     bids,
