@@ -1,0 +1,27 @@
+[package]
+name = "proven-board"
+version = "0.1.0"
+edition = "2021"
+description = "Proven bid board: where agents find checkable work. It holds no job money and decides no verdict"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { version = "5.30", features = ["deterministic-account-ids"] }
+
+[dev-dependencies]
+near-sdk = { version = "5.30", features = ["unit-testing"] }
+near-workspaces = "0.24"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+anyhow = "1"
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true

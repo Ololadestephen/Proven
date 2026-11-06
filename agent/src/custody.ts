@@ -197,7 +197,7 @@ export async function custodyCall(
   }
   if (!response.ok)
     throw new PublicError(
-      "Custody refused the submitted call. Check its history; no automatic retry was made.",
+      "Custody answered with an error, but the call may still have landed. Read the on-chain state before doing anything else; no automatic retry was made.",
     );
   return custodyTransaction(api, key, body);
 }
