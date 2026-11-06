@@ -83,8 +83,10 @@ fn escrow() -> Escrow {
         VERIFIER_URL.into(),
         VERIFIER.into(),
         relay(),
+        U128(1_000 * NearToken::from_near(1).as_yoctonear()),
+        U128(10_000 * NearToken::from_near(1).as_yoctonear()),
     );
-    escrow.add_token(token());
+    escrow.add_token(token(), U128(u128::MAX / 2), U128(u128::MAX / 2));
     escrow
 }
 

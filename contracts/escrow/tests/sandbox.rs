@@ -729,3 +729,200 @@ async fn a_delivery_cannot_be_changed_once_delivered() -> anyhow::Result<()> {
     assert_eq!(job(&env, id).await?["deliverable_hash"], DELIVERABLE);
     Ok(())
 }
+
+async fn owner_call(env: &Env, method: &str, args: serde_json::Value) -> anyhow::Result<()> {
+    call(env, &env.owner, method, args, NO_DEPOSIT)
+        .await?
+        .into_result()?;
+    Ok(())
+}
+
+async fn near_cap(env: &Env) -> anyhow::Result<serde_json::Value> {
+    let config: serde_json::Value = env.escrow.view("get_config").await?.json()?;
+    Ok(config["caps"][0].clone())
+}
+
+#[tokio::test]
+async fn the_pause_stops_only_new_jobs_and_new_funding() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let one = NearToken::from_near(1);
+    let unfunded = create_job(&env, false, 3_600, one.as_yoctonear()).await?;
+    behave(&env, "strong_check").await?;
+    challenge(&env, unfunded).await?.into_result()?;
+    let to_pay = delivered_near_job(&env, 3_600).await?;
+    let to_refund = delivered_near_job(&env, 3_600).await?;
+    let to_finish = create_job(&env, false, 3_600, one.as_yoctonear()).await?;
+    behave(&env, "strong_check").await?;
+    challenge(&env, to_finish).await?.into_result()?;
+    fund_near(&env, to_finish, one).await?.into_result()?;
+    let to_expire = create_job(&env, false, 30, one.as_yoctonear()).await?;
+    behave(&env, "strong_check").await?;
+    challenge(&env, to_expire).await?.into_result()?;
+    fund_near(&env, to_expire, one).await?.into_result()?;
+
+    assert_refused(
+        &call(
+            &env,
+            &env.stranger,
+            "set_paused",
+            json!({ "paused": true }),
+            NO_DEPOSIT,
+        )
+        .await?,
+        "only the owner",
+    );
+    owner_call(&env, "set_paused", json!({ "paused": true })).await?;
+
+    // Nothing new comes in.
+    let new_job = json!({
+        "worker": env.worker.id(), "spec_hash": SPEC, "fakes_hash": FAKES,
+        "amount": one.as_yoctonear().to_string(), "token": null,
+        "deadline": (now(&env).await? + 3_600 * SEC).to_string(),
+        "verdict_window_secs": WINDOW_SECS, "verifier_hash": VERIFIER,
+    });
+    assert_refused(
+        &call(
+            &env,
+            &env.buyer,
+            "create_job",
+            new_job,
+            NearToken::from_millinear(50),
+        )
+        .await?,
+        "new jobs are paused",
+    );
+    assert_refused(
+        &fund_near(&env, unfunded, one).await?,
+        "new funding is paused",
+    );
+
+    // Everything already funded can still finish, in every direction.
+    behave(&env, "pass").await?;
+    verify(&env, to_pay).await?.into_result()?;
+    payout(&env, "release", to_pay).await?.into_result()?;
+    assert_eq!(state(&env, to_pay).await?, "Released");
+    behave(&env, "fail").await?;
+    verify(&env, to_refund).await?.into_result()?;
+    payout(&env, "refund", to_refund).await?.into_result()?;
+    assert_eq!(state(&env, to_refund).await?, "Refunded");
+    deliver(&env, &env.worker, to_finish).await?.into_result()?;
+    behave(&env, "pass").await?;
+    verify(&env, to_finish).await?.into_result()?;
+    payout(&env, "release", to_finish).await?.into_result()?;
+    advance_past(
+        &env,
+        job(&env, to_expire).await?["deadline"]
+            .as_str()
+            .unwrap()
+            .parse()?,
+    )
+    .await?;
+    payout(&env, "expire", to_expire).await?.into_result()?;
+    assert_eq!(state(&env, to_expire).await?, "Expired");
+    call(
+        &env,
+        &env.buyer,
+        "cancel",
+        json!({ "job_id": unfunded }),
+        NO_DEPOSIT,
+    )
+    .await?
+    .into_result()?;
+    assert_eq!(near_cap(&env).await?["held"], "0");
+
+    owner_call(&env, "set_paused", json!({ "paused": false })).await?;
+    create_job(&env, false, 3_600, one.as_yoctonear()).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn caps_refuse_money_coming_in_and_never_trap_money_going_out() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let one = NearToken::from_near(1).as_yoctonear();
+    let caps = |job: u128, held: u128| json!({ "token": null, "max_job": job.to_string(), "max_held": held.to_string() });
+    assert_refused(
+        &call(
+            &env,
+            &env.stranger,
+            "set_caps",
+            caps(100 * one, 100 * one),
+            NO_DEPOSIT,
+        )
+        .await?,
+        "only the owner",
+    );
+    owner_call(&env, "set_caps", caps(one, one + one / 2)).await?;
+
+    // Over the per-job cap.
+    let args = json!({
+        "worker": env.worker.id(), "spec_hash": SPEC, "fakes_hash": FAKES,
+        "amount": (2 * one).to_string(), "token": null,
+        "deadline": (now(&env).await? + 3_600 * SEC).to_string(),
+        "verdict_window_secs": WINDOW_SECS, "verifier_hash": VERIFIER,
+    });
+    assert_refused(
+        &call(
+            &env,
+            &env.buyer,
+            "create_job",
+            args,
+            NearToken::from_millinear(50),
+        )
+        .await?,
+        "per-job cap",
+    );
+
+    // The second job would pass the cap on money held. Its money comes back with the refusal.
+    let first = delivered_near_job(&env, 3_600).await?;
+    assert_eq!(near_cap(&env).await?["held"], one.to_string());
+    let second = create_job(&env, false, 3_600, one).await?;
+    behave(&env, "strong_check").await?;
+    challenge(&env, second).await?.into_result()?;
+    let before = near_balance(&env.buyer).await?;
+    let refused = fund_near(&env, second, NearToken::from_near(1)).await?;
+    assert_refused(&refused, "cap on money held");
+    assert!(before - near_balance(&env.buyer).await? < one / 100);
+    assert_eq!(state(&env, second).await?, "Challenged");
+
+    // Lowering a cap below what is held traps nothing, and a payout frees room exactly once.
+    owner_call(&env, "set_caps", caps(1, 1)).await?;
+    behave(&env, "pass").await?;
+    verify(&env, first).await?.into_result()?;
+    payout(&env, "release", first).await?.into_result()?;
+    assert_eq!(state(&env, first).await?, "Released");
+    assert_eq!(near_cap(&env).await?["held"], "0");
+    assert_refused(&payout(&env, "release", first).await?, "job has not passed");
+    assert_eq!(near_cap(&env).await?["held"], "0");
+
+    owner_call(&env, "set_caps", caps(one, one + one / 2)).await?;
+    fund_near(&env, second, NearToken::from_near(1))
+        .await?
+        .into_result()?;
+    assert_eq!(near_cap(&env).await?["held"], one.to_string());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_token_payout_keeps_counting_as_held_until_it_succeeds() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let id = create_job(&env, true, 3_600, TOKEN_AMOUNT).await?;
+    behave(&env, "strong_check").await?;
+    challenge(&env, id).await?.into_result()?;
+    fund_token(&env, id, TOKEN_AMOUNT).await?.into_result()?;
+    deliver(&env, &env.worker, id).await?.into_result()?;
+    behave(&env, "pass").await?;
+    verify(&env, id).await?.into_result()?;
+    let config: serde_json::Value = env.escrow.view("get_config").await?.json()?;
+    assert_eq!(config["caps"][1]["held"], TOKEN_AMOUNT.to_string());
+    // The worker is not registered with the token, so this transfer fails.
+    payout(&env, "release", id).await?.into_result().ok();
+    assert_eq!(state(&env, id).await?, "Passed");
+    let config: serde_json::Value = env.escrow.view("get_config").await?.json()?;
+    assert_eq!(config["caps"][1]["held"], TOKEN_AMOUNT.to_string());
+    register(&env.token, &env.buyer, env.worker.id()).await?;
+    payout(&env, "release", id).await?.into_result()?;
+    assert_eq!(state(&env, id).await?, "Released");
+    let config: serde_json::Value = env.escrow.view("get_config").await?.json()?;
+    assert_eq!(config["caps"][1]["held"], "0");
+    Ok(())
+}

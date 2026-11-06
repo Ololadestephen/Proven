@@ -315,6 +315,20 @@ pub struct Config {
     pub secrets_owner: AccountId,
     pub tokens: Vec<AccountId>,
     pub next_job_id: JobId,
+    pub paused: bool,
+    pub caps: Vec<AssetCap>,
+}
+
+/// Limits on one asset, enforced here. `token: None` means NEAR. `held` is what this contract is
+/// holding for funded jobs right now. Caps only ever refuse money coming in: nothing here can stop
+/// a refund, expiry or payout, and lowering a cap below `held` traps nothing.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct AssetCap {
+    pub token: Option<AccountId>,
+    pub max_job: U128,
+    pub max_held: U128,
+    pub held: U128,
 }
 
 // The macro generates `ext_ft` from this trait; the trait itself is never called directly.
@@ -342,6 +356,9 @@ pub struct Escrow {
     tokens: Vec<AccountId>,
     jobs: LookupMap<JobId, Job>,
     next_id: JobId,
+    /// Stops new jobs and new funding only. Everything already funded can still finish.
+    paused: bool,
+    caps: Vec<AssetCap>,
 }
 
 fn is_hash(value: &str) -> bool {
@@ -392,6 +409,8 @@ impl Escrow {
         verifier_url: String,
         verifier_hash: String,
         secrets_owner: AccountId,
+        max_job_amount: U128,
+        max_held: U128,
     ) -> Self {
         require_verifier(&verifier_url, &verifier_hash);
         Self {
@@ -403,6 +422,13 @@ impl Escrow {
             tokens: Vec::new(),
             jobs: LookupMap::new(StorageKey::Jobs),
             next_id: 0,
+            paused: false,
+            caps: vec![AssetCap {
+                token: None,
+                max_job: max_job_amount,
+                max_held,
+                held: U128(0),
+            }],
         }
     }
 
@@ -420,10 +446,43 @@ impl Escrow {
         self.secrets_owner = secrets_owner;
     }
 
-    pub fn add_token(&mut self, token: AccountId) {
+    /// Stops new jobs and new funding, or lets them start again. It never blocks a delivery, a
+    /// verification, a refund, an expiry, a payout or a cancellation.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.require_owner();
+        self.paused = paused;
+        env::log_str(&format!("paused {paused}"));
+    }
+
+    /// Sets the limits on an asset already accepted. `token: null` means NEAR.
+    pub fn set_caps(&mut self, token: Option<AccountId>, max_job: U128, max_held: U128) {
+        self.require_owner();
+        let cap = self.cap_mut(token.as_ref());
+        cap.max_job = max_job;
+        cap.max_held = max_held;
+    }
+
+    pub fn add_token(&mut self, token: AccountId, max_job: U128, max_held: U128) {
         self.require_owner();
         if !self.tokens.contains(&token) {
-            self.tokens.push(token);
+            self.tokens.push(token.clone());
+        }
+        // A token removed earlier may still have funded jobs, so its count is kept.
+        match self
+            .caps
+            .iter_mut()
+            .find(|cap| cap.token.as_ref() == Some(&token))
+        {
+            Some(cap) => {
+                cap.max_job = max_job;
+                cap.max_held = max_held;
+            }
+            None => self.caps.push(AssetCap {
+                token: Some(token),
+                max_job,
+                max_held,
+                held: U128(0),
+            }),
         }
     }
 
@@ -450,6 +509,7 @@ impl Escrow {
         verdict_window_secs: u32,
         verifier_hash: String,
     ) -> JobId {
+        require!(!self.paused, "new jobs are paused");
         let buyer = env::predecessor_account_id();
         let now = env::block_timestamp();
         require_hash(&spec_hash, "spec_hash");
@@ -463,6 +523,10 @@ impl Escrow {
         if let Some(token) = &token {
             require!(self.tokens.contains(token), "token is not accepted");
         }
+        require!(
+            amount.0 <= self.cap_mut(token.as_ref()).max_job.0,
+            "amount is over the per-job cap"
+        );
         require!(
             deadline.0 > now && deadline.0 - now <= MAX_DEADLINE_NANOS,
             "deadline must be in the future and at most 30 days away"
@@ -734,7 +798,13 @@ impl Escrow {
         // Only the outcome matters, so no result bytes are read. A result longer than that limit
         // still means the transfer succeeded, and must never be retried as if it had failed.
         let paid = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
-        self.job_mut(job_id).state = if paid { done } else { revert_to };
+        let job = self.job_mut(job_id);
+        job.state = if paid { done } else { revert_to };
+        let (token, amount) = (job.token.clone(), job.amount.0);
+        if paid {
+            let cap = self.cap_mut(token.as_ref());
+            cap.held = U128(cap.held.0.saturating_sub(amount));
+        }
         emit(if paid { "payout_done" } else { "payout_failed" }, job_id);
         paid
     }
@@ -767,11 +837,20 @@ impl Escrow {
             secrets_owner: self.secrets_owner.clone(),
             tokens: self.tokens.clone(),
             next_job_id: self.next_id,
+            paused: self.paused,
+            caps: self.caps.clone(),
         }
     }
 }
 
 impl Escrow {
+    fn cap_mut(&mut self, token: Option<&AccountId>) -> &mut AssetCap {
+        self.caps
+            .iter_mut()
+            .find(|cap| cap.token.as_ref() == token)
+            .unwrap_or_else(|| env::panic_str("this asset has no cap"))
+    }
+
     fn require_owner(&self) {
         require!(
             env::predecessor_account_id() == self.owner,
@@ -809,6 +888,15 @@ impl Escrow {
         require!(amount == job.amount.0, "pay exactly the job amount");
         require!(now < job.deadline.0, "the delivery deadline has passed");
         job.state = JobState::Funded;
+        require!(!self.paused, "new funding is paused");
+        let cap = self.cap_mut(token);
+        require!(amount <= cap.max_job.0, "amount is over the per-job cap");
+        let held = cap.held.0.saturating_add(amount);
+        require!(
+            held <= cap.max_held.0,
+            "this would pass the cap on money held"
+        );
+        cap.held = U128(held);
         emit("job_funded", job_id);
     }
 

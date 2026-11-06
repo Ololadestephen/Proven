@@ -56,13 +56,15 @@ pub async fn setup() -> anyhow::Result<Env> {
         .args_json(json!({
             "owner": owner.id(), "outlayer": outlayer.id(), "verifier_url": VERIFIER_URL,
             "verifier_hash": VERIFIER, "secrets_owner": secrets_owner.id(),
+            "max_job_amount": (1_000 * NearToken::from_near(1).as_yoctonear()).to_string(),
+            "max_held": (10_000 * NearToken::from_near(1).as_yoctonear()).to_string(),
         }))
         .transact()
         .await?
         .into_result()?;
     owner
         .call(escrow.id(), "add_token")
-        .args_json(json!({ "token": token.id() }))
+        .args_json(json!({ "token": token.id(), "max_job": (1_000 * TOKEN_AMOUNT).to_string(), "max_held": (1_000 * TOKEN_AMOUNT).to_string() }))
         .transact()
         .await?
         .into_result()?;
