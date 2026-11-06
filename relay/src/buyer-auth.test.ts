@@ -3,11 +3,12 @@ import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import test from "node:test";
 import {
   base58Decode,
-  collectMessage,
-  CollectVerifier,
   nep413Digest,
   RELAY_RECIPIENT,
-  type CollectAuth,
+  relayMessage,
+  relayPayload,
+  RelayVerifier,
+  type RelayAuth,
 } from "./buyer-auth.ts";
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -29,10 +30,22 @@ const raw = pair.publicKey
 const encoded = `ed25519:${base58(raw)}`;
 const implicit = raw.toString("hex");
 
+const PAYLOAD = relayPayload({ action: "collect" });
 function auth(
-  over: { job?: number; at?: number; recipient?: string } = {},
-): CollectAuth {
-  const message = collectMessage(over.job ?? 7, over.at ?? NOW);
+  over: {
+    job?: number;
+    at?: number;
+    recipient?: string;
+    action?: string;
+    payload?: string;
+  } = {},
+): RelayAuth {
+  const message = relayMessage(
+    over.action ?? "collect",
+    over.job ?? 7,
+    over.payload ?? PAYLOAD,
+    over.at ?? NOW,
+  );
   const nonce = randomBytes(32);
   return {
     public_key: encoded,
@@ -46,53 +59,64 @@ function auth(
   };
 }
 const verifier = (onChain = false) =>
-  new CollectVerifier(
+  new RelayVerifier(
     async () => onChain,
     () => NOW,
   );
+const check = (
+  v: RelayVerifier,
+  a: RelayAuth | undefined,
+  who: string[] = [implicit],
+) => v.verify(a, who, "collect", 7, PAYLOAD);
 
 test("base58 round-trips a key", () => {
   assert.deepEqual(base58Decode(base58(raw)), Buffer.from(raw));
 });
 
-test("the buyer's own key can collect its job, once per signature", async () => {
+test("the right key can act, once per signature", async () => {
   const v = verifier();
   const good = auth();
-  assert.equal(await v.verify(good, implicit, 7), true);
-  assert.equal(await v.verify(good, implicit, 7), false, "replay");
+  assert.equal(await check(v, good), true);
+  assert.equal(await check(v, good), false, "replay");
 });
 
-test("a named buyer's key must be on chain", async () => {
-  assert.equal(await verifier(true).verify(auth(), "buyer.testnet", 7), true);
-  assert.equal(await verifier(false).verify(auth(), "buyer.testnet", 7), false);
+test("a named account's key must be on chain, and any allowed account will do", async () => {
+  assert.equal(await check(verifier(true), auth(), ["buyer.testnet"]), true);
+  assert.equal(await check(verifier(false), auth(), ["buyer.testnet"]), false);
+  assert.equal(
+    await check(verifier(false), auth(), ["other.testnet", implicit]),
+    true,
+  );
 });
 
-test("anyone else, another job, an old message or another recipient is refused", async () => {
+test("anyone else, another job, action or text, an old message or another recipient is refused", async () => {
   const v = verifier();
+  assert.equal(await check(v, auth(), ["b".repeat(64)]), false, "not allowed");
+  assert.equal(await check(v, auth({ job: 8 })), false, "other job");
   assert.equal(
-    await v.verify(auth(), "b".repeat(64), 7),
+    await check(v, auth({ action: "deliver" })),
     false,
-    "not the buyer",
+    "other action",
   );
   assert.equal(
-    await v.verify(auth({ job: 8 }), implicit, 7),
+    await check(v, auth({ payload: "c".repeat(64) })),
     false,
-    "other job",
+    "other text",
   );
-  assert.equal(
-    await v.verify(auth({ at: NOW - 400_000 }), implicit, 7),
-    false,
-    "old",
-  );
-  assert.equal(
-    await v.verify(auth({ recipient: "other" }), implicit, 7),
-    false,
-  );
+  assert.equal(await check(v, auth({ at: NOW - 400_000 })), false, "old");
+  assert.equal(await check(v, auth({ recipient: "other" })), false);
+  assert.equal(await check(v, undefined), false, "unsigned");
   const tampered = auth();
-  tampered.message = collectMessage(7, NOW + 1);
-  assert.equal(await v.verify(tampered, implicit, 7), false, "tampered");
-  assert.equal(
-    await v.verify({ ...auth(), signature_base64: "bad" }, implicit, 7),
-    false,
+  tampered.message = relayMessage("collect", 7, PAYLOAD, NOW + 1);
+  assert.equal(await check(v, tampered), false, "tampered");
+  assert.equal(await check(v, { ...auth(), signature_base64: "bad" }), false);
+});
+
+test("a signature covers the exact texts", () => {
+  const one = relayPayload({ action: "deliver", deliverable: "a" });
+  assert.notEqual(one, relayPayload({ action: "deliver", deliverable: "b" }));
+  assert.notEqual(
+    relayPayload({ action: "challenge", check: "a", reference: "bc" }),
+    relayPayload({ action: "challenge", check: "ab", reference: "c" }),
   );
 });

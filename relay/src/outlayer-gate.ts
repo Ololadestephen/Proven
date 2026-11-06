@@ -123,7 +123,9 @@ async function main() {
     },
   });
   evidence.estimate_yocto = estimate;
-  const hosted = await fetch(url, { headers: { range: "bytes=0-10" } }).catch(() => null);
+  const hosted = await fetch(url, { headers: { range: "bytes=0-10" } }).catch(
+    () => null,
+  );
   evidence.verifier_hosted_status = hosted?.status ?? "unreachable";
   console.log(JSON.stringify(evidence, null, 1));
   if (dry) {

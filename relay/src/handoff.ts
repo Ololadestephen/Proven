@@ -16,7 +16,7 @@ import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CollectVerifier, type CollectAuth } from "./buyer-auth.ts";
+import { relayPayload, RelayVerifier, type RelayAuth } from "./buyer-auth.ts";
 import { isHash, sha256Hex } from "./hash.ts";
 import type { Job, RunKind } from "./near.ts";
 import type { TimingEvent, TimingSink } from "./timing.ts";
@@ -60,6 +60,8 @@ export interface HandoffDependencies {
   deleteSecret(verifierHash: string, profile: string): Promise<string>;
   /** Whether this key is on the account, per the chain. */
   isAccessKey(account: string, publicKey: string): Promise<boolean>;
+  /** On for a relay reachable from the internet: every action needs the right account's signature. */
+  requireSignatures?: boolean;
   demoCompute?: DemoCompute;
   isSigningSuspended?: () => boolean;
 }
@@ -69,7 +71,7 @@ type Request =
   | { action: "deliver"; job_id: number; deliverable: string }
   | { action: "pin_verification"; job_id: number }
   | { action: "cleanup"; job_id: number; kind: RunKind }
-  | { action: "collect"; job_id: number; auth: CollectAuth };
+  | { action: "collect"; job_id: number };
 type DemoRequest = { action: "trigger"; job_id: number; kind: RunKind };
 export type HandoffReply =
   { ok: true; result: Record<string, unknown> } | { ok: false; error: string };
@@ -93,16 +95,17 @@ function parseRequest(value: unknown): Request | DemoRequest {
     deliver: ["action", "job_id", "deliverable"],
     pin_verification: ["action", "job_id"],
     cleanup: ["action", "job_id", "kind"],
-    collect: ["action", "job_id", "auth"],
+    collect: ["action", "job_id"],
     trigger: ["action", "job_id", "kind"],
   };
   requireSafe(
     typeof value.action === "string" && Object.hasOwn(fields, value.action),
   );
   const allowed = fields[value.action]!;
+  const named = Object.keys(value).filter((key) => key !== "auth");
   requireSafe(
-    Object.keys(value).length === allowed.length &&
-      Object.keys(value).every((key) => allowed.includes(key)),
+    named.length === allowed.length &&
+      named.every((key) => allowed.includes(key)),
   );
   if (value.action === "challenge")
     requireSafe(
@@ -110,7 +113,7 @@ function parseRequest(value: unknown): Request | DemoRequest {
     );
   if (value.action === "deliver")
     requireSafe(typeof value.deliverable === "string");
-  if (value.action === "collect") {
+  if (value.auth !== undefined) {
     const auth = value.auth;
     requireSafe(
       object(auth) &&
@@ -231,7 +234,7 @@ function profile(job: HandoffJob, jobId: number, kind: RunKind): string {
 
 /** Paid work is kept this long after delivery for the buyer to collect, then deleted. */
 export const COLLECT_RETENTION_MS = 30 * 24 * 3_600_000;
-const SWEEP_EVERY_MS = 3_600_000;
+const SWEEP_EVERY_MS = 300_000;
 
 /** Deletes refunded, expired and cancelled work, paid work past retention, and every private check
  * once its job has ended. A failed read deletes nothing. Returns the deleted deliverables' job ids. */
@@ -273,6 +276,17 @@ export async function sweepDeliveries(
   return deleted;
 }
 
+/** Who may ask for each action: the job's own parties, read from the chain. */
+function signersFor(action: string, job: HandoffJob): string[] {
+  const buyer = typeof job.buyer === "string" ? [job.buyer] : [];
+  const worker = typeof job.worker === "string" ? [job.worker] : [];
+  if (action === "challenge" || action === "collect") return buyer;
+  if (action === "deliver") return worker;
+  if (action === "pin_verification" || action === "cleanup")
+    return [...buyer, ...worker];
+  return [];
+}
+
 /** The chain answered no, so nothing was left unknown. */
 export function isDefiniteRefusal(error: unknown): boolean {
   return /Smart contract panicked|Secret transaction failed/.test(
@@ -292,15 +306,50 @@ export async function deleteOnce(
   }
 }
 
+/** Deletes each run's private texts from OutLayer once its result is recorded, so nobody has to ask or
+ * sign for it. Whatever fails is simply tried again on the next sweep. */
+export async function sweepSecrets(
+  deps: Pick<HandoffDependencies, "getJob" | "escrow">,
+  directory: string,
+  handle: (value: unknown, internal?: boolean) => Promise<HandoffReply>,
+  cleaned: Set<string>,
+): Promise<void> {
+  const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
+  const names = await readdir(records).catch(() => [] as string[]);
+  for (const name of names) {
+    const parts = /^(\d+)\.check\.json$/.exec(name);
+    if (!parts) continue;
+    const jobId = Number(parts[1]);
+    try {
+      const job = await deps.getJob(jobId);
+      if (!job) continue;
+      const kinds: RunKind[] = [];
+      if (job.challenge_request_id) kinds.push("Challenge");
+      if (job.verdict_request_id) kinds.push("Verify");
+      for (const kind of kinds) {
+        const key = `${jobId}:${kind}`;
+        if (cleaned.has(key)) continue;
+        const reply = await handle(
+          { action: "cleanup", job_id: jobId, kind },
+          true,
+        );
+        if (reply.ok) cleaned.add(key);
+      }
+    } catch {
+      /* Try again on the next sweep. */
+    }
+  }
+}
+
 export async function createHandoffHandler(
   deps: HandoffDependencies,
   directory: string,
-): Promise<(value: unknown) => Promise<HandoffReply>> {
+): Promise<(value: unknown, internal?: boolean) => Promise<HandoffReply>> {
   await privateDirectory(directory);
   const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
   await privateDirectory(records);
   const queues = new Map<number, Promise<unknown>>();
-  const collectVerifier = new CollectVerifier(deps.isAccessKey);
+  const verifier = new RelayVerifier(deps.isAccessKey);
   const pinned = new Set<string>();
   let walletQueue = Promise.resolve<unknown>(undefined);
   function wallet<T>(action: () => Promise<T>): Promise<T> {
@@ -330,6 +379,8 @@ export async function createHandoffHandler(
   async function perform(
     request: Request | DemoRequest,
     session?: string,
+    auth?: RelayAuth,
+    internal = false,
   ): Promise<Record<string, unknown>> {
     const job = await deps.getJob(request.job_id);
     requireSafe(
@@ -339,16 +390,22 @@ export async function createHandoffHandler(
         isHash(job.fakes_hash) &&
         isHash(job.verifier_hash),
     );
+    if (!internal && (deps.requireSignatures || request.action === "collect")) {
+      const signers = signersFor(request.action, job);
+      requireSafe(
+        signers.length > 0 &&
+          (await verifier.verify(
+            auth,
+            signers,
+            request.action,
+            request.job_id,
+            relayPayload(request as unknown as Record<string, unknown>),
+          )),
+      );
+    }
     if (request.action === "collect") {
       // Only the job's buyer, and only once the chain shows the worker has been paid.
-      requireSafe(job.state === "Released" && typeof job.buyer === "string");
-      requireSafe(
-        await collectVerifier.verify(
-          request.auth,
-          job.buyer as string,
-          request.job_id,
-        ),
-      );
+      requireSafe(job.state === "Released");
       const text = await readPrivate(path(request.job_id, "deliverable"));
       requireSafe(sha256Hex(text) === job.deliverable_hash);
       return { deliverable: text, deliverable_hash: job.deliverable_hash };
@@ -455,7 +512,7 @@ export async function createHandoffHandler(
     };
   }
 
-  return async (value) => {
+  return async (value, internal = false) => {
     if (
       object(value) &&
       value.action === "demo_status" &&
@@ -495,7 +552,14 @@ export async function createHandoffHandler(
     const previous = queues.get(request.job_id) ?? Promise.resolve();
     const pending = previous
       .catch(() => undefined)
-      .then(() => perform(request, session));
+      .then(() =>
+        perform(
+          request,
+          session,
+          (value as { auth?: RelayAuth }).auth,
+          internal,
+        ),
+      );
     queues.set(request.job_id, pending);
     try {
       return { ok: true, result: await pending };
@@ -581,11 +645,13 @@ export async function startHandoffServer(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const handle = await createHandoffHandler(deps, directory);
-  void sweepDeliveries(deps, directory);
-  setInterval(
-    () => void sweepDeliveries(deps, directory),
-    SWEEP_EVERY_MS,
-  ).unref();
+  const cleaned = new Set<string>();
+  const sweep = async () => {
+    await sweepSecrets(deps, directory, handle, cleaned);
+    await sweepDeliveries(deps, directory);
+  };
+  void sweep();
+  setInterval(() => void sweep(), SWEEP_EVERY_MS).unref();
   const server = createServer({ allowHalfOpen: true }, (socket) =>
     connection(socket, handle),
   );
@@ -755,6 +821,7 @@ async function main(): Promise<void> {
       ),
     demoCompute,
     isSigningSuspended: () => signingSuspended,
+    requireSignatures: process.env.PROVEN_RELAY_REQUIRE_SIGNATURES === "yes",
   });
 }
 

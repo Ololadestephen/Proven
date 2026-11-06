@@ -1,6 +1,11 @@
-// Who may collect a deliverable: a NEP-413 signature, addressed to this relay and naming the job, by
-// a key belonging to the job's buyer. The relay checks the key against the chain.
-import { createHash, createPublicKey, verify } from "node:crypto";
+// Who may ask the relay to do something: a NEP-413 signature, addressed to this relay, naming the action,
+// the job and a hash of the exact texts, by a key belonging to the right account. The relay checks the
+// key against the chain. Once the relay faces the internet, this is what stops strangers using it.
+import {
+  createHash,
+  createPublicKey,
+  verify as verifySignature,
+} from "node:crypto";
 
 /** The recipient the buyer's wallet policy allows it to sign for, and nothing else. */
 export const RELAY_RECIPIENT = "proven-relay";
@@ -9,7 +14,7 @@ const MAX_AGE_MS = 300_000;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-export interface CollectAuth {
+export interface RelayAuth {
   public_key: string;
   signature_base64: string;
   nonce_base64: string;
@@ -57,8 +62,25 @@ export function nep413Digest(
     .digest();
 }
 
-export const collectMessage = (jobId: number, atMs: number) =>
-  `proven-collect:${jobId}:${atMs}`;
+/** Binds a signature to the exact texts, so a signed request cannot carry different ones. */
+export function relayPayload(request: Record<string, unknown>): string {
+  const text =
+    request.action === "challenge"
+      ? `${String(request.check)}\0${String(request.reference)}`
+      : request.action === "deliver"
+        ? String(request.deliverable)
+        : request.action === "cleanup"
+          ? String(request.kind)
+          : "";
+  return createHash("sha256").update(text).digest("hex");
+}
+
+export const relayMessage = (
+  action: string,
+  id: number,
+  payload: string,
+  atMs: number,
+) => `proven-relay:${action}:${id}:${payload}:${atMs}`;
 
 /** An implicit account's id is its key. A named account's key must be on chain. */
 export async function keyBelongsTo(
@@ -71,8 +93,8 @@ export async function keyBelongsTo(
   return isAccessKey(account, encoded);
 }
 
-/** Checks everything except the job's state. Used nonces are remembered until they are too old. */
-export class CollectVerifier {
+/** Checks a signature for one action. Used nonces are remembered until they are too old. */
+export class RelayVerifier {
   private readonly used = new Map<string, number>();
   private readonly isAccessKey: (
     account: string,
@@ -88,16 +110,26 @@ export class CollectVerifier {
   }
 
   async verify(
-    auth: CollectAuth,
-    buyer: string,
-    jobId: number,
+    auth: RelayAuth | undefined,
+    allowed: string[],
+    action: string,
+    id: number,
+    payload: string,
   ): Promise<boolean> {
-    const parts = /^proven-collect:(\d+):(\d+)$/.exec(auth.message);
-    if (!parts || Number(parts[1]) !== jobId) return false;
+    if (!auth || typeof auth.message !== "string") return false;
+    const parts = /^proven-relay:([a-z_]+):(\d+):([a-f0-9]{64}):(\d+)$/.exec(
+      auth.message,
+    );
+    if (
+      !parts ||
+      parts[1] !== action ||
+      Number(parts[2]) !== id ||
+      parts[3] !== payload
+    )
+      return false;
     const now = this.now();
-    const at = Number(parts[2]);
-    if (Math.abs(now - at) > MAX_AGE_MS) return false;
-    if (!auth.public_key.startsWith("ed25519:")) return false;
+    if (Math.abs(now - Number(parts[4])) > MAX_AGE_MS) return false;
+    if (!String(auth.public_key).startsWith("ed25519:")) return false;
     let key: Buffer;
     let nonce: Buffer;
     let signature: Buffer;
@@ -110,7 +142,7 @@ export class CollectVerifier {
     }
     if (key.length !== 32 || nonce.length !== 32 || signature.length !== 64)
       return false;
-    const signed = verify(
+    const signed = verifySignature(
       null,
       nep413Digest(auth.message, nonce, RELAY_RECIPIENT),
       createPublicKey({
@@ -121,8 +153,11 @@ export class CollectVerifier {
       signature,
     );
     if (!signed) return false;
-    if (!(await keyBelongsTo(buyer, key, this.isAccessKey, auth.public_key)))
-      return false;
+    let belongs = false;
+    for (const account of allowed)
+      if (await keyBelongsTo(account, key, this.isAccessKey, auth.public_key))
+        belongs = true;
+    if (!belongs) return false;
     for (const [seen, time] of this.used)
       if (now - time > 2 * MAX_AGE_MS) this.used.delete(seen);
     if (this.used.has(auth.nonce_base64)) return false;

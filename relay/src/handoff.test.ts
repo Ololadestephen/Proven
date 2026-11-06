@@ -1,5 +1,10 @@
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { collectMessage, nep413Digest, RELAY_RECIPIENT } from "./buyer-auth.ts";
+import {
+  nep413Digest,
+  RELAY_RECIPIENT,
+  relayMessage,
+  relayPayload,
+} from "./buyer-auth.ts";
 import assert from "node:assert/strict";
 import {
   chmod,
@@ -22,6 +27,7 @@ import {
   deleteOnce,
   isDefiniteRefusal,
   sweepDeliveries,
+  sweepSecrets,
   MAX_HANDOFF_BYTES,
   startHandoffServer,
 } from "./handoff.ts";
@@ -579,7 +585,12 @@ test("a deliverable goes only to its buyer, only once Released, and paid work su
     }
     const signed = () => {
       const nonce = randomBytes(32);
-      const message = collectMessage(1, Date.now());
+      const message = relayMessage(
+        "collect",
+        1,
+        relayPayload({ action: "collect" }),
+        Date.now(),
+      );
       return {
         public_key: `ed25519:${encoded}`,
         message,
@@ -747,6 +758,106 @@ test("deleting a secret twice is fine, and other failures still surface", async 
     f.job.challenge_request_id = "12";
     f.job.state = "Challenged";
     assert.equal((await handle(cleanup())).ok, true);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("with signatures required, only the job's own parties can act", async () => {
+  const f = await fixture();
+  try {
+    const handle = await createHandoffHandler(
+      { ...f.deps, requireSignatures: true },
+      f.directory,
+    );
+    const buyer = generateKeyPairSync("ed25519");
+    const worker = generateKeyPairSync("ed25519");
+    const raw = (pair: typeof buyer) =>
+      pair.publicKey.export({ format: "der", type: "spki" }).subarray(-32);
+    const encode = (bytes: Buffer) => {
+      let value = BigInt(`0x${bytes.toString("hex")}`);
+      const alphabet =
+        "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+      let out = "";
+      while (value > 0n) {
+        out = alphabet[Number(value % 58n)] + out;
+        value /= 58n;
+      }
+      return `ed25519:${out}`;
+    };
+    const signed = (request: Record<string, unknown>, pair: typeof buyer) => {
+      const nonce = randomBytes(32);
+      const message = relayMessage(
+        String(request.action),
+        1,
+        relayPayload(request),
+        Date.now(),
+      );
+      return {
+        ...request,
+        auth: {
+          public_key: encode(raw(pair)),
+          message,
+          nonce_base64: nonce.toString("base64"),
+          signature_base64: sign(
+            null,
+            nep413Digest(message, nonce, RELAY_RECIPIENT),
+            pair.privateKey,
+          ).toString("base64"),
+        },
+      };
+    };
+    (f.job as { buyer: string }).buyer = raw(buyer).toString("hex");
+    (f.job as { worker?: string }).worker = raw(worker).toString("hex");
+
+    assert.equal((await handle(challenge())).ok, false, "unsigned");
+    assert.equal(
+      (await handle(signed(challenge(), worker))).ok,
+      false,
+      "worker",
+    );
+    assert.equal((await handle(signed(challenge(), buyer))).ok, true, "buyer");
+    // A signature for one text cannot carry another.
+    const swapped = signed(challenge(), buyer);
+    assert.equal(
+      (await handle({ ...swapped, reference: "{}" })).ok,
+      false,
+      "changed text",
+    );
+    f.job.state = "Delivered";
+    assert.equal((await handle(delivery())).ok, false, "unsigned delivery");
+    assert.equal(
+      (await handle(signed(delivery(), buyer))).ok,
+      false,
+      "buyer delivers",
+    );
+    assert.equal((await handle(signed(delivery(), worker))).ok, true, "worker");
+    assert.equal((await handle(pin())).ok, false, "unsigned pin");
+    assert.equal((await handle(signed(pin(), worker))).ok, true, "worker pins");
+    // The relay's own sweep needs no signature.
+    f.job.challenge_request_id = "12";
+    f.job.state = "Delivered";
+    assert.equal((await handle(cleanup(), true)).ok, true, "internal");
+    assert.equal((await handle(cleanup())).ok, false, "unsigned cleanup");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("the sweep deletes a run's secret once its result is recorded, once", async () => {
+  const f = await fixture();
+  try {
+    const handle = await createHandoffHandler(f.deps, f.directory);
+    await handle(challenge());
+    const cleaned = new Set<string>();
+    await sweepSecrets(f.deps, f.directory, handle, cleaned);
+    assert.equal(f.deletions.length, 0, "no result yet");
+    f.job.challenge_request_id = "12";
+    f.job.state = "Challenged";
+    await sweepSecrets(f.deps, f.directory, handle, cleaned);
+    assert.equal(f.deletions.length, 1);
+    await sweepSecrets(f.deps, f.directory, handle, cleaned);
+    assert.equal(f.deletions.length, 1, "once");
   } finally {
     await f.cleanup();
   }
