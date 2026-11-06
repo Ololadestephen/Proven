@@ -19,6 +19,8 @@ import test from "node:test";
 import {
   COLLECT_RETENTION_MS,
   createHandoffHandler,
+  deleteOnce,
+  isDefiniteRefusal,
   sweepDeliveries,
   MAX_HANDOFF_BYTES,
   startHandoffServer,
@@ -702,45 +704,49 @@ test("a failed read deletes nothing", async () => {
   }
 });
 
-test("a pin waits out a read that lags a delivery which has just landed", async () => {
-  const f = await fixture();
-  try {
-    const handle = await createHandoffHandler(f.deps, f.directory);
-    await handle(challenge());
-    f.job.state = "Delivered";
-    await handle(delivery());
-    f.job.state = "Funded";
-    setTimeout(() => {
-      f.job.state = "Delivered";
-    }, 1_500);
-    assert.equal((await handle(pin())).ok, true);
-  } finally {
-    await f.cleanup();
-  }
+test("only a definite refusal leaves signing on", () => {
+  assert.equal(
+    isDefiniteRefusal(new Error("Smart contract panicked: Secrets not found")),
+    true,
+  );
+  assert.equal(
+    isDefiniteRefusal(new Error("Secret transaction failed: abc")),
+    true,
+  );
+  assert.equal(
+    isDefiniteRefusal(new Error("Secret transaction remains unconfirmed: abc")),
+    false,
+  );
+  assert.equal(isDefiniteRefusal(new Error("fetch failed")), false);
 });
 
-test("a pin still refuses a job that never gets delivered", async () => {
+test("deleting a secret twice is fine, and other failures still surface", async () => {
+  assert.equal(
+    await deleteOnce(async () => {
+      throw new Error("Smart contract panicked: Secrets not found");
+    }),
+    "already-deleted",
+  );
+  await assert.rejects(
+    deleteOnce(async () => {
+      throw new Error("fetch failed");
+    }),
+  );
   const f = await fixture();
   try {
-    const handle = await createHandoffHandler(f.deps, f.directory);
+    const handle = await createHandoffHandler(
+      {
+        ...f.deps,
+        deleteSecret: async () => {
+          throw new Error("Smart contract panicked: Secrets not found");
+        },
+      },
+      f.directory,
+    );
     await handle(challenge());
+    f.job.challenge_request_id = "12";
     f.job.state = "Challenged";
-    assert.equal((await handle(pin())).ok, false);
-  } finally {
-    await f.cleanup();
-  }
-});
-
-test("a challenge waits out a read that has not yet seen a new job", async () => {
-  const f = await fixture();
-  try {
-    let reads = 0;
-    const lagging = {
-      ...f.deps,
-      getJob: async () => (reads++ < 1 ? null : f.job),
-    };
-    const handle = await createHandoffHandler(lagging, f.directory);
-    assert.equal((await handle(challenge())).ok, true);
+    assert.equal((await handle(cleanup())).ok, true);
   } finally {
     await f.cleanup();
   }

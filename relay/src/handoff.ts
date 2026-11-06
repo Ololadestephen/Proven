@@ -232,8 +232,6 @@ function profile(job: HandoffJob, jobId: number, kind: RunKind): string {
 /** Paid work is kept this long after delivery for the buyer to collect, then deleted. */
 export const COLLECT_RETENTION_MS = 30 * 24 * 3_600_000;
 const SWEEP_EVERY_MS = 3_600_000;
-const READ_RETRIES = 10;
-const READ_RETRY_MS = 1_000;
 
 /** Deletes refunded, expired and cancelled work, paid work past retention, and every private check
  * once its job has ended. A failed read deletes nothing. Returns the deleted deliverables' job ids. */
@@ -275,6 +273,25 @@ export async function sweepDeliveries(
   return deleted;
 }
 
+/** The chain answered no, so nothing was left unknown. */
+export function isDefiniteRefusal(error: unknown): boolean {
+  return /Smart contract panicked|Secret transaction failed/.test(
+    String(error),
+  );
+}
+
+/** Deleting a secret that is already gone has done what was asked. */
+export async function deleteOnce(
+  remove: () => Promise<string>,
+): Promise<string> {
+  try {
+    return await remove();
+  } catch (error) {
+    if (/Secrets not found/.test(String(error))) return "already-deleted";
+    throw error;
+  }
+}
+
 export async function createHandoffHandler(
   deps: HandoffDependencies,
   directory: string,
@@ -314,18 +331,7 @@ export async function createHandoffHandler(
     request: Request | DemoRequest,
     session?: string,
   ): Promise<Record<string, unknown>> {
-    let job = await deps.getJob(request.job_id);
-    // A read can lag a job or delivery that has just landed by a few seconds, so look again before refusing.
-    for (
-      let read = 0;
-      read < READ_RETRIES &&
-      ((request.action === "pin_verification" && job?.state === "Funded") ||
-        (request.action === "challenge" && !job));
-      read++
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, READ_RETRY_MS));
-      job = await deps.getJob(request.job_id);
-    }
+    const job = await deps.getJob(request.job_id);
     requireSafe(
       job &&
         job.secrets_owner === deps.accountId &&
@@ -386,7 +392,7 @@ export async function createHandoffHandler(
             !["Challenging", "Verifying"].includes(fresh.state) &&
             fresh.run_started_at == null,
         );
-        return deps.deleteSecret(job.verifier_hash, name);
+        return deleteOnce(() => deps.deleteSecret(job.verifier_hash, name));
       });
       pinned.delete(`${request.job_id}:${request.kind}`);
       if (terminal) {
@@ -672,7 +678,8 @@ async function main(): Promise<void> {
     try {
       return await call();
     } catch (error) {
-      signingSuspended = true;
+      // Stop signing only when an outcome is unknown. A definite refusal changed nothing on chain.
+      if (!isDefiniteRefusal(error)) signingSuspended = true;
       throw error;
     }
   }
