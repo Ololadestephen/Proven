@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 // One attempt on one bid, driven from what the chain says at each step, so an interrupted attempt
 // resumes without repeating a signed call. The buyer's steps and the agent's steps use separate
 // custody wallets. The model only ever produces candidate bytes for a job the chain says is funded:
@@ -127,6 +128,13 @@ export function agentFiles(letter: string): AgentFiles {
   };
 }
 
+/** Sixteen random bytes as spaces and tabs: valid after any JSON text, and short. */
+function uniqueSpaces(): string {
+  return Array.from(randomBytes(16), (byte) =>
+    byte.toString(2).padStart(8, "0").replace(/0/g, " ").replace(/1/g, "\t"),
+  ).join("");
+}
+
 export async function postBid(
   jobDir: string,
   checkFile = "check.json",
@@ -135,7 +143,7 @@ export async function postBid(
   const { wallet, config } = buyer();
   const description = readFileSync(`${ROOT}${jobDir}/task.txt`, "utf8");
   // The exact text can be on one bid only, so each posting of an example differs by a trailing space.
-  const check = `${readFileSync(`${ROOT}${jobDir}/${checkFile}`, "utf8")}${" ".repeat(Date.now() % 100_000)}`;
+  const check = `${readFileSync(`${ROOT}${jobDir}/${checkFile}`, "utf8")}${uniqueSpaces()}`;
   const reference = readFileSync(`${ROOT}${jobDir}/${referenceFile}`, "utf8");
   const { verifier, format } = JSON.parse(check) as {
     verifier: string;
