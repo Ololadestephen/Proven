@@ -2,9 +2,25 @@
 import type { Config } from "../config.ts";
 import { BoardClient } from "../board.ts";
 import type { Job } from "../types.ts";
+import { RATE_REVIEW_BELOW_USD, USD_PER_NEAR } from "./limits.ts";
+
+/** The public price, with no account and nothing about us in the request. */
+export async function nearPrice(): Promise<number | null> {
+  const reply = await fetch(
+    "https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd",
+    { signal: AbortSignal.timeout(10_000) },
+  );
+  const body = (await reply.json()) as { near?: { usd?: number } };
+  return typeof body.near?.usd === "number" ? body.near.usd : null;
+}
 
 export interface Alert {
-  kind: "stuck_job" | "low_balance" | "budget_near_limit" | "unsettled_fee";
+  kind:
+    | "stuck_job"
+    | "low_balance"
+    | "budget_near_limit"
+    | "unsettled_fee"
+    | "rate_review";
   detail: string;
 }
 
@@ -32,6 +48,7 @@ export async function healthReport(deps: {
   balance: (account: string) => Promise<bigint>;
   spentNanoUsd: number;
   limitNanoUsd: number;
+  nearPriceUsd?: () => Promise<number | null>;
 }): Promise<{ at: string; alerts: Alert[]; expirable_jobs: number[] }> {
   const board = new BoardClient(deps.config.rpc);
   const alerts: Alert[] = [];
@@ -80,6 +97,12 @@ export async function healthReport(deps: {
         detail: `${entry.name} holds ${Number(balance / 10n ** 21n) / 1000} NEAR.`,
       });
   }
+  const price = await deps.nearPriceUsd?.().catch(() => null);
+  if (typeof price === "number" && price < RATE_REVIEW_BELOW_USD)
+    alerts.push({
+      kind: "rate_review",
+      detail: `NEAR is at $${price.toFixed(2)}, below $${RATE_REVIEW_BELOW_USD.toFixed(2)}. Review the $${USD_PER_NEAR} per NEAR inference rate.`,
+    });
   if (deps.spentNanoUsd >= 0.8 * deps.limitNanoUsd)
     alerts.push({
       kind: "budget_near_limit",

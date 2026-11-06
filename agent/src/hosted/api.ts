@@ -14,6 +14,7 @@ import {
   ALLOWED_SKILLS,
   MAX_KNOWLEDGE_BYTES,
   MAX_PROMPT_BYTES,
+  RATE_REVIEW_BELOW_USD,
   SAFE_SKILLS,
   SETUP_FEE,
   USD_PER_NEAR,
@@ -62,6 +63,7 @@ export function addPayload(input: {
 export function terms(deps?: Pick<ApiDeps, "treasury" | "codeSkills">) {
   return {
     usd_per_near: USD_PER_NEAR,
+    rate_review_below_usd: RATE_REVIEW_BELOW_USD,
     setup_fee_near: Number(SETUP_FEE / 10n ** 21n) / 1000,
     treasury: deps?.treasury.accountId,
     skills: deps?.codeSkills ? ALLOWED_SKILLS : SAFE_SKILLS,

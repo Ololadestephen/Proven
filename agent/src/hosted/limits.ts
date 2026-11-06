@@ -8,6 +8,8 @@ const MILLI = NEAR / 1000n;
 
 /** USD of inference per NEAR, set below the market price to leave room for the price moving. */
 export const USD_PER_NEAR = 2;
+/** Below this NEAR price the rate leaves too little margin, and the owner reviews it. */
+export const RATE_REVIEW_BELOW_USD = 2.5;
 export const NANO_USD = 1_000_000_000;
 
 /** Kept back for claims, verification runs and gas, so it never turns into inference. */

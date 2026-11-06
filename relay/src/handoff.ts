@@ -876,9 +876,13 @@ function connection(
 export async function startHandoffServer(
   deps: HandoffDependencies,
   socketPath = DEFAULT_SOCKET,
+  /** Where private texts live. On a hosted server this is apart from the socket, which another service
+   * reaches through a shared group. Locally the socket sits in the same owner-only folder. */
+  dataDirectory?: string,
 ): Promise<Server> {
   requireSafe(isAbsolute(socketPath));
-  const directory = dirname(socketPath);
+  const directory = dataDirectory ?? dirname(socketPath);
+  const shared = dataDirectory !== undefined;
   await privateDirectory(directory);
   try {
     await lstat(socketPath);
@@ -907,10 +911,11 @@ export async function startHandoffServer(
     });
   });
   try {
-    await chmod(socketPath, 0o600);
+    const mode = shared ? 0o660 : 0o600;
+    await chmod(socketPath, mode);
     const info = await lstat(socketPath);
     requireSafe(
-      info.isSocket() && info.uid === UID && (info.mode & 0o777) === 0o600,
+      info.isSocket() && info.uid === UID && (info.mode & 0o777) === mode,
     );
     return server;
   } catch (error) {
@@ -997,8 +1002,13 @@ async function main(): Promise<void> {
     };
   let demoCompute: HandoffDependencies["demoCompute"];
   // Kept on disk, so a restart cannot forget a transaction whose outcome is still unknown.
-  const suspendedFile = join(dirname(DEFAULT_SOCKET), "signing-suspended.json");
-  await privateDirectory(dirname(DEFAULT_SOCKET));
+  const socketPath = process.env.PROVEN_RELAY_SOCKET ?? DEFAULT_SOCKET;
+  const dataDirectory = process.env.PROVEN_RELAY_DATA;
+  const suspendedFile = join(
+    dataDirectory ?? dirname(socketPath),
+    "signing-suspended.json",
+  );
+  await privateDirectory(dataDirectory ?? dirname(socketPath));
   let unknownTransaction: { hash: string; at: number } | null = null;
   if (await safeExistingFile(suspendedFile)) {
     try {
@@ -1089,49 +1099,53 @@ async function main(): Promise<void> {
         ),
     };
   }
-  await startHandoffServer({
-    accountId: account.accountId,
-    escrow: config.escrowContract,
-    getJob: (jobId) => near.readJob(account, config, jobId, timing),
-    getBid: process.env.PROVEN_BOARD
-      ? (bidId) =>
-          account.provider.callFunction({
-            contractId: process.env.PROVEN_BOARD!,
-            method: "get_bid",
-            args: { bid_id: bidId },
-          }) as Promise<RevealBid | null>
-      : undefined,
-    isAccessKey: (accountId, publicKey) =>
-      near.isAccessKey(account, accountId, publicKey),
-    storeSecret: (hash, name, variables) =>
-      signing(() =>
-        secret.storeSecret(
-          account,
-          config,
-          hash,
-          name,
-          variables,
-          timing,
-          secretJournal(name, "store"),
+  await startHandoffServer(
+    {
+      accountId: account.accountId,
+      escrow: config.escrowContract,
+      getJob: (jobId) => near.readJob(account, config, jobId, timing),
+      getBid: process.env.PROVEN_BOARD
+        ? (bidId) =>
+            account.provider.callFunction({
+              contractId: process.env.PROVEN_BOARD!,
+              method: "get_bid",
+              args: { bid_id: bidId },
+            }) as Promise<RevealBid | null>
+        : undefined,
+      isAccessKey: (accountId, publicKey) =>
+        near.isAccessKey(account, accountId, publicKey),
+      storeSecret: (hash, name, variables) =>
+        signing(() =>
+          secret.storeSecret(
+            account,
+            config,
+            hash,
+            name,
+            variables,
+            timing,
+            secretJournal(name, "store"),
+          ),
         ),
-      ),
-    deleteSecret: (hash, name) =>
-      signing(() =>
-        secret.deleteSecret(
-          account,
-          config,
-          hash,
-          name,
-          timing,
-          secretJournal(name, "delete"),
+      deleteSecret: (hash, name) =>
+        signing(() =>
+          secret.deleteSecret(
+            account,
+            config,
+            hash,
+            name,
+            timing,
+            secretJournal(name, "delete"),
+          ),
         ),
-      ),
-    demoCompute,
-    allowedBuyers: marketAccess(process.env.PROVEN_MARKET_ACCESS),
-    isSigningSuspended: () => signingSuspended,
-    reconcile,
-    requireSignatures: process.env.PROVEN_RELAY_REQUIRE_SIGNATURES === "yes",
-  });
+      demoCompute,
+      allowedBuyers: marketAccess(process.env.PROVEN_MARKET_ACCESS),
+      isSigningSuspended: () => signingSuspended,
+      reconcile,
+      requireSignatures: process.env.PROVEN_RELAY_REQUIRE_SIGNATURES === "yes",
+    },
+    socketPath,
+    dataDirectory,
+  );
 }
 
 if (import.meta.main) {

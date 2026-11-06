@@ -4,23 +4,28 @@ After=proven-relay.service
 Wants=proven-relay.service
 
 [Service]
-User=boxd
-WorkingDirectory=/home/boxd/proven/web
-Environment=PROVEN_ORIGIN=https://proven.boxd.sh
-EnvironmentFile=/home/boxd/proven/.env
+User=proven-web
+Group=proven-web
+SupplementaryGroups=proven-sock
+WorkingDirectory=/opt/proven/web
+Environment=PROVEN_ORIGIN=https://useproven.xyz
+Environment=PROVEN_RELAY_SOCKET=/run/proven/relay.sock
+EnvironmentFile=/opt/proven/.env
 # Holds PROVEN_WEB_FLAGS=--public once the owner has opened the site. Without it the server stays on localhost.
-EnvironmentFile=-/home/boxd/proven/.web-flags
+EnvironmentFile=-/etc/proven/web-flags
 ExecStart=/usr/local/bin/node src/server.ts --origin=${PROVEN_ORIGIN} $PROVEN_WEB_FLAGS
 Restart=on-failure
 RestartSec=5
 UMask=0077
+ReadWritePaths=/opt/proven/runs
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/home/boxd/proven/runs
+ProtectHome=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
+# Docker's socket would be root, and the machine's own boxd tool could reach other machines.
+InaccessiblePaths=-/var/run/docker.sock -/run/docker.sock -/usr/local/bin/boxd -/usr/local/bin/claude -/usr/local/bin/codex -/usr/local/bin/gh -/run/boxd
 MemoryMax=1500M
 TasksMax=128
 LimitNOFILE=1024

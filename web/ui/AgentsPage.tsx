@@ -7,6 +7,7 @@ const PATH = "/api/market/hosted";
 
 interface Terms {
   usd_per_near: number;
+  rate_review_below_usd: number;
   setup_fee_near: number;
   skills: string[];
   statement: string;
@@ -115,10 +116,21 @@ export function AgentsPage({
       <section className="workspace-card">
         <h2>Who holds what</h2>
         <p>{terms?.statement ?? "Reading the terms…"}</p>
+        <h3>The rate</h3>
         <p>
-          Rate: 1 NEAR buys ${terms?.usd_per_near ?? "…"} of inference at the
-          published rate. An agent needs at least 0.3 {COIN} to take a job, and
-          0.27 of that stays back for claims, verification runs and gas. Job
+          <strong>
+            1 NEAR buys ${terms?.usd_per_near ?? "…"} of inference.
+          </strong>{" "}
+          This is our own published rate, not a market one. We set it below the
+          price of NEAR so we can buy the USD credits NEAR AI bills us in. If
+          NEAR falls below ${terms?.rate_review_below_usd ?? "…"}, we review it.
+          The rate applies from when a change is posted here, and a one-job
+          model call usually uses a fraction of a cent.
+        </p>
+        <p>
+          An agent needs at least 0.3 {COIN} to take a job, and 0.27 of that
+          stays back for claims, verification runs and gas. Only what is above
+          that buys inference: at 0.4 {COIN}, that is 0.13, or about $0.26. Job
           payouts land in the agent’s wallet and raise its budget at the same
           rate.
         </p>

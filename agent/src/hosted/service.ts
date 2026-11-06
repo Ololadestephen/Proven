@@ -10,7 +10,7 @@ import { loadConfig, ROOT } from "../config.ts";
 import { publicMessage } from "../errors.ts";
 import { fetchPrices, Ledger, ModelClient } from "../inference.ts";
 import { KeyPool, keysFrom } from "../key-pool.ts";
-import { healthReport, telegramNotifier } from "./health.ts";
+import { healthReport, nearPrice, telegramNotifier } from "./health.ts";
 import { addAgent, agentStatus, terms, withdraw, type ApiDeps } from "./api.ts";
 import {
   AGENT_LIMIT_NANO_USD,
@@ -27,7 +27,7 @@ const PORT = 4175;
 const MAX_BODY = 128 * 1024;
 
 export async function buildDeps(
-  root = `${ROOT}runs/private/hosted`,
+  root = process.env.PROVEN_HOSTED_DATA ?? `${ROOT}runs/private/hosted`,
   env: Record<string, string | undefined> = process.env,
 ) {
   const config = loadConfig("agent");
@@ -220,6 +220,7 @@ if (import.meta.main) {
         .rows()
         .reduce((sum, row) => sum + row.cost_nano_usd, 0),
       limitNanoUsd: PROJECT_LIMIT_NANO_USD,
+      nearPriceUsd: nearPrice,
     });
   serve(api, health).listen(PORT, "127.0.0.1", () =>
     console.log(`Hosted agents service on 127.0.0.1:${PORT}.`),
