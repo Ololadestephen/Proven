@@ -144,7 +144,18 @@ async function storePolicy(
   const result = await owner.callFunctionRaw({
     contractId: "outlayer.testnet",
     methodName: "store_wallet_policy",
-    args: { ...args, wallet_signature: signed.signature_hex },
+    args: {
+      ...args,
+      wallet_signature: signed.signature_hex,
+      // Newer OutLayer contracts need these, exactly as the keystore signed them.
+      ...(signed.version === undefined
+        ? {}
+        : {
+            version: signed.version,
+            locked: signed.locked,
+            valid_until: signed.valid_until,
+          }),
+    },
     deposit: cost,
     gas: 100000000000000n,
   });
@@ -344,6 +355,11 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(publicMessage(error));
+  console.error(
+    publicMessage(error),
+    String(error)
+      .replace(/(ed25519:|wk_|sk-)[A-Za-z0-9_-]+/g, "<redacted>")
+      .slice(0, 300),
+  );
   process.exitCode = 1;
 });

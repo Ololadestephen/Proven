@@ -284,7 +284,18 @@ async function setupWallet() {
       await owner.callFunctionRaw({
         contractId: "outlayer.near",
         methodName: "store_wallet_policy",
-        args: { ...args, wallet_signature: signed.signature_hex },
+        args: {
+          ...args,
+          wallet_signature: signed.signature_hex,
+          // Newer OutLayer contracts need these, exactly as the keystore signed them.
+          ...(signed.version === undefined
+            ? {}
+            : {
+                version: signed.version,
+                locked: signed.locked,
+                valid_until: signed.valid_until,
+              }),
+        },
         deposit: cost,
         gas: 100_000_000_000_000n,
       }),
