@@ -254,18 +254,22 @@ if (
       (arg) =>
         arg !== "--demo" &&
         arg !== "--dev-wallet" &&
+        arg !== "--public" &&
         !arg.startsWith("--origin="),
     ) ||
     new Set(args).size !== args.length ||
     args.filter((arg) => arg.startsWith("--origin=")).length > 1
   )
     throw new Error(
-      "Use npm start -- [--demo] [--origin=https://approved-host]",
+      "Use npm start -- [--demo] [--origin=https://approved-host] [--public]",
     );
   const originArg = args.find((arg) => arg.startsWith("--origin="));
   const origin = originArg
     ? approvedOrigin(originArg.slice("--origin=".length))
     : undefined;
+  // Without this flag the server answers on this machine only, whatever else is set.
+  const open = args.includes("--public");
+  if (open && !origin) throw new Error("--public needs --origin.");
   const demo = process.argv.includes("--demo")
     ? await BrowserDemo.create(
         fileURLToPath(new URL("../../runs/private/", import.meta.url)),
@@ -297,7 +301,7 @@ if (
     );
     return;
   });
-  server.listen(4173, "127.0.0.1", () =>
+  server.listen(4173, open ? "0.0.0.0" : "127.0.0.1", () =>
     console.log(
       "Proven job evidence: http://127.0.0.1:4173 (testnet; live demo requires a separate operator allowance)",
     ),

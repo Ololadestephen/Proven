@@ -165,7 +165,8 @@ export async function postBid(jobDir: string) {
 
 export async function runReview(bidId: number, keyName: string) {
   const values = env();
-  const { config } = buyer();
+  // Only the network is read here: a hosted server holds the review keys, never the buyer's wallet.
+  const config = loadConfig();
   const board = new BoardClient(config.rpc);
   const bid = await board.bid(bidId);
   if (!bid || bid.state !== "Unreviewed")

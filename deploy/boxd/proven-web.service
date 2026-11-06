@@ -1,0 +1,21 @@
+[Unit]
+Description=Proven web server (testnet)
+After=proven-relay.service
+Wants=proven-relay.service
+
+[Service]
+User=boxd
+WorkingDirectory=/home/boxd/proven/web
+Environment=PROVEN_ORIGIN=https://proven.boxd.sh
+EnvironmentFile=/home/boxd/proven/.env
+# Holds PROVEN_WEB_FLAGS=--public once the owner has opened the site. Without it the server stays on localhost.
+EnvironmentFile=-/home/boxd/proven/.web-flags
+ExecStart=/usr/local/bin/node src/server.ts --origin=${PROVEN_ORIGIN} $PROVEN_WEB_FLAGS
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

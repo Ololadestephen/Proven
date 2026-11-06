@@ -1,0 +1,17 @@
+[Unit]
+Description=Proven relay (testnet)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=boxd
+WorkingDirectory=/home/boxd/proven/relay
+ExecStart=/usr/local/bin/node --env-file=/home/boxd/proven/.env src/handoff.ts
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
