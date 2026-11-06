@@ -3,7 +3,7 @@
 use crate::check::{DataRule, DataRuleKind, FieldType};
 use crate::FailedRule;
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Runs the rules in order. `Err` names the first rule that failed, or `format` if the
 /// deliverable is not a list of rows.
@@ -15,6 +15,27 @@ pub(crate) fn evaluate(rules: &[DataRule], deliverable: &Value) -> Result<(), Fa
         }
     }
     Ok(())
+}
+
+/// True if the deliverable has exactly the published fields, with the published types.
+pub(crate) fn fits_format(
+    deliverable: &Value,
+    row_fields: &BTreeMap<String, FieldType>,
+    item_fields: &BTreeMap<String, BTreeMap<String, FieldType>>,
+) -> bool {
+    let exact = |value: &Value, fields: &BTreeMap<String, FieldType>| {
+        value.as_object().is_some_and(|object| {
+            object.len() == fields.len() && fields.iter().all(|(name, ty)| has_type(object.get(name), *ty))
+        })
+    };
+    rows(deliverable).is_some_and(|rows| {
+        rows.iter().all(|row| {
+            exact(row, row_fields)
+                && item_fields.iter().all(|(array, fields)| {
+                    row.get(array).and_then(Value::as_array).is_some_and(|list| list.iter().all(|item| exact(item, fields)))
+                })
+        })
+    })
 }
 
 /// True if `fake` states different facts from `reference`: the same rows in another order

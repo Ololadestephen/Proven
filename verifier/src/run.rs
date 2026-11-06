@@ -4,6 +4,8 @@
 //! - `{"mode": "verify", "check": "<check file text>", "deliverable": "<deliverable file text>"}`
 //! - `{"mode": "challenge", "check": "<check file text>", "reference": "<reference file text>"}`
 //!
+//! Either form may also give `format_hash`: the check is refused unless its public format has that hash.
+//!
 //! The texts can instead stay private: give `check_hash` with `reference_hash` (challenge) or
 //! `deliverable_hash` (verify) in the public input, and the texts arrive inside the TEE as the
 //! OutLayer secret variables `PROVEN_CHECK`, `PROVEN_REFERENCE` and `PROVEN_DELIVERABLE`. Either
@@ -23,7 +25,7 @@
 //! The output is compact JSON with sorted keys, the same canonical form OutLayer hashes for its
 //! attestation, so the SHA-256 of the printed bytes equals the attestation's `output_hash`.
 
-use crate::check::Check;
+use crate::check::{Check, Format};
 use crate::fakes::{self, FunctionReference, Planted};
 use crate::{data, function, sha256_hex, FailedRule};
 use serde::Deserialize;
@@ -33,7 +35,7 @@ use serde_json::{json, Value};
 pub const MAX_OUTPUT_BYTES: usize = 900;
 /// Fewest confirmed fakes a check must face before it can be accepted.
 pub const MIN_FAKES: u32 = 5;
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 /// Room kept in the output for the job binding: `escrow` (at most 64 characters), `job` and
 /// `request_id`.
 const BINDING_BYTES: usize = 140;
@@ -54,6 +56,7 @@ enum Input {
         check_hash: Option<String>,
         deliverable: Option<String>,
         deliverable_hash: Option<String>,
+        format_hash: Option<String>,
         escrow: Option<String>,
         job: Option<u64>,
     },
@@ -62,6 +65,7 @@ enum Input {
         check_hash: Option<String>,
         reference: Option<String>,
         reference_hash: Option<String>,
+        format_hash: Option<String>,
         escrow: Option<String>,
         job: Option<u64>,
     },
@@ -80,9 +84,9 @@ pub fn run_with_secrets(input: &[u8], secret: impl Fn(&str) -> Option<String>) -
         Ok(Input::Verify { check, deliverable, .. }) if check.is_some() != deliverable.is_some() => {
             json!({ "v": VERSION, "mode": "verify", "error": "invalid_input" })
         }
-        Ok(Input::Verify { check, check_hash, deliverable, deliverable_hash, escrow, job }) => {
+        Ok(Input::Verify { check, check_hash, deliverable, deliverable_hash, format_hash, escrow, job }) => {
             let verdict = match (text(check, check_hash, CHECK_SECRET, &secret), text(deliverable, deliverable_hash, DELIVERABLE_SECRET, &secret)) {
-                (Ok(check), Ok(deliverable)) => verify(&check, &deliverable),
+                (Ok(check), Ok(deliverable)) => verify(&check, &deliverable, format_hash.as_deref()),
                 (Err(error), _) | (_, Err(error)) => json!({ "v": VERSION, "mode": "verify", "error": error }),
             };
             bind(verdict, escrow, job, &secret)
@@ -90,9 +94,9 @@ pub fn run_with_secrets(input: &[u8], secret: impl Fn(&str) -> Option<String>) -
         Ok(Input::Challenge { check, reference, .. }) if check.is_some() != reference.is_some() => {
             json!({ "v": VERSION, "mode": "challenge", "error": "invalid_input" })
         }
-        Ok(Input::Challenge { check, check_hash, reference, reference_hash, escrow, job }) => {
+        Ok(Input::Challenge { check, check_hash, reference, reference_hash, format_hash, escrow, job }) => {
             let verdict = match (text(check, check_hash, CHECK_SECRET, &secret), text(reference, reference_hash, REFERENCE_SECRET, &secret)) {
-                (Ok(check), Ok(reference)) => challenge(&check, &reference),
+                (Ok(check), Ok(reference)) => challenge(&check, &reference, format_hash.as_deref()),
                 (Err(error), _) | (_, Err(error)) => json!({ "v": VERSION, "mode": "challenge", "error": error }),
             };
             bind(verdict, escrow, job, &secret)
@@ -131,27 +135,47 @@ fn text(given: Option<String>, hash: Option<String>, secret_name: &str, secret: 
     }
 }
 
+/// The public format first, then the rules in order. A delivery that does not fit the format fails
+/// as `format`, and no attempt fee is owed for it.
 fn evaluate(check: &Check, deliverable: &Value) -> Result<(), FailedRule> {
-    match check {
-        Check::Data(c) => data::evaluate(&c.rules, deliverable),
-        Check::Function(c) => function::evaluate(c, deliverable),
+    match (check, check.parsed_format()) {
+        (Check::Data(c), Some(Format::Data { rows, items })) => {
+            if !data::fits_format(deliverable, &rows, &items) {
+                return Err(FailedRule::format());
+            }
+            data::evaluate(&c.rules, deliverable)
+        }
+        (Check::Function(c), Some(Format::Function { .. })) => function::evaluate(c, deliverable),
+        _ => Err(FailedRule::format()),
     }
 }
 
-fn verify(check_text: &str, deliverable_text: &str) -> Value {
+/// The check, if the stated format hash is its format's hash. A job can only be judged by the format
+/// its bid published.
+fn checked(check: Option<Check>, stated: Option<&str>) -> Option<Check> {
+    check.filter(|c| stated.is_none_or(|hash| hash == sha256_hex(c.format_text().as_bytes())))
+}
+
+fn verify(check_text: &str, deliverable_text: &str, format_hash: Option<&str>) -> Value {
     let mut verdict = json!({
         "v": VERSION,
         "mode": "verify",
         "spec_hash": sha256_hex(check_text.as_bytes()),
         "deliverable_hash": sha256_hex(deliverable_text.as_bytes()),
+        "format_hash": null,
         "pass": false,
         "failed_rule": null,
         "error": null,
     });
-    let Some(check) = Check::parse(check_text) else {
+    let Some(check) = checked(Check::parse(check_text), format_hash) else {
         verdict["error"] = json!("invalid_check");
         return verdict;
     };
+    verdict["format_hash"] = json!(sha256_hex(check.format_text().as_bytes()));
+    if !check.rules_within_format() {
+        verdict["error"] = json!("invalid_check");
+        return verdict;
+    }
     let outcome = serde_json::from_str::<Value>(deliverable_text)
         .map_err(|_| FailedRule::format())
         .and_then(|deliverable| evaluate(&check, &deliverable));
@@ -162,12 +186,14 @@ fn verify(check_text: &str, deliverable_text: &str) -> Value {
     verdict
 }
 
-fn challenge(check_text: &str, reference_text: &str) -> Value {
+fn challenge(check_text: &str, reference_text: &str, format_hash: Option<&str>) -> Value {
     let mut verdict = json!({
         "v": VERSION,
         "mode": "challenge",
         "spec_hash": sha256_hex(check_text.as_bytes()),
         "fakes_hash": sha256_hex(reference_text.as_bytes()),
+        "format_hash": null,
+        "format_refused": false,
         "accepted": false,
         "reference_passed": false,
         "fakes_total": 0,
@@ -177,10 +203,17 @@ fn challenge(check_text: &str, reference_text: &str) -> Value {
         "missed_more": 0,
         "error": null,
     });
-    let Some(check) = Check::parse(check_text) else {
+    let Some(check) = checked(Check::parse(check_text), format_hash) else {
         verdict["error"] = json!("invalid_check");
         return verdict;
     };
+    verdict["format_hash"] = json!(sha256_hex(check.format_text().as_bytes()));
+    // Recorded as a rejected check, not an error: a check that needs an unpublished field is the
+    // buyer's mistake, and the job must not stay open waiting for another try.
+    if !check.rules_within_format() {
+        verdict["format_refused"] = json!(true);
+        return verdict;
+    }
     let Some((reference, planted, unconfirmed)) = generate(&check, reference_text) else {
         verdict["error"] = json!("invalid_reference");
         return verdict;

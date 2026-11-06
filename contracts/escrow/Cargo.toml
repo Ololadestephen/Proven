@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 near-sdk = { version = "5.30", features = ["deterministic-account-ids"] }
 
 [dev-dependencies]
+base64 = "0.22"
 near-sdk = { version = "5.30", features = ["unit-testing"] }
 near-workspaces = "0.24"
 tokio = { version = "1", features = ["full"] }

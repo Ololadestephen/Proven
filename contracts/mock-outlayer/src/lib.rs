@@ -179,17 +179,17 @@ impl MockOutlayer {
                 (13, 13)
             };
             json!({
-                "v": 1, "mode": "challenge", "error": null, "escrow": input["escrow"], "job": input["job"],
-                "request_id": REQUEST_ID, "spec_hash": input["check_hash"], "fakes_hash": input["reference_hash"],
+                "v": 2, "mode": "challenge", "error": null, "escrow": input["escrow"], "job": input["job"],
+                "request_id": REQUEST_ID, "format_hash": input["format_hash"], "spec_hash": input["check_hash"], "fakes_hash": input["reference_hash"],
                 "accepted": caught == total, "reference_passed": true, "fakes_total": total, "fakes_caught": caught,
                 "fakes_unconfirmed": 0, "missed": [], "missed_more": 0,
             })
         } else {
-            let pass = self.behaviour != "fail";
+            let pass = self.behaviour != "fail" && self.behaviour != "fail_format";
             json!({
-                "v": 1, "mode": "verify", "error": null, "escrow": input["escrow"], "job": input["job"],
-                "request_id": REQUEST_ID, "spec_hash": input["check_hash"], "deliverable_hash": input["deliverable_hash"],
-                "pass": pass, "failed_rule": if pass { None } else { Some("grand_total") },
+                "v": 2, "mode": "verify", "error": null, "escrow": input["escrow"], "job": input["job"],
+                "request_id": REQUEST_ID, "format_hash": input["format_hash"], "spec_hash": input["check_hash"], "deliverable_hash": input["deliverable_hash"],
+                "pass": pass, "failed_rule": if pass { None } else { Some(if self.behaviour == "fail_format" { "format" } else { "grand_total" }) },
             })
         };
         const OTHER: &str = "9999999999999999999999999999999999999999999999999999999999999999";

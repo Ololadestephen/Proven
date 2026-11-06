@@ -283,3 +283,105 @@ fn recursion_and_endless_loops_get_a_verdict_instead_of_crashing() {
     assert_eq!(verify(&check, &recursion)["failed_rule"], "basic");
     assert_eq!(verify(&check, &endless)["failed_rule"], "basic");
 }
+
+fn with_rule(check: &str, rule: Value) -> String {
+    let mut value: Value = serde_json::from_str(check).unwrap();
+    value["rules"].as_array_mut().unwrap().insert(0, rule);
+    value.to_string()
+}
+
+#[test]
+fn a_check_needing_a_field_outside_the_format_is_refused() {
+    // The po_number case: a check can catch every fake and still fail honest work on a field the task
+    // never mentioned. It must be refused before any money is locked.
+    let check = with_rule(
+        &example("data-job/check-strong.json"),
+        json!({"id": "po", "type": "fields", "fields": {"po_number": "string"}}),
+    );
+    let verdict = challenge(&check, &example("data-job/reference.json"));
+    assert_eq!(verdict["format_refused"], json!(true));
+    assert_eq!(verdict["accepted"], json!(false));
+    assert_eq!(verdict["reference_passed"], json!(false));
+    assert_eq!(verdict["error"], Value::Null);
+    let verified = verify(&check, &example("data-job/deliverable-honest.json"));
+    assert_eq!(verified["error"], json!("invalid_check"));
+    assert_eq!(verified["pass"], json!(false));
+}
+
+#[test]
+fn every_kind_of_rule_is_held_to_the_format() {
+    let outside = [
+        json!({"id": "a", "type": "unique", "field": "po_number"}),
+        json!({"id": "b", "type": "range", "field": "po_number", "min": 0, "max": 1}),
+        json!({"id": "c", "type": "column_total", "field": "po_number", "equals": 1}),
+        json!({"id": "d", "type": "item_range", "array": "lines", "field": "po_number", "min": 0, "max": 1}),
+        json!({"id": "e", "type": "item_fields", "array": "lines", "fields": {"po_number": "string"}}),
+        json!({"id": "f", "type": "sum_equals", "array": "lines", "item_field": "po_number", "total_field": "total_cents"}),
+        json!({"id": "g", "type": "sum_equals", "array": "lines", "item_field": "amount_cents", "total_field": "po_number"}),
+        json!({"id": "h", "type": "spot_check", "key_field": "po_number", "key": 1, "field": "supplier", "equals": "x"}),
+        json!({"id": "i", "type": "spot_check", "key_field": "supplier", "key": 1, "field": "po_number", "equals": "x"}),
+        // A published field with a different type is outside the format too.
+        json!({"id": "j", "type": "fields", "fields": {"supplier": "integer"}}),
+    ];
+    for rule in outside {
+        let check = with_rule(&example("data-job/check-strong.json"), rule.clone());
+        let verdict = challenge(&check, &example("data-job/reference.json"));
+        assert_eq!(verdict["format_refused"], json!(true), "{rule}");
+    }
+}
+
+#[test]
+fn a_check_cannot_name_a_rule_format_or_exceed_the_rule_cap() {
+    let named = with_rule(&example("data-job/check-strong.json"), json!({"id": "format", "type": "row_count", "min": 0, "max": 99}));
+    assert_eq!(challenge(&named, &example("data-job/reference.json"))["error"], json!("invalid_check"));
+    let mut many = example("data-job/check-strong.json");
+    for i in 0..32 {
+        many = with_rule(&many, json!({"id": format!("extra{i}"), "type": "row_count", "min": 0, "max": 99}));
+    }
+    assert_eq!(challenge(&many, &example("data-job/reference.json"))["error"], json!("invalid_check"));
+}
+
+#[test]
+fn a_delivery_outside_the_format_fails_as_format_and_one_inside_fails_by_rule() {
+    let check = example("data-job/check-strong.json");
+    let mut extra: Value = serde_json::from_str(&example("data-job/deliverable-honest.json")).unwrap();
+    extra["rows"][0]["hidden_note"] = json!("not in the format");
+    assert_eq!(verify(&check, &extra.to_string())["failed_rule"], json!("format"));
+    let mut wrong_type: Value = serde_json::from_str(&example("data-job/deliverable-honest.json")).unwrap();
+    wrong_type["rows"][0]["total_cents"] = json!("1");
+    assert_eq!(verify(&check, &wrong_type.to_string())["failed_rule"], json!("format"));
+    assert_eq!(verify(&check, "not json")["failed_rule"], json!("format"));
+    let fake = verify(&check, &example("data-job/deliverable-fake.json"));
+    assert_eq!(fake["pass"], json!(false));
+    assert_ne!(fake["failed_rule"], json!("format"), "a well-formed wrong answer must fail by a real rule");
+}
+
+#[test]
+fn the_output_reports_the_format_hash_and_a_different_stated_hash_is_refused() {
+    let check = example("data-job/check-strong.json");
+    let parsed: Value = serde_json::from_str(&check).unwrap();
+    let hash = sha256_hex(parsed["format"].as_str().unwrap().as_bytes());
+    let good = verify(&check, &example("data-job/deliverable-honest.json"));
+    assert_eq!(good["format_hash"], json!(hash));
+    let refused = output(&json!({
+        "mode": "verify", "check": check, "deliverable": example("data-job/deliverable-honest.json"),
+        "format_hash": "0".repeat(64),
+    }));
+    assert_eq!(refused["error"], json!("invalid_check"));
+    assert_eq!(refused["pass"], json!(false));
+    let accepted = output(&json!({
+        "mode": "challenge", "check": check, "reference": example("data-job/reference.json"), "format_hash": hash,
+    }));
+    assert_eq!(accepted["accepted"], json!(true));
+    assert_eq!(accepted["format_hash"], json!(hash));
+}
+
+#[test]
+fn every_output_still_fits_the_limit_with_the_format_hash() {
+    let check = example("function-job/check-weak.json");
+    let v = output(&json!({
+        "mode": "challenge", "check": check, "reference": example("function-job/challenge-reference.json"),
+        "escrow": "a".repeat(64), "job": 18446744073709551615u64,
+    }));
+    assert!(v.to_string().len() <= proven_verifier::run::MAX_OUTPUT_BYTES, "{}", v.to_string().len());
+}

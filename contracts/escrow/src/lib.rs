@@ -46,10 +46,10 @@ use near_sdk::{
 pub type JobId = u64;
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
-const MAX_DEADLINE_NANOS: u64 = 30 * 24 * 60 * 60 * NANOS_PER_SEC;
+const MAX_DEADLINE_NANOS: u64 = 24 * 60 * 60 * NANOS_PER_SEC;
 /// Long enough for a stale run and one retry: see `RUN_TIMEOUT_NANOS`.
 const MIN_VERDICT_WINDOW_SECS: u32 = 30 * 60;
-const MAX_VERDICT_WINDOW_SECS: u32 = 7 * 24 * 60 * 60;
+const MAX_VERDICT_WINDOW_SECS: u32 = 24 * 60 * 60;
 /// After this long with no callback, a run is stale. A real run resolves within NEAR's yield timeout
 /// (200 blocks), which delivers `null`; this is reached only if the callback itself is lost.
 const RUN_TIMEOUT_NANOS: u64 = 15 * 60 * NANOS_PER_SEC;
@@ -74,7 +74,7 @@ const BUILD_TARGET: &str = "wasm32-wasip1";
 const MAX_RESULT_BYTES: usize = 900;
 const MAX_URL_LEN: usize = 256;
 const MAX_FAILED_RULE_LEN: usize = 32;
-const VERIFIER_OUTPUT_VERSION: u32 = 1;
+const VERIFIER_OUTPUT_VERSION: u32 = 2;
 const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 /// Fewest confirmed fakes a check must face before it can be accepted (the verifier uses the same).
 pub const MIN_FAKES: u32 = 5;
@@ -120,6 +120,8 @@ pub struct Job {
     pub spec_hash: String,
     /// SHA-256 of the reference the verifier generates its planted fakes from.
     pub fakes_hash: String,
+    /// SHA-256 of the public format the verifier must judge by, the one the job's bid published.
+    pub format_hash: String,
     /// The verifier build every run of this job uses, fixed when the job is created.
     pub verifier_url: String,
     pub verifier_hash: String,
@@ -197,9 +199,10 @@ impl Job {
             RunKind::Challenge => json!({
                 "mode": "challenge", "escrow": escrow, "job": job_id,
                 "check_hash": self.spec_hash, "reference_hash": self.fakes_hash,
+                "format_hash": self.format_hash,
             }),
             RunKind::Verify => json!({
-                "mode": "verify", "escrow": escrow, "job": job_id,
+                "mode": "verify", "escrow": escrow, "job": job_id, "format_hash": self.format_hash,
                 "check_hash": self.spec_hash, "deliverable_hash": self.deliverable_hash,
             }),
         }
@@ -218,6 +221,7 @@ impl Job {
             && output.job == job_id
             && output.spec_hash == self.spec_hash
             && output.fakes_hash == self.fakes_hash
+            && output.format_hash.as_ref() == Some(&self.format_hash)
             && output.fakes_caught <= output.fakes_total;
         if !valid {
             return false;
@@ -253,6 +257,7 @@ impl Job {
             && output.job == job_id
             && output.spec_hash == self.spec_hash
             && self.deliverable_hash.as_deref() == Some(output.deliverable_hash.as_str())
+            && output.format_hash.as_ref() == Some(&self.format_hash)
             && failed_rule_fits;
         if !valid {
             return false;
@@ -285,6 +290,7 @@ struct ChallengeOutput {
     request_id: u64,
     spec_hash: String,
     fakes_hash: String,
+    format_hash: Option<String>,
     reference_passed: bool,
     fakes_total: u32,
     fakes_caught: u32,
@@ -302,6 +308,7 @@ struct VerifyOutput {
     request_id: u64,
     spec_hash: String,
     deliverable_hash: String,
+    format_hash: Option<String>,
     pass: bool,
     failed_rule: Option<String>,
 }
@@ -329,6 +336,8 @@ pub struct AssetCap {
     pub max_job: U128,
     pub max_held: U128,
     pub held: U128,
+    /// The most one buyer can have held at once, so one account cannot fill `max_held`.
+    pub max_held_per_buyer: U128,
 }
 
 // The macro generates `ext_ft` from this trait; the trait itself is never called directly.
@@ -342,6 +351,7 @@ trait FungibleToken {
 #[derive(BorshStorageKey)]
 enum StorageKey {
     Jobs,
+    HeldByBuyer,
 }
 
 #[near(contract_state)]
@@ -359,6 +369,8 @@ pub struct Escrow {
     /// Stops new jobs and new funding only. Everything already funded can still finish.
     paused: bool,
     caps: Vec<AssetCap>,
+    /// What each buyer has held now, per asset. An entry goes when it reaches zero, so this stays small.
+    held_by_buyer: LookupMap<(AccountId, Option<AccountId>), u128>,
 }
 
 fn is_hash(value: &str) -> bool {
@@ -411,6 +423,7 @@ impl Escrow {
         secrets_owner: AccountId,
         max_job_amount: U128,
         max_held: U128,
+        max_held_per_buyer: U128,
     ) -> Self {
         require_verifier(&verifier_url, &verifier_hash);
         Self {
@@ -428,7 +441,58 @@ impl Escrow {
                 max_job: max_job_amount,
                 max_held,
                 held: U128(0),
+                max_held_per_buyer,
             }],
+            held_by_buyer: LookupMap::new(StorageKey::HeldByBuyer),
+        }
+    }
+
+    /// One-time upgrade from the version without public formats and per-buyer limits. Only this
+    /// contract's own account can call it, as part of deploying the new code. Earlier jobs are
+    /// finished, and are kept readable with an empty format hash.
+    #[init(ignore_state)]
+    #[private]
+    pub fn migrate(max_held_per_buyer: U128) -> Self {
+        let old: migration::OldEscrow =
+            env::state_read().unwrap_or_else(|| env::panic_str("no earlier state"));
+        for id in 0..old.next_id {
+            let key = migration::job_key(id);
+            let Some(bytes) = env::storage_read(&key) else {
+                continue; // A cancelled job.
+            };
+            let job = near_sdk::borsh::from_slice::<migration::OldJob>(&bytes)
+                .unwrap_or_else(|_| env::panic_str("could not read an earlier job"))
+                .upgraded();
+            let bytes = near_sdk::borsh::to_vec(&job)
+                .unwrap_or_else(|_| env::panic_str("could not write an upgraded job"));
+            env::storage_write(&key, &bytes);
+        }
+        let caps = old
+            .caps
+            .into_iter()
+            .map(|cap| {
+                require!(cap.held.0 == 0, "no money may be held during this upgrade");
+                AssetCap {
+                    token: cap.token,
+                    max_job: cap.max_job,
+                    max_held: cap.max_held,
+                    held: cap.held,
+                    max_held_per_buyer,
+                }
+            })
+            .collect();
+        Self {
+            owner: old.owner,
+            outlayer: old.outlayer,
+            verifier_url: old.verifier_url,
+            verifier_hash: old.verifier_hash,
+            secrets_owner: old.secrets_owner,
+            tokens: old.tokens,
+            jobs: LookupMap::new(StorageKey::Jobs),
+            next_id: old.next_id,
+            paused: old.paused,
+            caps,
+            held_by_buyer: LookupMap::new(StorageKey::HeldByBuyer),
         }
     }
 
@@ -455,14 +519,27 @@ impl Escrow {
     }
 
     /// Sets the limits on an asset already accepted. `token: null` means NEAR.
-    pub fn set_caps(&mut self, token: Option<AccountId>, max_job: U128, max_held: U128) {
+    pub fn set_caps(
+        &mut self,
+        token: Option<AccountId>,
+        max_job: U128,
+        max_held: U128,
+        max_held_per_buyer: U128,
+    ) {
         self.require_owner();
         let cap = self.cap_mut(token.as_ref());
         cap.max_job = max_job;
         cap.max_held = max_held;
+        cap.max_held_per_buyer = max_held_per_buyer;
     }
 
-    pub fn add_token(&mut self, token: AccountId, max_job: U128, max_held: U128) {
+    pub fn add_token(
+        &mut self,
+        token: AccountId,
+        max_job: U128,
+        max_held: U128,
+        max_held_per_buyer: U128,
+    ) {
         self.require_owner();
         if !self.tokens.contains(&token) {
             self.tokens.push(token.clone());
@@ -476,12 +553,14 @@ impl Escrow {
             Some(cap) => {
                 cap.max_job = max_job;
                 cap.max_held = max_held;
+                cap.max_held_per_buyer = max_held_per_buyer;
             }
             None => self.caps.push(AssetCap {
                 token: Some(token),
                 max_job,
                 max_held,
                 held: U128(0),
+                max_held_per_buyer,
             }),
         }
     }
@@ -503,6 +582,7 @@ impl Escrow {
         worker: AccountId,
         spec_hash: String,
         fakes_hash: String,
+        format_hash: String,
         amount: U128,
         token: Option<AccountId>,
         deadline: U64,
@@ -514,6 +594,7 @@ impl Escrow {
         let now = env::block_timestamp();
         require_hash(&spec_hash, "spec_hash");
         require_hash(&fakes_hash, "fakes_hash");
+        require_hash(&format_hash, "format_hash");
         require!(
             verifier_hash == self.verifier_hash,
             "verifier_hash is not the build this contract runs"
@@ -529,11 +610,11 @@ impl Escrow {
         );
         require!(
             deadline.0 > now && deadline.0 - now <= MAX_DEADLINE_NANOS,
-            "deadline must be in the future and at most 30 days away"
+            "deadline must be in the future and at most 24 hours away"
         );
         require!(
             (MIN_VERDICT_WINDOW_SECS..=MAX_VERDICT_WINDOW_SECS).contains(&verdict_window_secs),
-            "verdict_window_secs must be between 1800 and 604800"
+            "verdict_window_secs must be between 1800 and 86400"
         );
 
         let id = self.next_id;
@@ -545,6 +626,7 @@ impl Escrow {
             amount,
             spec_hash,
             fakes_hash,
+            format_hash,
             verifier_url: self.verifier_url.clone(),
             verifier_hash,
             secrets_owner: self.secrets_owner.clone(),
@@ -800,10 +882,22 @@ impl Escrow {
         let paid = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
         let job = self.job_mut(job_id);
         job.state = if paid { done } else { revert_to };
-        let (token, amount) = (job.token.clone(), job.amount.0);
+        let (buyer, token, amount) = (job.buyer.clone(), job.token.clone(), job.amount.0);
         if paid {
             let cap = self.cap_mut(token.as_ref());
             cap.held = U128(cap.held.0.saturating_sub(amount));
+            let key = (buyer, token);
+            let left = self
+                .held_by_buyer
+                .get(&key)
+                .copied()
+                .unwrap_or(0)
+                .saturating_sub(amount);
+            if left == 0 {
+                self.held_by_buyer.remove(&key);
+            } else {
+                self.held_by_buyer.insert(key, left);
+            }
         }
         emit(if paid { "payout_done" } else { "payout_failed" }, job_id);
         paid
@@ -897,6 +991,19 @@ impl Escrow {
             "this would pass the cap on money held"
         );
         cap.held = U128(held);
+        let per_buyer = cap.max_held_per_buyer.0;
+        let key = (payer.clone(), token.cloned());
+        let by_buyer = self
+            .held_by_buyer
+            .get(&key)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(amount);
+        require!(
+            by_buyer <= per_buyer,
+            "this would pass this buyer's cap on money held"
+        );
+        self.held_by_buyer.insert(key, by_buyer);
         emit("job_funded", job_id);
     }
 
@@ -994,6 +1101,8 @@ impl Escrow {
         )
     }
 }
+
+mod migration;
 
 #[cfg(test)]
 mod tests;

@@ -58,13 +58,14 @@ pub async fn setup() -> anyhow::Result<Env> {
             "verifier_hash": VERIFIER, "secrets_owner": secrets_owner.id(),
             "max_job_amount": (1_000 * NearToken::from_near(1).as_yoctonear()).to_string(),
             "max_held": (10_000 * NearToken::from_near(1).as_yoctonear()).to_string(),
+            "max_held_per_buyer": (10_000 * NearToken::from_near(1).as_yoctonear()).to_string(),
         }))
         .transact()
         .await?
         .into_result()?;
     owner
         .call(escrow.id(), "add_token")
-        .args_json(json!({ "token": token.id(), "max_job": (1_000 * TOKEN_AMOUNT).to_string(), "max_held": (1_000 * TOKEN_AMOUNT).to_string() }))
+        .args_json(json!({ "token": token.id(), "max_job": (1_000 * TOKEN_AMOUNT).to_string(), "max_held": (1_000 * TOKEN_AMOUNT).to_string(), "max_held_per_buyer": (1_000_000 * TOKEN_AMOUNT).to_string() }))
         .transact()
         .await?
         .into_result()?;
@@ -156,7 +157,7 @@ pub async fn create_job(
 ) -> anyhow::Result<u64> {
     let deadline = now(env).await? + deadline_secs * SEC;
     let args = json!({
-        "worker": env.worker.id(), "spec_hash": SPEC, "fakes_hash": FAKES,
+        "worker": env.worker.id(), "spec_hash": SPEC, "fakes_hash": FAKES, "format_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "amount": amount.to_string(), "token": if token { Some(env.token.id()) } else { None },
         "deadline": deadline.to_string(), "verdict_window_secs": WINDOW_SECS, "verifier_hash": VERIFIER,
     });

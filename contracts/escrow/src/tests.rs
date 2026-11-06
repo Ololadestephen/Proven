@@ -16,6 +16,8 @@ const DELIVERED_AT: u64 = START + 60 * SEC;
 const WINDOW_END: u64 = DELIVERED_AT + WINDOW_SECS as u64 * SEC;
 const RUN_DEPOSIT: NearToken = NearToken::from_millinear(100);
 
+const FORMAT: &str = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+
 fn owner() -> AccountId {
     accounts(0)
 }
@@ -85,8 +87,9 @@ fn escrow() -> Escrow {
         relay(),
         U128(1_000 * NearToken::from_near(1).as_yoctonear()),
         U128(10_000 * NearToken::from_near(1).as_yoctonear()),
+        U128(10_000 * NearToken::from_near(1).as_yoctonear()),
     );
-    escrow.add_token(token(), U128(u128::MAX / 2), U128(u128::MAX / 2));
+    escrow.add_token(token(), U128(u128::MAX / 2), U128(u128::MAX / 2), U128(u128::MAX / 2));
     escrow
 }
 
@@ -96,6 +99,7 @@ fn create(escrow: &mut Escrow, token: Option<AccountId>) -> JobId {
         worker(),
         SPEC.into(),
         FAKES.into(),
+        FORMAT.into(),
         U128(one_near().as_yoctonear()),
         token,
         U64(DEADLINE),
@@ -111,7 +115,7 @@ fn challenge_output(
     caught: u32,
 ) -> serde_json::Value {
     json!({
-        "v": 1, "mode": "challenge", "error": null, "escrow": this_contract(), "job": id, "request_id": 700,
+        "v": 2, "format_hash": FORMAT, "mode": "challenge", "error": null, "escrow": this_contract(), "job": id, "request_id": 700,
         "spec_hash": SPEC, "fakes_hash": FAKES, "reference_passed": reference_passed,
         "fakes_total": total, "fakes_caught": caught, "fakes_unconfirmed": 0, "accepted": false, "missed": [],
     })
@@ -119,7 +123,7 @@ fn challenge_output(
 
 fn verify_output(id: JobId, pass: bool) -> serde_json::Value {
     json!({
-        "v": 1, "mode": "verify", "error": null, "escrow": this_contract(), "job": id, "request_id": 701,
+        "v": 2, "format_hash": FORMAT, "mode": "verify", "error": null, "escrow": this_contract(), "job": id, "request_id": 701,
         "spec_hash": SPEC, "deliverable_hash": DELIVERABLE, "pass": pass,
         "failed_rule": if pass { None } else { Some("grand_total") },
     })
@@ -382,7 +386,7 @@ fn output_for_another_deliverable_is_no_verdict() {
 #[test]
 fn output_of_the_wrong_mode_or_version_is_no_verdict() {
     assert_no_verdict(with(0, "mode", json!("challenge")));
-    assert_no_verdict(with(0, "v", json!(2)));
+    assert_no_verdict(with(0, "v", json!(3)));
 }
 
 #[test]
@@ -805,13 +809,13 @@ fn the_run_input_is_only_hashes_and_the_job_binding() {
         serde_json::from_str(&job.run_input(id, RunKind::Verify, &this_contract())).unwrap();
     assert_eq!(
         input,
-        json!({ "mode": "verify", "escrow": this_contract(), "job": id, "check_hash": SPEC, "deliverable_hash": DELIVERABLE })
+        json!({ "mode": "verify", "escrow": this_contract(), "job": id, "format_hash": FORMAT, "check_hash": SPEC, "deliverable_hash": DELIVERABLE })
     );
     let input: serde_json::Value =
         serde_json::from_str(&job.run_input(id, RunKind::Challenge, &this_contract())).unwrap();
     assert_eq!(
         input,
-        json!({ "mode": "challenge", "escrow": this_contract(), "job": id, "check_hash": SPEC, "reference_hash": FAKES })
+        json!({ "mode": "challenge", "escrow": this_contract(), "job": id, "format_hash": FORMAT, "check_hash": SPEC, "reference_hash": FAKES })
     );
     assert_eq!(
         job.secrets_profile(id, RunKind::Verify),
@@ -1070,6 +1074,7 @@ fn create_job_without_storage_deposit_is_refused() {
         worker(),
         SPEC.into(),
         FAKES.into(),
+        FORMAT.into(),
         U128(1),
         None,
         U64(DEADLINE),
@@ -1087,6 +1092,7 @@ fn buyer_cannot_name_itself_as_worker() {
         buyer(),
         SPEC.into(),
         FAKES.into(),
+        FORMAT.into(),
         U128(1),
         None,
         U64(DEADLINE),
@@ -1111,6 +1117,7 @@ fn past_deadline_is_refused() {
         worker(),
         SPEC.into(),
         FAKES.into(),
+        FORMAT.into(),
         U128(1),
         None,
         U64(START),
@@ -1128,6 +1135,7 @@ fn a_verdict_window_too_short_for_a_retry_is_refused() {
         worker(),
         SPEC.into(),
         FAKES.into(),
+        FORMAT.into(),
         U128(1),
         None,
         U64(DEADLINE),
@@ -1230,6 +1238,7 @@ fn a_buyer_who_expects_another_verifier_build_is_refused() {
         worker(),
         SPEC.into(),
         FAKES.into(),
+        FORMAT.into(),
         U128(1),
         None,
         U64(DEADLINE),
@@ -1344,4 +1353,84 @@ fn get_jobs_pages_and_skips_cancelled() {
     let jobs = escrow.get_jobs(0, 10);
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].0, second);
+}
+
+// ---- Public format, per-buyer cap and shorter deadlines ----
+
+fn challenged_job(escrow: &mut Escrow) -> JobId {
+    let id = create(escrow, None);
+    assert!(challenge(escrow, id, true, 6, 6));
+    id
+}
+
+#[test]
+fn a_verdict_for_a_different_format_is_no_verdict() {
+    let (mut escrow, id, attempt) = verifying();
+    let mut output = verify_output(id, false);
+    output["format_hash"] = json!("0".repeat(64));
+    assert!(!returned_json(&mut escrow, id, attempt, RunKind::Verify, &output, TRIGGERED_AT));
+    assert_eq!(state(&escrow, id), JobState::Delivered);
+}
+
+#[test]
+#[should_panic(expected = "at most 24 hours away")]
+fn a_job_deadline_cannot_be_more_than_a_day_away() {
+    let mut escrow = escrow();
+    call(buyer(), NearToken::from_millinear(50), START);
+    escrow.create_job(
+        worker(),
+        SPEC.into(),
+        FAKES.into(),
+        FORMAT.into(),
+        U128(1),
+        None,
+        U64(START + 24 * 3_600 * SEC + 1),
+        WINDOW_SECS,
+        VERIFIER.into(),
+    );
+}
+
+#[test]
+#[should_panic(expected = "this buyer's cap on money held")]
+fn one_buyer_cannot_fill_the_held_cap() {
+    let mut escrow = escrow();
+    let one = one_near().as_yoctonear();
+    call(owner(), zero(), START);
+    escrow.set_caps(None, U128(one), U128(10 * one), U128(one + one / 2));
+    let first = challenged_job(&mut escrow);
+    call(buyer(), one_near(), START);
+    escrow.fund(first);
+    let second = challenged_job(&mut escrow);
+    call(buyer(), one_near(), START);
+    escrow.fund(second);
+}
+
+#[test]
+fn another_buyer_is_not_held_back_and_a_finished_job_frees_the_allowance() {
+    let mut escrow = escrow();
+    let one = one_near().as_yoctonear();
+    call(owner(), zero(), START);
+    escrow.set_caps(None, U128(one), U128(10 * one), U128(one));
+    let first = challenged_job(&mut escrow);
+    call(buyer(), one_near(), START);
+    escrow.fund(first);
+    assert_eq!(escrow.held_by_buyer.get(&(buyer(), None)).copied(), Some(one));
+    callback_context(PromiseResult::Successful(vec![]), START);
+    assert!(escrow.on_payout(first, JobState::Refunded, JobState::Failed));
+    assert_eq!(escrow.held_by_buyer.get(&(buyer(), None)), None);
+    let again = challenged_job(&mut escrow);
+    call(buyer(), one_near(), START);
+    escrow.fund(again);
+}
+
+#[test]
+fn a_failed_payout_keeps_the_buyer_allowance_counted() {
+    let mut escrow = escrow();
+    let one = one_near().as_yoctonear();
+    let first = challenged_job(&mut escrow);
+    call(buyer(), one_near(), START);
+    escrow.fund(first);
+    callback_context(PromiseResult::Failed, START);
+    assert!(!escrow.on_payout(first, JobState::Refunded, JobState::Failed));
+    assert_eq!(escrow.held_by_buyer.get(&(buyer(), None)).copied(), Some(one));
 }

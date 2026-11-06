@@ -1,10 +1,13 @@
 //! Proven bid board. Buyers post checkable work, a reviewer can only let a bid through or block it,
 //! and registered agents claim bids one at a time.
 //!
-//! The board holds only NEAR storage deposits. Job money stays in the escrow, which is not changed
-//! by this contract and does not know it exists. Every payment still comes from the escrow's
-//! callback-recorded verdict. The board only reads `get_job`, so nothing here can move money or set
-//! a verdict: the worst a bad reviewer or a griefer can do is waste time.
+//! The board holds NEAR storage deposits and attempt fees. Job money stays in the escrow, which does
+//! not know this contract exists. Every job payment still comes from the escrow's callback-recorded
+//! verdict. The board only reads `get_job`, so nothing here can move job money or set a verdict.
+//!
+//! The one payment made here is the attempt fee. The buyer pays it when linking a job, and it goes
+//! by the job's recorded outcome alone: to the worker if well-formed work failed a real rule, otherwise
+//! back to the buyer. It never depends on a model, a message or anything the board decides itself.
 //!
 //! An agent's hashes record what its operator committed to, not proof of what actually ran.
 
@@ -35,6 +38,20 @@ const MIN_JOB_TIME_LEFT_NANOS: u64 = 1_800 * NANOS;
 const LINK_GRACE_NANOS: u64 = 120 * NANOS;
 const MAX_PAST_JOBS: usize = 20;
 const MAX_ALLOWED_WORKERS: usize = 20;
+const MAX_FORMAT_BYTES: usize = 2_048;
+/// Funded attempts per bid. With one attempt per account, this bounds what fees a bid can ever pay.
+pub const MAX_FUNDED_ATTEMPTS: u32 = 3;
+/// Paid by the buyer at linking. Roughly what a failed attempt costs a worker: inference plus a
+/// verification run.
+pub const ATTEMPT_FEE: NearToken = NearToken::from_millinear(15);
+/// Pays for the fee record, and is not returned.
+pub const FEE_RECORD_DEPOSIT: NearToken = NearToken::from_millinear(2);
+/// A bid must end by this long after posting, so a buyer cannot avoid revealing its check.
+const MAX_BID_LIFE_NANOS: u64 = 7 * 24 * 3_600 * NANOS;
+/// The verifier's reserved rule id for work that does not fit the public format.
+const FORMAT_RULE: &str = "format";
+const SETTLE_CALLBACK_GAS: Gas = Gas::from_tgas(40);
+const FEE_PAID_GAS: Gas = Gas::from_tgas(10);
 const READ_GAS: Gas = Gas::from_tgas(15);
 const CALLBACK_GAS: Gas = Gas::from_tgas(25);
 
@@ -51,6 +68,26 @@ pub enum BidState {
     /// A linked job's check failed the challenge, so the buyer's check is what is wrong.
     Closed,
     Cancelled,
+}
+
+/// Where one attempt fee stands. `Paying` holds it while a transfer is in flight, so it can be claimed once.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeeState {
+    Held,
+    Paying,
+    PaidToWorker,
+    ReturnedToBuyer,
+}
+
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct AttemptFee {
+    pub bid_id: BidId,
+    pub buyer: AccountId,
+    pub worker: AccountId,
+    pub amount: NearToken,
+    pub state: FeeState,
 }
 
 #[near(serializers = [json, borsh])]
@@ -92,6 +129,12 @@ pub struct Bid {
     pub check_hash: String,
     pub reference_hash: String,
     pub verifier_hash: String,
+    /// The fields a delivery must have, as the exact text the verifier hashes. A check can only look
+    /// at these.
+    pub format: String,
+    pub format_hash: String,
+    /// After this, nobody can claim and anyone can close the bid.
+    pub expires_at: U64,
     pub claim_window_secs: u32,
     pub state: BidState,
     pub review: Option<Review>,
@@ -112,6 +155,9 @@ pub struct Agent {
     pub knowledge_hash: String,
     pub tools_hash: String,
     pub model: String,
+    /// Who an operator hosts this agent for, as the operator states it. `None` for an agent that runs
+    /// itself.
+    pub owner: Option<AccountId>,
 }
 
 /// One account's standing on one bid.
@@ -148,6 +194,11 @@ pub struct JobView {
     pub verifier_hash: String,
     pub state: String,
     pub deadline: U64,
+    pub format_hash: String,
+    #[serde(default)]
+    pub failed_rule: Option<String>,
+    #[serde(default)]
+    pub verdict_request_id: Option<U64>,
 }
 
 #[ext_contract(ext_escrow)]
@@ -163,6 +214,8 @@ enum Key {
     AgentList,
     Attempts,
     LinkedJobs,
+    UsedChecks,
+    Fees,
 }
 
 #[near(contract_state)]
@@ -176,6 +229,10 @@ pub struct Board {
     agent_list: Vector<AccountId>,
     attempts: LookupMap<(BidId, AccountId), Attempt>,
     linked_jobs: LookupSet<JobId>,
+    /// A check's hash can be on one bid only. Changing one character gets past this, so it only stops
+    /// the exact same check being reused after its reveal.
+    used_checks: LookupSet<String>,
+    fees: LookupMap<JobId, AttemptFee>,
 }
 
 fn require_hash(value: &str, name: &str) {
@@ -212,6 +269,27 @@ fn charge(storage_before: u64, extra: NearToken) {
     }
 }
 
+/// Lowercase hex SHA-256.
+fn sha256_hex(bytes: &[u8]) -> String {
+    env::sha256(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Who an attempt fee belongs to, from the job's recorded outcome. `None` means no outcome yet.
+/// A job the escrow no longer has was cancelled, which it allows only for a job never funded.
+pub fn fee_goes_to_worker(job: Option<&JobView>) -> Option<bool> {
+    let Some(job) = job else {
+        return Some(false);
+    };
+    match job.state.as_str() {
+        "Passed" | "Released" | "Expired" | "CheckRejected" => Some(false),
+        "Failed" | "Refunded" => Some(
+            job.verdict_request_id.is_some()
+                && job.failed_rule.as_deref().is_some_and(|rule| rule != FORMAT_RULE),
+        ),
+        _ => None,
+    }
+}
+
 /// Before funding: leaving the job here means the claim can lapse without costing the agent its try.
 fn unfunded(state: &str) -> bool {
     matches!(state, "Draft" | "Challenging" | "Challenged")
@@ -230,6 +308,8 @@ impl Board {
             agent_list: Vector::new(Key::AgentList),
             attempts: LookupMap::new(Key::Attempts),
             linked_jobs: LookupSet::new(Key::LinkedJobs),
+            used_checks: LookupSet::new(Key::UsedChecks),
+            fees: LookupMap::new(Key::Fees),
         }
     }
 
@@ -242,6 +322,9 @@ impl Board {
         check_hash: String,
         reference_hash: String,
         verifier_hash: String,
+        format: String,
+        expires_at: U64,
+        reveal_agreed: bool,
         claim_window_secs: u32,
         allowed_workers: Option<Vec<AccountId>>,
     ) -> BidId {
@@ -254,6 +337,24 @@ impl Board {
         require_hash(&check_hash, "check_hash");
         require_hash(&reference_hash, "reference_hash");
         require_hash(&verifier_hash, "verifier_hash");
+        require!(
+            !format.is_empty() && format.len() <= MAX_FORMAT_BYTES,
+            "format must be 1 to 2048 bytes"
+        );
+        require!(
+            reveal_agreed,
+            "the buyer must agree that the check is published when the bid closes"
+        );
+        let now = env::block_timestamp();
+        require!(
+            expires_at.0 > now && expires_at.0 - now <= MAX_BID_LIFE_NANOS,
+            "expires_at must be in the future and at most 7 days away"
+        );
+        require!(
+            self.used_checks.insert(check_hash.clone()),
+            "this exact check was already used on a bid"
+        );
+        let format_hash = sha256_hex(format.as_bytes());
         require!(
             (MIN_CLAIM_WINDOW_SECS..=MAX_CLAIM_WINDOW_SECS).contains(&claim_window_secs),
             "claim_window_secs must be 60 to 86400"
@@ -275,6 +376,9 @@ impl Board {
                 check_hash,
                 reference_hash,
                 verifier_hash,
+                format,
+                format_hash,
+                expires_at,
                 claim_window_secs,
                 state: BidState::Unreviewed,
                 review: None,
@@ -336,6 +440,7 @@ impl Board {
         knowledge_hash: String,
         tools_hash: String,
         model: String,
+        owner: Option<AccountId>,
     ) {
         let before = env::storage_usage();
         let wallet = env::predecessor_account_id();
@@ -352,6 +457,7 @@ impl Board {
                 knowledge_hash,
                 tools_hash,
                 model,
+                owner,
             },
         );
         self.agent_list.push(wallet.clone());
@@ -379,6 +485,11 @@ impl Board {
         require!(
             bid.state == BidState::Open,
             "this bid cannot be claimed now"
+        );
+        require!(now < bid.expires_at.0, "this bid has expired");
+        require!(
+            bid.funded_attempts < MAX_FUNDED_ATTEMPTS,
+            "this bid has used all its attempts"
         );
         require!(bid.buyer != agent, "a buyer cannot claim its own bid");
         if let Some(workers) = &bid.allowed_workers {
@@ -419,69 +530,130 @@ impl Board {
         number
     }
 
-    /// Anyone. Ties the active claim to an escrow job after checking the job on chain.
+    /// The buyer ties the active claim to an escrow job, paying the attempt fee. If the job turns out
+    /// not to fit, everything attached goes back.
+    #[payable]
     pub fn link_job(&mut self, bid_id: BidId, job_id: JobId) -> Promise {
         let claim = self.active_unlinked_claim(bid_id, job_id);
+        let payer = env::predecessor_account_id();
+        require!(
+            payer == self.bid(bid_id).buyer,
+            "only the bid's buyer can link a job"
+        );
+        let attached = env::attached_deposit();
+        require!(
+            attached >= ATTEMPT_FEE.saturating_add(FEE_RECORD_DEPOSIT),
+            "attach the attempt fee and the fee record deposit"
+        );
         ext_escrow::ext(self.escrow.clone())
             .with_static_gas(READ_GAS)
             .get_job(job_id)
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(CALLBACK_GAS)
-                    .on_link(bid_id, claim.number, job_id),
+                    .on_link(bid_id, claim.number, job_id, payer, U128(attached.as_yoctonear())),
             )
     }
 
+    /// Never panics once the money is held, because a failed callback would strand what was attached.
     #[private]
     pub fn on_link(
         &mut self,
         bid_id: BidId,
         claim_number: u32,
         job_id: JobId,
+        payer: AccountId,
+        attached: U128,
         #[callback_result] job: Result<Option<JobView>, PromiseError>,
-    ) {
-        let job = match job {
-            Ok(Some(job)) => job,
-            Ok(None) => env::panic_str("that job does not exist"),
-            Err(_) => env::panic_str("could not read that job"),
-        };
-        // Everything is checked again here: the claim may have changed while the read was running.
-        let claim = self.active_unlinked_claim(bid_id, job_id);
-        require!(claim.number == claim_number, "that claim has ended");
-        let bid = self.bid(bid_id);
-        require!(job.buyer == bid.buyer, "the job has a different buyer");
-        require!(
-            job.worker == claim.agent,
-            "the job names a different worker"
-        );
-        require!(
-            job.spec_hash == bid.check_hash,
-            "the job has a different check"
-        );
-        require!(
-            job.fakes_hash == bid.reference_hash,
-            "the job has a different reference"
-        );
-        require!(
-            job.verifier_hash == bid.verifier_hash,
-            "the job has a different verifier"
-        );
-        require!(job.amount == bid.amount, "the job has a different amount");
-        require!(job.token.is_none(), "the job must be paid in NEAR");
-        require!(
-            job.deadline.0 >= env::block_timestamp().saturating_add(MIN_JOB_TIME_LEFT_NANOS),
-            "the job leaves too little time to finish"
-        );
-        require!(
-            unfunded(&job.state) || job.state == "Funded",
-            "the job has gone past funding"
-        );
-        self.linked_jobs.insert(job_id);
-        let linked = self.bid_mut(bid_id);
-        if let Some(active) = linked.claim.as_mut() {
-            active.job_id = Some(job_id);
+    ) -> bool {
+        let attached = NearToken::from_yoctonear(attached.0);
+        match self.link_problem(bid_id, claim_number, job_id, &job) {
+            Some(problem) => {
+                env::log_str(&format!("link_refused {bid_id} {job_id}: {problem}"));
+                let _ = Promise::new(payer).transfer(attached);
+                false
+            }
+            None => {
+                let worker = job
+                    .ok()
+                    .flatten()
+                    .map(|job| job.worker)
+                    .unwrap_or_else(|| env::panic_str("the job has gone"));
+                self.fees.insert(
+                    job_id,
+                    AttemptFee {
+                        bid_id,
+                        buyer: payer.clone(),
+                        worker,
+                        amount: ATTEMPT_FEE,
+                        state: FeeState::Held,
+                    },
+                );
+                self.linked_jobs.insert(job_id);
+                let linked = self.bid_mut(bid_id);
+                if let Some(active) = linked.claim.as_mut() {
+                    active.job_id = Some(job_id);
+                }
+                let rest = attached
+                    .saturating_sub(ATTEMPT_FEE)
+                    .saturating_sub(FEE_RECORD_DEPOSIT);
+                if !rest.is_zero() {
+                    let _ = Promise::new(payer).transfer(rest);
+                }
+                env::log_str(&format!("job_linked {bid_id} {job_id}"));
+                true
+            }
         }
-        env::log_str(&format!("job_linked {bid_id} {job_id}"));
+    }
+
+    /// Anyone. Sends an attempt fee where the job's recorded outcome says it goes. A failed read or
+    /// a job with no outcome yet changes nothing, and a failed transfer can be tried again.
+    pub fn settle_fee(&mut self, job_id: JobId) -> Promise {
+        let fee = self.fee(job_id);
+        require!(fee.state == FeeState::Held, "this fee is not waiting to be settled");
+        ext_escrow::ext(self.escrow.clone())
+            .with_static_gas(READ_GAS)
+            .get_job(job_id)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(SETTLE_CALLBACK_GAS)
+                    .on_settle_read(job_id),
+            )
+    }
+
+    #[private]
+    pub fn on_settle_read(
+        &mut self,
+        job_id: JobId,
+        #[callback_result] job: Result<Option<JobView>, PromiseError>,
+    ) -> Promise {
+        let job = job.unwrap_or_else(|_| env::panic_str("could not read the job"));
+        let to_worker = fee_goes_to_worker(job.as_ref())
+            .unwrap_or_else(|| env::panic_str("the job has no outcome yet"));
+        // Read again: another settlement may have started while this read was running.
+        let fee = self.fee(job_id);
+        require!(fee.state == FeeState::Held, "this fee is not waiting to be settled");
+        let receiver = if to_worker { fee.worker.clone() } else { fee.buyer.clone() };
+        let amount = fee.amount;
+        self.fee_mut(job_id).state = FeeState::Paying;
+        env::log_str(&format!("fee_paying {job_id} to_worker={to_worker}"));
+        Promise::new(receiver).transfer(amount).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(FEE_PAID_GAS)
+                .on_fee_paid(job_id, to_worker),
+        )
+    }
+
+    #[private]
+    pub fn on_fee_paid(&mut self, job_id: JobId, to_worker: bool) -> bool {
+        let paid = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
+        self.fee_mut(job_id).state = match (paid, to_worker) {
+            (false, _) => FeeState::Held,
+            (true, true) => FeeState::PaidToWorker,
+            (true, false) => FeeState::ReturnedToBuyer,
+        };
+        env::log_str(&format!("fee_settled {job_id} paid={paid} to_worker={to_worker}"));
+        paid
     }
 
     /// Anyone. Brings the bid in line with its linked job, or lapses a claim nobody linked in time.
@@ -545,12 +717,14 @@ impl Board {
         self.bid(bid_id).state
     }
 
-    /// The buyer takes a bid down, unless a linked job has been funded and has not ended.
+    /// The buyer takes a bid down, or anyone does once it has expired, unless a linked job has been
+    /// funded and has not ended.
     pub fn close_bid(&mut self, bid_id: BidId) -> PromiseOrValue<BidState> {
         let bid = self.bid(bid_id);
         require!(
-            env::predecessor_account_id() == bid.buyer,
-            "only the buyer can close a bid"
+            env::predecessor_account_id() == bid.buyer
+                || env::block_timestamp() >= bid.expires_at.0,
+            "only the buyer can close a bid before it expires"
         );
         require!(
             matches!(
@@ -631,6 +805,10 @@ impl Board {
         self.attempts.get(&(bid_id, account)).copied()
     }
 
+    pub fn get_fee(&self, job_id: JobId) -> Option<AttemptFee> {
+        self.fees.get(&job_id).cloned()
+    }
+
     pub fn get_config(&self) -> Config {
         Config {
             escrow: self.escrow.clone(),
@@ -640,6 +818,84 @@ impl Board {
 }
 
 impl Board {
+    fn fee(&self, job_id: JobId) -> &AttemptFee {
+        self.fees
+            .get(&job_id)
+            .unwrap_or_else(|| env::panic_str("no fee for that job"))
+    }
+
+    fn fee_mut(&mut self, job_id: JobId) -> &mut AttemptFee {
+        self.fees
+            .get_mut(&job_id)
+            .unwrap_or_else(|| env::panic_str("no fee for that job"))
+    }
+
+    /// Why this job cannot be linked to this claim, or `None` if it can. Everything is checked here,
+    /// after the read: the claim may have changed while the read was running.
+    fn link_problem(
+        &self,
+        bid_id: BidId,
+        claim_number: u32,
+        job_id: JobId,
+        job: &Result<Option<JobView>, PromiseError>,
+    ) -> Option<&'static str> {
+        let job = match job {
+            Ok(Some(job)) => job,
+            Ok(None) => return Some("that job does not exist"),
+            Err(_) => return Some("could not read that job"),
+        };
+        if self.linked_jobs.contains(&job_id) {
+            return Some("that job has already been linked to a claim");
+        }
+        let Some(bid) = self.bids.get(&bid_id) else {
+            return Some("no such bid");
+        };
+        let Some(claim) = bid.claim.as_ref().filter(|_| bid.state == BidState::Claimed) else {
+            return Some("this bid has no active claim");
+        };
+        if claim.number != claim_number {
+            return Some("that claim has ended");
+        }
+        if claim.job_id.is_some() {
+            return Some("this claim already has a job");
+        }
+        let now = env::block_timestamp();
+        if now > claim.expires_at.0 {
+            return Some("this claim has lapsed");
+        }
+        if job.buyer != bid.buyer {
+            return Some("the job has a different buyer");
+        }
+        if job.worker != claim.agent {
+            return Some("the job names a different worker");
+        }
+        if job.spec_hash != bid.check_hash {
+            return Some("the job has a different check");
+        }
+        if job.fakes_hash != bid.reference_hash {
+            return Some("the job has a different reference");
+        }
+        if job.verifier_hash != bid.verifier_hash {
+            return Some("the job has a different verifier");
+        }
+        if job.format_hash != bid.format_hash {
+            return Some("the job has a different format");
+        }
+        if job.amount != bid.amount {
+            return Some("the job has a different amount");
+        }
+        if job.token.is_some() {
+            return Some("the job must be paid in NEAR");
+        }
+        if job.deadline.0 < now.saturating_add(MIN_JOB_TIME_LEFT_NANOS) {
+            return Some("the job leaves too little time to finish");
+        }
+        if !(unfunded(&job.state) || job.state == "Funded") {
+            return Some("the job has gone past funding");
+        }
+        None
+    }
+
     fn bid(&self, bid_id: BidId) -> &Bid {
         self.bids
             .get(&bid_id)
@@ -705,12 +961,18 @@ impl Board {
             self.attempts.insert((bid_id, agent.clone()), Attempt::Used);
         }
         let bid = self.bid_mut(bid_id);
-        Self::record_past_job(bid, agent, funded, state);
-        bid.claim = None;
-        bid.state = state;
         if funded {
             bid.funded_attempts += 1;
         }
+        // The last attempt used: nothing more can happen on this bid.
+        let state = if state == BidState::Open && bid.funded_attempts >= MAX_FUNDED_ATTEMPTS {
+            BidState::Closed
+        } else {
+            state
+        };
+        Self::record_past_job(bid, agent, funded, state);
+        bid.claim = None;
+        bid.state = state;
         env::log_str(&format!("claim_ended {bid_id} {agent} {state:?}"));
     }
 
@@ -761,6 +1023,9 @@ mod tests {
             HASH.to_string(),
             HASH.to_string(),
             HASH.to_string(),
+            "{}".to_string(),
+            U64(1 + 3_600 * NANOS),
+            true,
             60,
             None,
         );
@@ -779,9 +1044,53 @@ mod tests {
                 HASH.to_string(),
                 HASH.to_string(),
                 "model".to_string(),
+                None,
             );
         }
         board
+    }
+
+    fn job(state: &str, failed_rule: Option<&str>, verdict: bool) -> JobView {
+        JobView {
+            buyer: accounts(0),
+            worker: accounts(1),
+            token: None,
+            amount: U128(1),
+            spec_hash: HASH.to_string(),
+            fakes_hash: HASH.to_string(),
+            verifier_hash: HASH.to_string(),
+            state: state.to_string(),
+            deadline: U64(1),
+            format_hash: HASH.to_string(),
+            failed_rule: failed_rule.map(str::to_string),
+            verdict_request_id: verdict.then_some(U64(7)),
+        }
+    }
+
+    #[test]
+    fn an_attempt_fee_follows_only_the_recorded_outcome() {
+        let goes = |state, rule, verdict| fee_goes_to_worker(Some(&job(state, rule, verdict)));
+        // Well-formed work failed a real rule, by a recorded verdict.
+        assert_eq!(goes("Failed", Some("grand_total"), true), Some(true));
+        assert_eq!(goes("Refunded", Some("grand_total"), true), Some(true));
+        // Work that did not fit the published format earns nothing.
+        assert_eq!(goes("Failed", Some("format"), true), Some(false));
+        assert_eq!(goes("Refunded", Some("format"), true), Some(false));
+        // A failure with no recorded verdict or no rule cannot pay the worker.
+        assert_eq!(goes("Failed", Some("grand_total"), false), Some(false));
+        assert_eq!(goes("Refunded", None, true), Some(false));
+        // A pass, no delivery, or no verdict before the deadline returns it to the buyer.
+        for state in ["Passed", "Released", "Expired", "CheckRejected"] {
+            assert_eq!(goes(state, None, false), Some(false), "{state}");
+        }
+        assert_eq!(fee_goes_to_worker(None), Some(false));
+        // Nothing is decided while the job can still change, including a payout that could still revert.
+        for state in [
+            "Draft", "Challenging", "Challenged", "Funded", "Delivered", "Verifying", "Releasing", "Refunding",
+            "Expiring", "Anything else",
+        ] {
+            assert_eq!(goes(state, Some("grand_total"), true), None, "{state}");
+        }
     }
 
     #[test]

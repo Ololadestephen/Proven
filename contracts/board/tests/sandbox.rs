@@ -12,12 +12,21 @@ const CHECK: &str = "11111111111111111111111111111111111111111111111111111111111
 const REFERENCE: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 const DELIVERABLE: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 const VERIFIER: &str = "5555555555555555555555555555555555555555555555555555555555555555";
+const FORMAT_HASH: &str = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 const OTHER: &str = "6666666666666666666666666666666666666666666666666666666666666666";
 const SEC: u64 = 1_000_000_000;
 const WINDOW: u64 = 60;
 const GRACE: u64 = 120;
 const NONE: NearToken = NearToken::from_yoctonear(0);
 const ONE_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
+
+/// A bid's check can be used once, so each bid in a test gets its own.
+thread_local! {
+    static POSTED: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+}
+fn latest_check() -> String {
+    format!("{:064x}", POSTED.with(|posted| posted.get()))
+}
 
 struct Env {
     sandbox: Worker<Sandbox>,
@@ -57,7 +66,7 @@ async fn setup() -> anyhow::Result<Env> {
             "owner": owner.id(), "outlayer": outlayer.id(),
             "verifier_url": "https://example.test/verifier.wasm",
             "verifier_hash": VERIFIER, "secrets_owner": owner.id(),
-            "max_job_amount": (1_000 * ONE_NEAR).to_string(), "max_held": (10_000 * ONE_NEAR).to_string(),
+            "max_job_amount": (1_000 * ONE_NEAR).to_string(), "max_held": (10_000 * ONE_NEAR).to_string(), "max_held_per_buyer": (10_000 * ONE_NEAR).to_string(),
         }))
         .transact()
         .await?
@@ -125,12 +134,26 @@ fn refused(result: &ExecutionFinalResult, reason: &str) {
     );
 }
 
+/// A refused link is not a failed call: the callback holds the attached money, so it returns it and
+/// says why. The buyer's money comes back and nothing is linked.
+async fn link_refused(
+    _env: &Env,
+    result: &ExecutionFinalResult,
+    reason: &str,
+) -> anyhow::Result<()> {
+    assert!(result.is_success(), "a refused link still finishes: {reason}");
+    assert_eq!(result.clone().json::<bool>()?, false, "expected a refusal: {reason}");
+    let logs = result.logs().join(" ");
+    assert!(logs.contains(reason), "expected {reason:?} in {logs}");
+    Ok(())
+}
+
 async fn register(env: &Env, who: &Account) -> anyhow::Result<()> {
     on_board(
         env,
         who,
         "register_agent",
-        json!({ "prompt_hash": CHECK, "knowledge_hash": REFERENCE, "tools_hash": VERIFIER, "model": "z-ai/glm-5.3-flash" }),
+        json!({ "prompt_hash": CHECK, "knowledge_hash": REFERENCE, "tools_hash": VERIFIER, "owner": null, "model": "z-ai/glm-5.3-flash" }),
         NearToken::from_millinear(100),
     )
     .await?
@@ -139,13 +162,15 @@ async fn register(env: &Env, who: &Account) -> anyhow::Result<()> {
 }
 
 async fn post(env: &Env) -> anyhow::Result<u64> {
+    POSTED.with(|posted| posted.set(posted.get() + 1));
     Ok(on_board(
         env,
         &env.buyer,
         "post_bid",
         json!({
             "description": "Convert these invoice lines to JSON.", "amount": ONE_NEAR.to_string(),
-            "check_hash": CHECK, "reference_hash": REFERENCE, "verifier_hash": VERIFIER,
+            "check_hash": latest_check(), "reference_hash": REFERENCE, "verifier_hash": VERIFIER,
+            "format": "{}", "expires_at": (env.sandbox.view_block().await?.timestamp() + 5 * 24 * 3_600 * SEC).to_string(), "reveal_agreed": true,
             "claim_window_secs": WINDOW,
         }),
         NearToken::from_millinear(100),
@@ -186,10 +211,10 @@ async fn claim(env: &Env, who: &Account, bid: u64) -> anyhow::Result<ExecutionFi
 async fn link(env: &Env, bid: u64, job: u64) -> anyhow::Result<ExecutionFinalResult> {
     on_board(
         env,
-        &env.stranger,
+        &env.buyer,
         "link_job",
         json!({ "bid_id": bid, "job_id": job }),
-        NONE,
+        NearToken::from_millinear(17),
     )
     .await
 }
@@ -229,12 +254,13 @@ async fn job_for(
     amount: u128,
 ) -> anyhow::Result<u64> {
     let now = env.sandbox.view_block().await?.timestamp();
+    let check = if check == CHECK { latest_check() } else { check.to_string() };
     Ok(on_escrow(
         env,
         buyer,
         "create_job",
         json!({
-            "worker": worker.id(), "spec_hash": check, "fakes_hash": REFERENCE,
+            "worker": worker.id(), "spec_hash": check, "fakes_hash": REFERENCE, "format_hash": FORMAT_HASH,
             "amount": amount.to_string(), "token": null,
             "deadline": (now + 3_600 * SEC).to_string(), "verdict_window_secs": 1_800,
             "verifier_hash": VERIFIER,
@@ -431,14 +457,14 @@ async fn a_job_links_only_if_it_matches_the_bid_and_the_claim() -> anyhow::Resul
     claim(&env, &env.agent, bid).await?.into_result()?;
 
     let wrong_worker = job_for(&env, &env.buyer, &env.second, CHECK, ONE_NEAR).await?;
-    refused(&link(&env, bid, wrong_worker).await?, "different worker");
+    link_refused(&env, &link(&env, bid, wrong_worker).await?, "different worker").await?;
     let wrong_buyer = job_for(&env, &env.stranger, &env.agent, CHECK, ONE_NEAR).await?;
-    refused(&link(&env, bid, wrong_buyer).await?, "different buyer");
+    link_refused(&env, &link(&env, bid, wrong_buyer).await?, "different buyer").await?;
     let wrong_check = job_for(&env, &env.buyer, &env.agent, OTHER, ONE_NEAR).await?;
-    refused(&link(&env, bid, wrong_check).await?, "different check");
+    link_refused(&env, &link(&env, bid, wrong_check).await?, "different check").await?;
     let wrong_amount = job_for(&env, &env.buyer, &env.agent, CHECK, ONE_NEAR / 2).await?;
-    refused(&link(&env, bid, wrong_amount).await?, "different amount");
-    refused(&link(&env, bid, 999).await?, "does not exist");
+    link_refused(&env, &link(&env, bid, wrong_amount).await?, "different amount").await?;
+    link_refused(&env, &link(&env, bid, 999).await?, "does not exist").await?;
     assert!(bid_of(&env, bid).await?["claim"]["job_id"].is_null());
 
     let right = job_for(&env, &env.buyer, &env.agent, CHECK, ONE_NEAR).await?;
@@ -457,13 +483,13 @@ async fn a_job_links_only_if_it_matches_the_bid_and_the_claim() -> anyhow::Resul
 #[tokio::test]
 async fn a_job_past_funding_cannot_be_linked() -> anyhow::Result<()> {
     let env = setup().await?;
+    let bid = open_bid(&env).await?;
     let job = job_for(&env, &env.buyer, &env.agent, CHECK, ONE_NEAR).await?;
     challenged(&env, job).await?;
     fund(&env, job).await?;
     deliver(&env, &env.agent, job).await?.into_result()?;
-    let bid = open_bid(&env).await?;
     claim(&env, &env.agent, bid).await?.into_result()?;
-    refused(&link(&env, bid, job).await?, "past funding");
+    link_refused(&env, &link(&env, bid, job).await?, "past funding").await?;
     Ok(())
 }
 
@@ -741,7 +767,7 @@ async fn a_job_too_short_to_finish_cannot_be_linked() -> anyhow::Result<()> {
         &env.buyer,
         "create_job",
         json!({
-            "worker": env.agent.id(), "spec_hash": CHECK, "fakes_hash": REFERENCE,
+            "worker": env.agent.id(), "spec_hash": latest_check(), "fakes_hash": REFERENCE, "format_hash": FORMAT_HASH,
             "amount": ONE_NEAR.to_string(), "token": null,
             "deadline": (now + 600 * SEC).to_string(), "verdict_window_secs": 1_800,
             "verifier_hash": VERIFIER,
@@ -751,7 +777,7 @@ async fn a_job_too_short_to_finish_cannot_be_linked() -> anyhow::Result<()> {
     .await?
     .into_result()?
     .json()?;
-    refused(&link(&env, bid, short).await?, "too little time");
+    link_refused(&env, &link(&env, bid, short).await?, "too little time").await?;
     assert!(bid_of(&env, bid).await?["claim"]["job_id"].is_null());
     Ok(())
 }
@@ -765,7 +791,8 @@ async fn an_allowlist_set_on_a_bid_limits_who_can_claim() -> anyhow::Result<()> 
         "post_bid",
         json!({
             "description": "Convert these invoice lines to JSON.", "amount": ONE_NEAR.to_string(),
-            "check_hash": CHECK, "reference_hash": REFERENCE, "verifier_hash": VERIFIER,
+            "check_hash": latest_check(), "reference_hash": REFERENCE, "verifier_hash": VERIFIER,
+            "format": "{}", "expires_at": (env.sandbox.view_block().await?.timestamp() + 5 * 24 * 3_600 * SEC).to_string(), "reveal_agreed": true,
             "claim_window_secs": WINDOW, "allowed_workers": [env.agent.id()],
         }),
         NearToken::from_millinear(100),
@@ -782,5 +809,290 @@ async fn an_allowlist_set_on_a_bid_limits_who_can_claim() -> anyhow::Result<()> 
     // A bid with no list stays open to any registered agent.
     let open = open_bid(&env).await?;
     claim(&env, &env.second, open).await?.into_result()?;
+    Ok(())
+}
+
+// ---- Attempt fees, attempt limits, public format and bid expiry ----
+
+const FEE: u128 = 15 * ONE_NEAR / 1_000;
+
+async fn balance(env: &Env, who: &Account) -> anyhow::Result<u128> {
+    let _ = env;
+    Ok(who.view_account().await?.balance.as_yoctonear())
+}
+
+async fn fee_of(env: &Env, job: u64) -> anyhow::Result<Value> {
+    Ok(env
+        .board
+        .view("get_fee")
+        .args_json(json!({ "job_id": job }))
+        .await?
+        .json()?)
+}
+
+async fn settle_fee(env: &Env, job: u64) -> anyhow::Result<ExecutionFinalResult> {
+    on_board(env, &env.stranger, "settle_fee", json!({ "job_id": job }), NONE).await
+}
+
+/// A job funded, delivered and judged by `behaviour`, still waiting for its payout.
+async fn judged(env: &Env, bid: u64, who: &Account, behaviour: &str) -> anyhow::Result<u64> {
+    claim(env, who, bid).await?.into_result()?;
+    let job = funded_job(env, bid, who).await?;
+    deliver(env, who, job).await?.into_result()?;
+    behave(env, behaviour).await?;
+    run(env, "request_verification", job).await?;
+    Ok(job)
+}
+
+#[tokio::test]
+async fn a_well_formed_failure_pays_the_fee_to_the_worker_once() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    let job = judged(&env, bid, &env.agent, "fail").await?;
+    assert_eq!(state_of(&env, job).await?, "Failed");
+    let before = balance(&env, &env.agent).await?;
+    settle_fee(&env, job).await?.into_result()?;
+    assert_eq!(balance(&env, &env.agent).await? - before, FEE);
+    assert_eq!(fee_of(&env, job).await?["state"], "PaidToWorker");
+    // Double claim, by anyone, by any route.
+    refused(&settle_fee(&env, job).await?, "not waiting to be settled");
+    on_escrow(&env, &env.stranger, "refund", json!({ "job_id": job }), NONE)
+        .await?
+        .into_result()?;
+    refused(&settle_fee(&env, job).await?, "not waiting to be settled");
+    assert_eq!(balance(&env, &env.agent).await? - before, FEE);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_pass_or_a_format_failure_returns_the_fee_to_the_buyer() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    let job = judged(&env, bid, &env.agent, "fail_format").await?;
+    let before = balance(&env, &env.buyer).await?;
+    settle_fee(&env, job).await?.into_result()?;
+    assert_eq!(balance(&env, &env.buyer).await? - before, FEE);
+    assert_eq!(fee_of(&env, job).await?["state"], "ReturnedToBuyer");
+
+    let bid = open_bid(&env).await?;
+    let job = judged(&env, bid, &env.agent, "pass").await?;
+    assert_eq!(state_of(&env, job).await?, "Passed");
+    let worker_before = balance(&env, &env.agent).await?;
+    let before = balance(&env, &env.buyer).await?;
+    settle_fee(&env, job).await?.into_result()?;
+    assert_eq!(balance(&env, &env.buyer).await? - before, FEE);
+    assert_eq!(balance(&env, &env.agent).await?, worker_before);
+    Ok(())
+}
+
+#[tokio::test]
+async fn no_fee_moves_before_the_job_has_an_outcome() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    claim(&env, &env.agent, bid).await?.into_result()?;
+    let job = job_for(&env, &env.buyer, &env.agent, CHECK, ONE_NEAR).await?;
+    link(&env, bid, job).await?.into_result()?;
+    // Unfunded, funded, delivered, verifying: nobody can take it yet.
+    refused(&settle_fee(&env, job).await?, "no outcome");
+    challenged(&env, job).await?;
+    fund(&env, job).await?;
+    refused(&settle_fee(&env, job).await?, "no outcome");
+    deliver(&env, &env.agent, job).await?.into_result()?;
+    refused(&settle_fee(&env, job).await?, "no outcome");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cancelled_job_returns_the_fee() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    claim(&env, &env.agent, bid).await?.into_result()?;
+    let job = job_for(&env, &env.buyer, &env.agent, CHECK, ONE_NEAR).await?;
+    link(&env, bid, job).await?.into_result()?;
+    on_escrow(&env, &env.buyer, "cancel", json!({ "job_id": job }), NONE)
+        .await?
+        .into_result()?;
+    let before = balance(&env, &env.buyer).await?;
+    settle_fee(&env, job).await?.into_result()?;
+    // At least: a gas refund from the cancel can land in the same moment.
+    assert!(balance(&env, &env.buyer).await? - before >= FEE);
+    assert_eq!(fee_of(&env, job).await?["state"], "ReturnedToBuyer");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refused_link_returns_everything_attached() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    claim(&env, &env.agent, bid).await?.into_result()?;
+    let wrong = job_for(&env, &env.buyer, &env.second, CHECK, ONE_NEAR).await?;
+    let board_before = balance(&env, env.board.as_account()).await?;
+    let result = link(&env, bid, wrong).await?;
+    link_refused(&env, &result, "different worker").await?;
+    let board_after = balance(&env, env.board.as_account()).await?;
+    assert!(board_after <= board_before + ONE_NEAR / 1_000, "the board kept the fee");
+    assert!(fee_of(&env, wrong).await?.is_null());
+    // Only the buyer can link, because the buyer is who pays and who gets it back.
+    refused(
+        &on_board(&env, &env.stranger, "link_job", json!({ "bid_id": bid, "job_id": wrong }), NearToken::from_millinear(17)).await?,
+        "only the bid's buyer",
+    );
+    refused(
+        &on_board(&env, &env.buyer, "link_job", json!({ "bid_id": bid, "job_id": wrong }), NONE).await?,
+        "attach the attempt fee",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn fee_callbacks_are_private() -> anyhow::Result<()> {
+    let env = setup().await?;
+    for (method, args) in [
+        ("on_settle_read", json!({ "job_id": 0 })),
+        ("on_fee_paid", json!({ "job_id": 0, "to_worker": true })),
+    ] {
+        refused(&on_board(&env, &env.stranger, method, args, NONE).await?, "Method");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_bid_ends_after_three_funded_attempts_so_fees_are_bounded() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let third = env.sandbox.dev_create_account().await?;
+    let fourth = env.sandbox.dev_create_account().await?;
+    register(&env, &third).await?;
+    register(&env, &fourth).await?;
+    let bid = open_bid(&env).await?;
+    let mut paid = 0;
+    for who in [&env.agent, &env.second, &third] {
+        let job = judged(&env, bid, who, "fail").await?;
+        let before = balance(&env, who).await?;
+        settle_fee(&env, job).await?.into_result()?;
+        paid += balance(&env, who).await? - before;
+        on_escrow(&env, &env.stranger, "refund", json!({ "job_id": job }), NONE)
+            .await?
+            .into_result()?;
+        assert!(sync(&env, bid).await? == "Open" || sync(&env, bid).await? == "Closed");
+    }
+    assert_eq!(paid, 3 * FEE);
+    assert_eq!(bid_of(&env, bid).await?["state"], "Closed");
+    assert_eq!(bid_of(&env, bid).await?["funded_attempts"], 3);
+    refused(&claim(&env, &fourth, bid).await?, "cannot be claimed");
+    // One account gets one attempt, so junk from one account cannot farm a second fee.
+    Ok(())
+}
+
+#[tokio::test]
+async fn one_account_cannot_farm_two_fees_on_a_bid() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    let job = judged(&env, bid, &env.agent, "fail").await?;
+    on_escrow(&env, &env.stranger, "refund", json!({ "job_id": job }), NONE)
+        .await?
+        .into_result()?;
+    sync(&env, bid).await?;
+    refused(&claim(&env, &env.agent, bid).await?, "used its attempt");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_same_check_cannot_be_on_two_bids_and_a_buyer_must_agree_to_the_reveal() -> anyhow::Result<()> {
+    let env = setup().await?;
+    open_bid(&env).await?;
+    let now = env.sandbox.view_block().await?.timestamp();
+    let args = |check: String, agreed: bool, expires: u64| json!({
+        "description": "Again.", "amount": ONE_NEAR.to_string(), "check_hash": check,
+        "reference_hash": REFERENCE, "verifier_hash": VERIFIER, "format": "{}",
+        "expires_at": expires.to_string(), "reveal_agreed": agreed, "claim_window_secs": WINDOW,
+    });
+    let deposit = NearToken::from_millinear(100);
+    let week = 7 * 24 * 3_600 * SEC;
+    refused(
+        &on_board(&env, &env.buyer, "post_bid", args(latest_check(), true, now + week / 2), deposit).await?,
+        "already used",
+    );
+    refused(
+        &on_board(&env, &env.buyer, "post_bid", args(OTHER.into(), false, now + week / 2), deposit).await?,
+        "must agree",
+    );
+    refused(
+        &on_board(&env, &env.buyer, "post_bid", args(OTHER.into(), true, now + week * 2), deposit).await?,
+        "at most 7 days",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_job_with_a_different_format_cannot_be_linked() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    claim(&env, &env.agent, bid).await?.into_result()?;
+    let now = env.sandbox.view_block().await?.timestamp();
+    let job: u64 = on_escrow(
+        &env,
+        &env.buyer,
+        "create_job",
+        json!({
+            "worker": env.agent.id(), "spec_hash": latest_check(), "fakes_hash": REFERENCE, "format_hash": OTHER,
+            "amount": ONE_NEAR.to_string(), "token": null,
+            "deadline": (now + 3_600 * SEC).to_string(), "verdict_window_secs": 1_800, "verifier_hash": VERIFIER,
+        }),
+        NearToken::from_millinear(50),
+    )
+    .await?
+    .into_result()?
+    .json()?;
+    link_refused(&env, &link(&env, bid, job).await?, "different format").await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn after_expiry_nobody_can_claim_and_anyone_can_close() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let now = env.sandbox.view_block().await?.timestamp();
+    let bid: u64 = on_board(
+        &env,
+        &env.buyer,
+        "post_bid",
+        json!({
+            "description": "Short.", "amount": ONE_NEAR.to_string(), "check_hash": OTHER,
+            "reference_hash": REFERENCE, "verifier_hash": VERIFIER, "format": "{}",
+            "expires_at": (now + 30 * SEC).to_string(), "reveal_agreed": true, "claim_window_secs": WINDOW,
+        }),
+        NearToken::from_millinear(100),
+    )
+    .await?
+    .into_result()?
+    .json()?;
+    review(&env, bid, true).await?.into_result()?;
+    let close = json!({ "bid_id": bid });
+    refused(&on_board(&env, &env.stranger, "close_bid", close.clone(), NONE).await?, "before it expires");
+    advance(&env, 40).await?;
+    refused(&claim(&env, &env.agent, bid).await?, "has expired");
+    on_board(&env, &env.stranger, "close_bid", close, NONE).await?.into_result()?;
+    assert_eq!(bid_of(&env, bid).await?["state"], "Cancelled");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_fee_payout_keeps_the_fee_held_and_can_be_settled_again() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    let job = judged(&env, bid, &env.agent, "fail").await?;
+    // The worker's account is gone, so the transfer to it fails.
+    env.agent
+        .clone()
+        .delete_account(env.stranger.id())
+        .await?
+        .into_result()?;
+    let board_before = balance(&env, env.board.as_account()).await?;
+    let result = settle_fee(&env, job).await?;
+    assert!(result.failures().iter().any(|_| true), "the transfer should have failed");
+    assert_eq!(fee_of(&env, job).await?["state"], "Held");
+    assert!(balance(&env, env.board.as_account()).await? >= board_before);
+    // Still held, so it cannot be lost, and nothing else can claim it.
+    settle_fee(&env, job).await?;
+    assert_eq!(fee_of(&env, job).await?["state"], "Held");
     Ok(())
 }

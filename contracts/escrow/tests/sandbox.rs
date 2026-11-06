@@ -250,7 +250,7 @@ async fn the_run_uses_exactly_what_the_job_fixed() -> anyhow::Result<()> {
     let input: serde_json::Value = serde_json::from_str(request["input_data"].as_str().unwrap())?;
     assert_eq!(
         input,
-        json!({ "mode": "verify", "escrow": env.escrow.id(), "job": id, "check_hash": SPEC, "deliverable_hash": DELIVERABLE })
+        json!({ "mode": "verify", "escrow": env.escrow.id(), "job": id, "format_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a", "check_hash": SPEC, "deliverable_hash": DELIVERABLE })
     );
     assert_eq!(
         request["secrets_ref"],
@@ -775,7 +775,7 @@ async fn the_pause_stops_only_new_jobs_and_new_funding() -> anyhow::Result<()> {
 
     // Nothing new comes in.
     let new_job = json!({
-        "worker": env.worker.id(), "spec_hash": SPEC, "fakes_hash": FAKES,
+        "worker": env.worker.id(), "spec_hash": SPEC, "fakes_hash": FAKES, "format_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "amount": one.as_yoctonear().to_string(), "token": null,
         "deadline": (now(&env).await? + 3_600 * SEC).to_string(),
         "verdict_window_secs": WINDOW_SECS, "verifier_hash": VERIFIER,
@@ -839,7 +839,7 @@ async fn the_pause_stops_only_new_jobs_and_new_funding() -> anyhow::Result<()> {
 async fn caps_refuse_money_coming_in_and_never_trap_money_going_out() -> anyhow::Result<()> {
     let env = setup().await?;
     let one = NearToken::from_near(1).as_yoctonear();
-    let caps = |job: u128, held: u128| json!({ "token": null, "max_job": job.to_string(), "max_held": held.to_string() });
+    let caps = |job: u128, held: u128| json!({ "token": null, "max_job": job.to_string(), "max_held": held.to_string(), "max_held_per_buyer": held.to_string() });
     assert_refused(
         &call(
             &env,
@@ -855,7 +855,7 @@ async fn caps_refuse_money_coming_in_and_never_trap_money_going_out() -> anyhow:
 
     // Over the per-job cap.
     let args = json!({
-        "worker": env.worker.id(), "spec_hash": SPEC, "fakes_hash": FAKES,
+        "worker": env.worker.id(), "spec_hash": SPEC, "fakes_hash": FAKES, "format_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "amount": (2 * one).to_string(), "token": null,
         "deadline": (now(&env).await? + 3_600 * SEC).to_string(),
         "verdict_window_secs": WINDOW_SECS, "verifier_hash": VERIFIER,
@@ -924,5 +924,77 @@ async fn a_failed_token_payout_keeps_counting_as_held_until_it_succeeds() -> any
     assert_eq!(state(&env, id).await?, "Released");
     let config: serde_json::Value = env.escrow.view("get_config").await?.json()?;
     assert_eq!(config["caps"][1]["held"], "0");
+    Ok(())
+}
+
+/// Upgrades a copy of the real mainnet escrow, with its real state, to this code. Needs the fixtures
+/// written by reading the chain; skipped without them.
+#[tokio::test]
+async fn the_deployed_mainnet_escrow_upgrades_with_its_jobs_intact() -> anyhow::Result<()> {
+    let Ok(old) = std::fs::read("tests/fixtures/mainnet-escrow.wasm") else {
+        eprintln!("skipped: no mainnet fixture");
+        return Ok(());
+    };
+    let values: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read("tests/fixtures/mainnet-state.json")?)?;
+    let sandbox = near_workspaces::sandbox().await?;
+    let escrow = sandbox.dev_deploy(&old).await?;
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    for entry in &values {
+        sandbox
+            .patch_state(
+                escrow.id(),
+                &b64.decode(entry["key"].as_str().unwrap())?,
+                &b64.decode(entry["value"].as_str().unwrap())?,
+            )
+            .await?;
+    }
+    let before: serde_json::Value = escrow.view("get_job").args_json(json!({ "job_id": 0 })).await?.json()?;
+    assert_eq!(before["state"], "Released");
+    let new = std::fs::read("target/near/proven_escrow.wasm")?;
+    let account = escrow.as_account().clone();
+    let upgraded = account.deploy(&new).await?.into_result()?;
+    // The new code cannot read the old state until the migration has run.
+    assert!(upgraded.view("get_config").await.is_err());
+    let cap = NearToken::from_millinear(200).as_yoctonear();
+    // Nobody else can run it.
+    let stranger = sandbox.dev_create_account().await?;
+    let refused = stranger
+        .call(upgraded.id(), "migrate")
+        .args_json(json!({ "max_held_per_buyer": cap.to_string() }))
+        .max_gas()
+        .transact()
+        .await?;
+    assert!(refused.is_failure());
+    upgraded
+        .call("migrate")
+        .args_json(json!({ "max_held_per_buyer": cap.to_string() }))
+        .max_gas()
+        .transact()
+        .await?
+        .into_result()?;
+    let config: serde_json::Value = upgraded.view("get_config").await?.json()?;
+    assert_eq!(config["owner"], "proven-ops.near");
+    assert_eq!(config["next_job_id"], 2);
+    assert_eq!(config["caps"][0]["max_job"], NearToken::from_millinear(100).as_yoctonear().to_string());
+    assert_eq!(config["caps"][0]["max_held"], NearToken::from_near(1).as_yoctonear().to_string());
+    assert_eq!(config["caps"][0]["held"], "0");
+    assert_eq!(config["caps"][0]["max_held_per_buyer"], cap.to_string());
+    for (id, state) in [(0, "Released"), (1, "Refunded")] {
+        let job: serde_json::Value = upgraded.view("get_job").args_json(json!({ "job_id": id })).await?.json()?;
+        assert_eq!(job["state"], state);
+        assert_eq!(job["format_hash"], "");
+        let earlier: serde_json::Value = if id == 0 { before.clone() } else { job.clone() };
+        assert_eq!(job["report_hash"], earlier["report_hash"]);
+    }
+    // A second run of the migration cannot work: the state is already in the new layout.
+    let again = upgraded
+        .call("migrate")
+        .args_json(json!({ "max_held_per_buyer": "1" }))
+        .max_gas()
+        .transact()
+        .await?;
+    assert!(again.is_failure());
     Ok(())
 }
