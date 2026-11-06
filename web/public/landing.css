@@ -83,26 +83,10 @@
   letter-spacing: -0.9px;
 }
 .lp-brand-mark {
-  display: inline-flex;
+  display: block;
   width: 30px;
   height: 30px;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(145deg, #7e73ff, #6156db);
-  color: white;
-  border-radius: 9px;
-  font-size: 24px;
-  line-height: 1;
-  font-weight: 700;
-  position: relative;
-  padding-bottom: 4px;
-}
-.lp-brand-mark span {
-  font-size: 10px;
-  position: absolute;
-  right: 4px;
-  top: 4px;
-  color: #efecff;
+  flex-shrink: 0;
 }
 .lp-button {
   display: inline-flex;
