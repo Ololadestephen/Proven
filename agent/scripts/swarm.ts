@@ -3,7 +3,8 @@
 //   node scripts/swarm.ts post <job-directory>
 //   node scripts/swarm.ts review <bid-id> [key-variable=NEARAI_KEY_REVIEW]
 //   node scripts/swarm.ts attempt <bid-id> <a|b> <job-directory> [key-variable=NEARAI_KEY_AGENT_<A|B>]
-import { appendFileSync } from "node:fs";
+//   node scripts/swarm.ts scripted-fake <bid-id> <a|b|c> <job-directory> <wrong-delivery-file>
+import { appendFileSync, readFileSync } from "node:fs";
 import { ROOT } from "../src/config.ts";
 import { publicMessage } from "../src/errors.ts";
 import { attempt, postBid, runReview } from "../src/swarm.ts";
@@ -33,7 +34,26 @@ async function main() {
       log,
     );
   }
-  throw new Error("Usage: swarm.ts post|review|attempt");
+  if (command === "scripted-fake") {
+    const evidence = `${ROOT}runs/swarm-bid-${first}-${second}-scripted.jsonl`;
+    return attempt(
+      Number(first),
+      second,
+      third,
+      "NEARAI_KEY_AGENT_B",
+      (step, detail) => {
+        const line = JSON.stringify({
+          at: new Date().toISOString(),
+          step,
+          detail,
+        });
+        appendFileSync(evidence, `${line}\n`);
+        console.log(line);
+      },
+      readFileSync(fourth, "utf8"),
+    );
+  }
+  throw new Error("Usage: swarm.ts post|review|attempt|scripted-fake");
 }
 
 main()

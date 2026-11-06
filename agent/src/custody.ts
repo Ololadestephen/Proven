@@ -16,6 +16,10 @@ const CAPABILITIES = [
 /** The bid board. It holds no job money, so a wallet may also call it. */
 export const BOARD = process.env.PROVEN_BOARD ?? "board-v2.proven.testnet";
 
+/** Mainnet stays at 1 NEAR a day. The testnet buyer was raised by the owner to finish the gate runs. */
+const maxDaily = () =>
+  process.env.NEAR_NETWORK === "mainnet" ? 10n ** 24n : 3n * 10n ** 24n;
+
 /** A readable-policy check is defense in depth; the TEE must enforce its on-chain policy too. */
 export function assertPolicy(value: unknown, escrow: string): void {
   const p = value as {
@@ -56,7 +60,7 @@ export function assertPolicy(value: unknown, escrow: string): void {
     !daily ||
     !/^\d+$/.test(daily) ||
     BigInt(daily) <= 0n ||
-    BigInt(daily) > 10n ** 24n ||
+    BigInt(daily) > maxDaily() ||
     CAPABILITIES.some(
       (name) =>
         p.capabilities?.[name]?.allowed !== false && !relaySigning(name, p),
@@ -270,7 +274,7 @@ export async function custodyCall(
   }
   if (!response.ok)
     throw new PublicError(
-      "Custody answered with an error, but the call may still have landed. Read the on-chain state before doing anything else; no automatic retry was made.",
+      `Custody answered with HTTP ${response.status}, but the call may still have landed. Read the on-chain state before doing anything else; no automatic retry was made.`,
     );
   return custodyTransaction(api, key, body);
 }

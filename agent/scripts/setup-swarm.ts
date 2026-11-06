@@ -101,10 +101,15 @@ async function storePolicy(
   key: string,
   account: string,
   capabilities: Record<string, unknown> = {},
+  dailyNative?: string,
 ): Promise<string> {
   const stored = JSON.parse(
     readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
-  ) as { capabilities: Record<string, unknown> };
+  ) as {
+    capabilities: Record<string, unknown>;
+    rules: { limits: { daily: { native: string } } };
+  };
+  if (dailyNative) stored.rules.limits.daily.native = dailyNative;
   const policy = {
     ...stored,
     capabilities: { ...stored.capabilities, ...capabilities },
@@ -221,6 +226,21 @@ async function reviewerKey() {
   });
 }
 
+/** The owner's decision for the gate runs: testnet buyer only, with the per-call limit unchanged. */
+async function raiseTestnetBuyerDaily() {
+  await once("testnet_buyer_daily_3_near", () =>
+    storePolicy(
+      env.PROVEN_BUYER_WALLET_ID!,
+      env.PROVEN_BUYER_CUSTODY_KEY!,
+      env.PROVEN_BUYER_ACCOUNT_ID!,
+      {
+        sign_message: { allowed: true, allowed_recipients: [RELAY_RECIPIENT] },
+      },
+      (3n * 10n ** 24n).toString(),
+    ),
+  );
+}
+
 /** Moves existing wallets and the review key to the new escrow and board. Run after those deploy. */
 async function moveToNewContracts() {
   await once("v3_buyer_policy", () =>
@@ -285,6 +305,8 @@ async function main() {
     throw new PublicError("The owner-approved testnet setup flag is required.");
   if (process.argv[3] === "--move-to-new-contracts")
     return moveToNewContracts();
+  if (process.argv[3] === "--raise-testnet-buyer-daily")
+    return raiseTestnetBuyerDaily();
   await once("buyer_policy", () =>
     storePolicy(
       env.PROVEN_BUYER_WALLET_ID!,

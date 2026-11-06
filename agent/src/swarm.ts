@@ -250,6 +250,8 @@ export async function attempt(
   jobDir: string,
   keyName: string,
   log: (step: string, detail: unknown) => void,
+  /** A fixed wrong delivery instead of a model's work. Always logged and labelled as scripted. */
+  scriptedDeliverable?: string,
 ) {
   const agent = agentFiles(letter);
   const { wallet: buyerWallet, config: buyerConfig } = buyer();
@@ -380,6 +382,13 @@ export async function attempt(
         );
         if (refusal)
           throw new PublicError(`The agent did not start: ${refusal}.`);
+        if (scriptedDeliverable !== undefined) {
+          writeFileSync(deliverablePath, scriptedDeliverable, { mode: 0o600 });
+          log("scripted_wrong_delivery", {
+            note: "Scripted by the operator, not model work",
+            hash: sha256(scriptedDeliverable),
+          });
+        }
         if (!existsSync(deliverablePath)) {
           const key = env()[keyName];
           if (!key) throw new PublicError(`${keyName} is not set.`);
