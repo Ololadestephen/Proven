@@ -24,6 +24,8 @@ sudo mkdir -p /opt/proven/runs
 [ -f "$SRC/.hosted.env" ] && sudo install -m 640 -o root -g proven-hosted "$SRC/.hosted.env" /etc/proven/hosted.env
 [ -f "$SRC/.web-flags" ] && sudo install -m 640 -o root -g proven-web "$SRC/.web-flags" /etc/proven/web-flags
 rm -f "$SRC/.env" "$SRC/.relay.env" "$SRC/.hosted.env"
+sudo chgrp proven-web /opt/proven/.env
+sudo chmod 640 /opt/proven/.env
 sudo chown -R proven-web:proven-web /opt/proven/runs
 sudo chmod 700 /opt/proven/runs
 sudo chown proven-relay:proven-relay /var/lib/proven/relay
