@@ -248,4 +248,53 @@
 .landing-page > .lp-header {
   background: var(--navy);
   color: white;
+  position: sticky;
+  min-height: 79px;
+  top: 0;
+  z-index: 15;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+.landing-page .lp-header .lp-nav {
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    border-radius 180ms ease,
+    transform 180ms ease;
+}
+.landing-page > .lp-header.is-scrolled {
+  background: transparent;
+  border-color: transparent;
+}
+.landing-page .is-scrolled .lp-nav {
+  background: #fff;
+  color: #202530;
+  border: 1px solid #e7e5ef;
+  border-radius: 100px;
+  padding-inline: 20px 10px;
+  box-shadow: 0 8px 32px #0d10291a;
+  transform: translateY(12px);
+}
+.landing-page .is-scrolled .lp-button-small {
+  background: #6554ed;
+  color: #fff;
+  border-color: #6554ed;
+}
+@media (max-width: 620px) {
+  .landing-page > .lp-header {
+    min-height: 71px;
+  }
+  .landing-page .is-scrolled .lp-nav {
+    padding-inline: 14px 8px;
+    transform: translateY(8px);
+    height: 62px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-page > .lp-header,
+  .landing-page .lp-header .lp-nav {
+    transition: none;
+  }
 }

@@ -118,3 +118,15 @@ if (cta)
 
 const navigation = document.getElementById("workspace-navigation");
 if (navigation) createRoot(navigation).render(<AnimatedList />);
+
+// Keep the header in its original layout slot while its navigation floats on scroll.
+const landingHeader = document.querySelector<HTMLElement>(
+  ".landing-page > .lp-header",
+);
+if (landingHeader) {
+  const syncHeader = () =>
+    landingHeader.classList.toggle("is-scrolled", window.scrollY > 40);
+  syncHeader();
+  window.addEventListener("scroll", syncHeader, { passive: true });
+  window.addEventListener("pageshow", syncHeader);
+}
