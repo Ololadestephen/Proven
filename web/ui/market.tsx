@@ -318,7 +318,9 @@ function PostJob({
       <p className="market-note">
         Only work a program can check. The description is public. The check and
         reference stay in this browser and go to the relay only after the chain
-        fixes their hashes.
+        fixes their hashes. Keep about 0.3 NEAR free when you run the challenge
+        or verification: the run takes 0.1 NEAR and the network holds some for
+        gas, and nearly all of it comes back.
       </p>
       <label>
         Description (public, up to 2 KB)

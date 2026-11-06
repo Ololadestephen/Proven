@@ -2,11 +2,15 @@
 
 The market and relay run on one boxd machine, `proven`, with 1 vCPU and 4 GB. The files are in `deploy/boxd/`. Opening the site to the public needs the owner's yes.
 
-**What the server holds.** `node deploy/boxd/make-env.mjs` writes a short `.env` with three secrets, and no others: the key of `relay.proven.testnet`, a small account of its own that pins private inputs; a reviewer key that can only call `record_review` on the board; and a NEAR AI review key with its own spend limit. It has no buyer, worker, custody, mainnet or escrow owner key. It can read private checks, references and deliveries, as any relay operator can, but it has no way to post a verdict.
+**What the server holds.** `node deploy/boxd/make-env.mjs` writes two short env files. `.relay.env`, for the relay only, holds the key of `relay.proven.testnet`, a small account of its own that pins private inputs. `.env`, for the web server and its review step, holds a reviewer key that can only call `record_review` on the board and a NEAR AI review key. There is no buyer, worker, custody, mainnet or escrow owner key. The server can read private checks, references and deliveries, as any relay operator can, but it has no way to post a verdict.
 
-**Install.** Unpack a `git archive` of the commit into `~/proven`, copy the short `.env` there, and run `bash deploy/boxd/setup.sh`. The two systemd services then answer on `127.0.0.1:4173` only, and the public address stays closed.
+**Known limits of this setup.** Both services run as one user, so a compromise of the web process could read the relay key and the private texts. That is acceptable for testnet and must change before real users. Anyone can use up the review credit: the spend is capped, and once the cap is reached reviews stop for everyone and new bids stay closed, with no money at risk. Each pin locks about 0.07 NEAR of the relay's own until its run ends or an hour passes, so many accounts pinning at once can stop new pins for a while. The deposits come back.
+
+**Install.** Unpack a `git archive` of the commit into `~/proven`, copy `runs/private/boxd.env` there as `.env` and `runs/private/boxd-relay.env` as `.relay.env`, and run `bash deploy/boxd/setup.sh`. The two systemd services then answer on `127.0.0.1:4173` only, and the public address stays closed.
 
 **Standby.** The machine sleeps after 10 minutes without an incoming connection (`--auto-suspend-timeout=600 --idle-ignore-outbound`), and hibernation is off. Outgoing traffic must not count as activity, or the relay's five-minute sweep would keep it awake forever. While it sleeps nothing runs, so finished private inputs are cleaned up only when it next wakes, and a sweep runs within five minutes of waking.
+
+**Before opening, and again after.** Check that port 4173 cannot be reached directly on the machine's public address, and what the boxd proxy sends in `X-Forwarded-For`, because the per-client write limit depends on it. A global write limit holds either way.
 
 **Open.** These steps need the owner's yes each time:
 
