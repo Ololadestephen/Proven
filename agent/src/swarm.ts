@@ -127,11 +127,16 @@ export function agentFiles(letter: string): AgentFiles {
   };
 }
 
-export async function postBid(jobDir: string) {
+export async function postBid(
+  jobDir: string,
+  checkFile = "check.json",
+  referenceFile = "reference.json",
+) {
   const { wallet, config } = buyer();
   const description = readFileSync(`${ROOT}${jobDir}/task.txt`, "utf8");
-  const check = readFileSync(`${ROOT}${jobDir}/check.json`, "utf8");
-  const reference = readFileSync(`${ROOT}${jobDir}/reference.json`, "utf8");
+  // The exact text can be on one bid only, so each posting of an example differs by a trailing space.
+  const check = `${readFileSync(`${ROOT}${jobDir}/${checkFile}`, "utf8")}${" ".repeat(Date.now() % 100_000)}`;
+  const reference = readFileSync(`${ROOT}${jobDir}/${referenceFile}`, "utf8");
   const { verifier, format } = JSON.parse(check) as {
     verifier: string;
     format: string;

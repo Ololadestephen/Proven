@@ -10,6 +10,7 @@ import { loadConfig, ROOT } from "../config.ts";
 import { publicMessage } from "../errors.ts";
 import { fetchPrices, Ledger, ModelClient } from "../inference.ts";
 import { KeyPool, keysFrom } from "../key-pool.ts";
+import { healthReport, telegramNotifier } from "./health.ts";
 import { addAgent, agentStatus, terms, withdraw, type ApiDeps } from "./api.ts";
 import {
   AGENT_LIMIT_NANO_USD,
@@ -157,12 +158,13 @@ function json(
   res.end(JSON.stringify(body));
 }
 
-export function serve(api: ApiDeps) {
+export function serve(api: ApiDeps, health: () => Promise<unknown>) {
   return createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://hosted");
       if (req.method === "GET") {
         if (url.pathname === "/terms") return json(res, 200, terms(api));
+        if (url.pathname === "/health") return json(res, 200, await health());
         if (url.pathname === "/agents")
           return json(res, 200, api.store.inOrder().map(publicView));
         const agent = /^\/agents\/([a-z0-9._-]{2,64})$/.exec(url.pathname);
@@ -193,7 +195,33 @@ export function serve(api: ApiDeps) {
 
 if (import.meta.main) {
   const { api, runner } = await buildDeps();
-  serve(api).listen(PORT, "127.0.0.1", () =>
+  const treasuryId = process.env.HOSTED_TREASURY_ACCOUNT_ID!;
+  const notify = telegramNotifier(
+    process.env.HOSTED_TELEGRAM_TOKEN,
+    process.env.HOSTED_TELEGRAM_CHAT,
+  );
+  const health = async () =>
+    healthReport({
+      config: api.config,
+      balance: api.balance,
+      balances: [
+        { name: "The treasury", account: treasuryId, minimum: 10n ** 23n },
+        ...(process.env.RELAY_ACCOUNT_ID
+          ? [
+              {
+                name: "The relay",
+                account: process.env.RELAY_ACCOUNT_ID,
+                minimum: 15n * 10n ** 22n,
+              },
+            ]
+          : []),
+      ],
+      spentNanoUsd: api.ledger
+        .rows()
+        .reduce((sum, row) => sum + row.cost_nano_usd, 0),
+      limitNanoUsd: PROJECT_LIMIT_NANO_USD,
+    });
+  serve(api, health).listen(PORT, "127.0.0.1", () =>
     console.log(`Hosted agents service on 127.0.0.1:${PORT}.`),
   );
   let running = false;
@@ -210,4 +238,10 @@ if (import.meta.main) {
   };
   void pass();
   setInterval(() => void pass(), PASS_EVERY_MS);
+  const check = () =>
+    health()
+      .then((report) => notify(report.alerts))
+      .catch((error: unknown) => console.error(publicMessage(error)));
+  void check();
+  setInterval(() => void check(), 300_000);
 }

@@ -66,6 +66,15 @@ export function AgentsPage({
   const add = () =>
     run("Adding the agent", async () => {
       if (!wallet) throw new Error("Connect a wallet first.");
+      if (!terms?.treasury) throw new Error("The terms have not loaded.");
+      const paid =
+        setup ||
+        (await wallet.transfer(
+          terms.treasury,
+          BigInt(Math.round(terms.setup_fee_near * 1000)) * 10n ** 21n,
+        ));
+      // Kept, so a failed signature does not mean paying twice.
+      setSetup(paid);
       const sorted = [...skills].sort().join(",");
       const payload = await sha256(`${prompt}\0${knowledge}\0${sorted}`);
       const reply = await api<{
@@ -78,7 +87,7 @@ export function AgentsPage({
         prompt,
         knowledge,
         skills,
-        setup_transaction: setup.trim(),
+        setup_transaction: paid,
         auth: await signedFor(wallet, "add_agent", payload),
       });
       setResult(
@@ -160,20 +169,19 @@ export function AgentsPage({
             </label>
           ))}
         </fieldset>
-        <label>
-          Setup payment: send {terms?.setup_fee_near ?? "…"} {COIN} to{" "}
-          {terms?.treasury ?? "the treasury"} from this wallet, then paste that
-          transaction’s hash
-          <input value={setup} onChange={(e) => setSetup(e.target.value)} />
-        </label>
         <button
           type="button"
           className="button button-primary"
-          disabled={busy || !wallet || !prompt || !setup}
+          disabled={busy || !wallet || !prompt || !terms?.treasury}
           onClick={() => void add()}
         >
-          Add this agent
+          Pay the {terms?.setup_fee_near ?? "…"} {COIN} setup fee and add this
+          agent
         </button>
+        <p className="market-note">
+          Your wallet asks you to approve the payment, then to sign the request.
+          The setup fee is not refunded, even if the review keeps the agent out.
+        </p>
       </section>
       <section className="workspace-card">
         <h2>Agents, in the order they take jobs</h2>

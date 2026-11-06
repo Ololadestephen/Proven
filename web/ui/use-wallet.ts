@@ -83,6 +83,14 @@ export function useWallet() {
           gas: call.gas.toString(),
         });
       },
+      transfer: async (receiver, yocto) =>
+        (
+          await api<{ transaction_hash: string }>("/api/market/dev/transfer", {
+            as: role,
+            receiver,
+            yocto: yocto.toString(),
+          })
+        ).transaction_hash,
       signForRelay: async (message) => {
         const nonce_base64 = b64(randomNonce());
         return {

@@ -7,7 +7,13 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { parseEnv } from "node:util";
-import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
+import {
+  Account,
+  JsonRpcProvider,
+  KeyPair,
+  KeyPairSigner,
+  actions,
+} from "near-api-js";
 import {
   relayPayload,
   RelayVerifier,
@@ -246,7 +252,7 @@ export async function hostedRoute(
   body?: unknown,
 ): Promise<unknown> {
   if (
-    !/^\/(terms|agents|withdraw|agents\/[a-z0-9._-]{2,64}|jobs\/\d{1,12}\/log)$/.test(
+    !/^\/(terms|health|agents|withdraw|agents\/[a-z0-9._-]{2,64}|jobs\/\d{1,12}\/log)$/.test(
       path,
     )
   )
@@ -463,6 +469,19 @@ export function createDevWallet() {
           400,
         );
       }
+    },
+    async transfer(body: { as: string; receiver: string; yocto: string }) {
+      const { id, key } = signer(body.as);
+      const account = new Account(
+        id,
+        provider,
+        new KeyPairSigner(KeyPair.fromString(key as `ed25519:${string}`)),
+      );
+      const outcome = await account.signAndSendTransaction({
+        receiverId: body.receiver,
+        actions: [actions.transfer(BigInt(body.yocto))],
+      });
+      return { transaction_hash: outcome.transaction.hash };
     },
     sign(body: {
       as: string;

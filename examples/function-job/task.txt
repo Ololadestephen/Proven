@@ -1,0 +1,1 @@
+Write a WebAssembly function named vat that takes two i64 arguments, net (an amount in cents) and rate (basis points), and returns the VAT in cents, rounded half up. Amounts under 100 cents carry no VAT, so return 0 for them. Deliver one JSON object {"wasm_base64":"<the module>"}.

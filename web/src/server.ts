@@ -193,6 +193,8 @@ async function marketRoute(
   if (review) return reviewRoute(Number(review[1]), body.auth as never);
   if (devWallet && path === "/api/market/dev/call")
     return devWallet.call(body as never);
+  if (devWallet && path === "/api/market/dev/transfer")
+    return devWallet.transfer(body as never);
   if (devWallet && path === "/api/market/dev/sign")
     return devWallet.sign(body as never);
   throw new ReadError("Route not found.", 404);
@@ -232,7 +234,9 @@ async function serveRead(
 }
 
 export function isAppPath(path: string) {
-  return /^\/app(?:\/|\/(?:market|jobs|post|agents)|\/bids\/[0-9]{1,10})?$/.test(path);
+  return /^\/app(?:\/|\/(?:market|jobs|post|agents)|\/bids\/[0-9]{1,10})?$/.test(
+    path,
+  );
 }
 
 /** Loopback only. Optional fixed demo launcher; no wallet or arbitrary command routes. */

@@ -14,8 +14,17 @@ import { postBid, runReview } from "../src/swarm.ts";
 import type { Job } from "../src/types.ts";
 
 const env = parseEnv(readFileSync(`${ROOT}.env`, "utf8"));
-const wallet = env.PROVEN_AGENT_ACCOUNT_ID;
-if (!wallet || !env.PROVEN_AGENT_CUSTODY_KEY)
+const wallet =
+  process.env.PROVEN_AGENT_ACCOUNT_ID ?? env.PROVEN_AGENT_ACCOUNT_ID;
+// A code job: the delivery is a compiled function, standing in for what an agent's own coding tools make.
+const codeJob = process.argv.includes("--code-job");
+const jobDir = codeJob ? "examples/function-job" : "examples/swarm-job";
+const checkFile = codeJob ? "check-strong.json" : "check.json";
+const referenceFile = codeJob ? "challenge-reference.json" : "reference.json";
+if (
+  !wallet ||
+  !(process.env.PROVEN_AGENT_CUSTODY_KEY ?? env.PROVEN_AGENT_CUSTODY_KEY)
+)
   throw new Error(
     "Set PROVEN_AGENT_ACCOUNT_ID and PROVEN_AGENT_CUSTODY_KEY in .env.",
   );
@@ -108,7 +117,7 @@ log(
 );
 
 // Resume a job already delivered: node scripts/mcp-agent-test.ts <bid> <job>
-if (process.argv[3]) {
+if (process.argv[3] && !codeJob) {
   const bid = Number(process.argv[2]);
   const job = Number(process.argv[3]);
   const run = await tool<{ transaction_hash?: string; job?: Job }>(
@@ -143,8 +152,10 @@ if (process.argv[3]) {
 }
 
 // The buyer posts, separately.
-const existing = process.argv[2];
-const posted = existing ? null : await postBid("examples/swarm-job");
+const existing = codeJob ? undefined : process.argv[2];
+const posted = existing
+  ? null
+  : await postBid(jobDir, checkFile, referenceFile);
 const bidId = existing ? Number(existing) : (posted?.bid_id as number);
 if (!existing) {
   const reviewed = await runReview(bidId, "NEARAI_KEY_REVIEW");
@@ -181,11 +192,8 @@ if (onChain.claim?.agent !== wallet)
 
 // The buyer's side: the worker and amount come from the chain.
 const config = loadConfig("buyer");
-const check = readFileSync(`${ROOT}examples/swarm-job/check.json`, "utf8");
-const reference = readFileSync(
-  `${ROOT}examples/swarm-job/reference.json`,
-  "utf8",
-);
+const check = readFileSync(`${ROOT}${jobDir}/${checkFile}`, "utf8");
+const reference = readFileSync(`${ROOT}${jobDir}/${referenceFile}`, "utf8");
 let linked = onChain.claim?.job_id ?? null;
 if (linked === null) {
   const job = (await executeTool(
@@ -252,23 +260,32 @@ if (status.state !== "Funded" || status.worker !== wallet)
 const bid = await tool<{ description: string }>("bid_status", {
   bid_id: bidId,
 });
-const work = await doWork(
-  new ModelClient(
-    new Ledger(`${ROOT}runs/inference-ledger.jsonl`),
-    await fetchPrices(),
-  ),
-  {
-    id: "mcp-agent",
-    prompt: "Follow the task's rules exactly.",
-    knowledge: "",
-    key: env.NEARAI_KEY_AGENT_B ?? "",
-    limitNanoUsd: 30_000_000,
-  },
-  bid.description,
-  "mcp-agent-work",
-  `bid-${bidId}`,
-);
+const work = codeJob
+  ? {
+      deliverable: readFileSync(`${ROOT}${jobDir}/honest.json`, "utf8").trim(),
+      refusal: null,
+      call: { costNanoUsd: 0 },
+    }
+  : await doWork(
+      new ModelClient(
+        new Ledger(`${ROOT}runs/inference-ledger.jsonl`),
+        await fetchPrices(),
+      ),
+      {
+        id: "mcp-agent",
+        prompt: "Follow the task's rules exactly.",
+        knowledge: "",
+        key: env.NEARAI_KEY_AGENT_B ?? "",
+        limitNanoUsd: 30_000_000,
+      },
+      bid.description,
+      "mcp-agent-work",
+      `bid-${bidId}`,
+    );
 log("work_stand_in", {
+  kind: codeJob
+    ? "a compiled function from a file, standing in for an agent's own coding tools"
+    : "model",
   usd: usd(work.call.costNanoUsd),
   refusal: work.refusal,
 });

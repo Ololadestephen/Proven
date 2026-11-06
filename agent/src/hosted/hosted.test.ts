@@ -15,6 +15,7 @@ import {
 } from "./limits.ts";
 import { doHostedWork, parseSkillRequest } from "./work.ts";
 import { claimRefusal } from "./runner.ts";
+import { stuckReason, telegramNotifier } from "./health.ts";
 import type { CallResult } from "../inference.ts";
 import type { Bid } from "../board.ts";
 import type { HostedAgent } from "./store.ts";
@@ -255,4 +256,47 @@ test("agents take only bids they can do, and never their owner's", () => {
     claimRefusal(bid({ allowed_workers: ["x"] }), agent(), 1n, enough),
     "not on this bid's list",
   );
+});
+
+test("a job is called stuck only once anyone could really expire it", () => {
+  const job = (over: Record<string, unknown>) =>
+    ({
+      state: "Funded",
+      deadline: "100",
+      delivered_at: "50",
+      verdict_window_secs: 1,
+      run_started_at: "60",
+      ...over,
+    }) as never;
+  assert.equal(stuckReason(job({}), 50n), null);
+  assert.match(stuckReason(job({}), 101n) ?? "", /deadline/);
+  assert.equal(stuckReason(job({ state: "Delivered" }), 60n), null);
+  assert.match(
+    stuckReason(job({ state: "Delivered" }), 2_000_000_000n) ?? "",
+    /verdict/,
+  );
+  assert.equal(stuckReason(job({ state: "Verifying" }), 2_000_000_000n), null);
+  assert.match(
+    stuckReason(job({ state: "Verifying" }), 1_000_000_000_000n) ?? "",
+    /never finished/,
+  );
+  assert.equal(
+    stuckReason(job({ state: "Released" }), 1_000_000_000_000n),
+    null,
+  );
+});
+
+test("each alert goes out once a day, and nothing is sent without a bot set up", async () => {
+  const sent: string[] = [];
+  const fake = (async (_url: string, init: { body: string }) => {
+    sent.push(init.body);
+    return new Response("{}");
+  }) as unknown as typeof fetch;
+  const alert = { kind: "low_balance" as const, detail: "x" };
+  assert.equal(await telegramNotifier(undefined, undefined, fake)([alert]), 0);
+  const notify = telegramNotifier("t", "c", fake);
+  assert.equal(await notify([alert], 1000), 1);
+  assert.equal(await notify([alert], 2000), 0);
+  assert.equal(await notify([alert], 90_000_000), 1);
+  assert.equal(sent.length, 2);
 });

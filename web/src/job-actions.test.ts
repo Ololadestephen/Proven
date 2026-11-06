@@ -53,6 +53,9 @@ function fixture(t: TestContext) {
       };
     },
     async signOut() {},
+    async transfer() {
+      return "fixture-hash";
+    },
   };
   const bid: MarketBid = {
     id: BID_ID,

@@ -79,6 +79,21 @@ export function adaptWallet(
           "The wallet did not confirm a successful transaction. Check the chain before retrying.",
         );
     },
+    async transfer(receiver, yocto) {
+      await checkAccount();
+      const outcome = await chosen.signAndSendTransaction({
+        network: NETWORK,
+        signerId: accountId,
+        receiverId: receiver,
+        actions: [{ type: "Transfer", params: { deposit: yocto.toString() } }],
+      });
+      const hash = outcome?.transaction?.hash;
+      if (!hash)
+        throw new Error(
+          "The wallet did not confirm this payment. Check its history.",
+        );
+      return hash;
+    },
     async signForRelay(message) {
       await checkAccount();
       const nonce = randomNonce();
