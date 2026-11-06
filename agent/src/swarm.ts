@@ -37,6 +37,8 @@ export const AGENT_TOOLS = JSON.stringify(["submit_deliverable"]);
 const CLAIM_WINDOW_SECS = 1_800;
 const POLL_MS = 15_000;
 const POLLS = 40;
+/** Longer than one model call can take, plus time to deliver. */
+const MIN_WORK_NANOS = 420_000_000_000n;
 
 const pause = () =>
   new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
@@ -53,8 +55,11 @@ export function workRefusal(
   jobId: number,
   job: Job,
   wallet: string,
+  now: bigint,
 ): string | null {
   if (job.state !== "Funded") return "the job is not funded";
+  if (now + MIN_WORK_NANOS >= BigInt(job.deadline))
+    return "too little time is left before the job's deadline";
   if (job.worker !== wallet) return "the job names a different worker";
   if (job.token !== null || job.amount !== bid.amount)
     return "the job pays something other than the bid";
@@ -185,7 +190,8 @@ export async function runReview(bidId: number, keyName: string) {
   const after = await board.bid(bidId);
   return {
     ...summary,
-    recorded: true,
+    recorded:
+      (outcome.status as { SuccessValue?: string }).SuccessValue !== undefined,
     transaction_hash: outcome.transaction.hash,
     state: after?.state,
   };
@@ -296,7 +302,7 @@ export async function attempt(
     return job;
   };
 
-  const privateDir = `${ROOT}runs/private/bid-${bidId}-${letter.toLowerCase()}`;
+  const privateDir = `${ROOT}runs/private/job-${jobId}-${letter.toLowerCase()}`;
   mkdirSync(privateDir, { recursive: true, mode: 0o700 });
   const deliverablePath = `${privateDir}/deliverable.json`;
 
@@ -333,7 +339,13 @@ export async function attempt(
         break;
       }
       case "Funded": {
-        const refusal = workRefusal(await readBid(), jobId, job, account);
+        const refusal = workRefusal(
+          await readBid(),
+          jobId,
+          job,
+          account,
+          await board.now(),
+        );
         if (refusal)
           throw new PublicError(`The agent did not start: ${refusal}.`);
         if (!existsSync(deliverablePath)) {

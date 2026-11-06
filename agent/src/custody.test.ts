@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { BOARD, assertPolicy, custodyCall, custodyTransaction } from "./custody.ts";
+import {
+  BOARD,
+  assertPolicy,
+  custodyCall,
+  custodyTransaction,
+} from "./custody.ts";
 import { publicMessage } from "./errors.ts";
 
 const escrow = "escrow-v2.proven.testnet";

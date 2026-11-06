@@ -97,7 +97,8 @@ export async function fetchPrices(
   fetcher: typeof fetch = fetch,
 ): Promise<Map<string, ModelPrice>> {
   const response = await fetcher(`${API}/model/list`);
-  if (!response.ok) throw new PublicError("The model price list is unavailable.");
+  if (!response.ok)
+    throw new PublicError("The model price list is unavailable.");
   const body = (await response.json()) as {
     models?: Array<{
       modelId?: string;
@@ -143,7 +144,8 @@ export class ModelClient {
     const model = request.model ?? DEFAULT_MODEL;
     const price = this.prices.get(model);
     if (!price) throw new PublicError(`Model ${model} has no listed price.`);
-    if (!price.verifiable) throw new PublicError(`Model ${model} is not verifiable.`);
+    if (!price.verifiable)
+      throw new PublicError(`Model ${model} is not verifiable.`);
     const body = JSON.stringify({
       model,
       messages: request.messages,
@@ -152,10 +154,17 @@ export class ModelClient {
       thinking_token_budget: THINKING_BUDGET,
     });
     // Tokens are roughly 4 bytes each; counting every byte as a token stays on the safe side.
-    const worst = body.length * price.inputNanoUsd + request.maxOutputTokens * price.outputNanoUsd;
+    const worst =
+      body.length * price.inputNanoUsd +
+      request.maxOutputTokens * price.outputNanoUsd;
     if (request.limitNanoUsd !== undefined) {
-      if (this.ledger.spentNanoUsd(request.spender) + worst > request.limitNanoUsd) {
-        throw new PublicError(`${request.spender} has reached its inference limit.`);
+      if (
+        this.ledger.spentNanoUsd(request.spender) + worst >
+        request.limitNanoUsd
+      ) {
+        throw new PublicError(
+          `${request.spender} has reached its inference limit.`,
+        );
       }
     }
     const requestHash = sha256(body);
@@ -200,12 +209,16 @@ export class ModelClient {
     const responseHash = sha256(bytes);
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as {
       id?: string;
-      choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
+      choices?: Array<{
+        message?: { content?: string | null };
+        finish_reason?: string | null;
+      }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     const inputTokens = parsed.usage?.prompt_tokens ?? 0;
     const outputTokens = parsed.usage?.completion_tokens ?? 0;
-    const costNanoUsd = inputTokens * price.inputNanoUsd + outputTokens * price.outputNanoUsd;
+    const costNanoUsd =
+      inputTokens * price.inputNanoUsd + outputTokens * price.outputNanoUsd;
     this.ledger.append({
       ...row(response.status),
       input_tokens: inputTokens,
@@ -245,7 +258,9 @@ function errorCode(bytes: Uint8Array): string {
       error?: { type?: unknown; code?: unknown };
     };
     const code = body.error?.code ?? body.error?.type;
-    return typeof code === "string" && /^[a-z0-9_.-]{1,64}$/i.test(code) ? code : "unknown";
+    return typeof code === "string" && /^[a-z0-9_.-]{1,64}$/i.test(code)
+      ? code
+      : "unknown";
   } catch {
     return "unknown";
   }

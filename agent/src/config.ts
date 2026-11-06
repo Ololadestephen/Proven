@@ -28,7 +28,12 @@ export function loadConfig(selected?: Actor): Config {
   if ((get("NEAR_NETWORK") ?? "testnet") !== "testnet")
     throw new PublicError("This agent interface supports testnet only.");
   const actor = selected ?? get("PROVEN_ACTOR") ?? "buyer";
-  if (actor !== "buyer" && actor !== "honest" && actor !== "fake" && actor !== "agent")
+  if (
+    actor !== "buyer" &&
+    actor !== "honest" &&
+    actor !== "fake" &&
+    actor !== "agent"
+  )
     throw new PublicError("Invalid actor.");
   const escrow = accountId(
     get("ESCROW_CONTRACT") ?? "escrow-v2.proven.testnet",

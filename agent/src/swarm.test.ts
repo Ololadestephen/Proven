@@ -25,6 +25,7 @@ const job = (over: Partial<Job> = {}): Job =>
     worker: "agent.testnet",
     token: null,
     amount: "10",
+    deadline: "1000000000000",
     ...over,
   }) as Job;
 
@@ -42,26 +43,37 @@ test("the buyer funds only an active claim linked to this job, with time left", 
 });
 
 test("the agent starts only on a funded job naming it, for this bid", () => {
-  assert.equal(workRefusal(bid(), 7, job(), "agent.testnet"), null);
+  assert.equal(workRefusal(bid(), 7, job(), "agent.testnet", 0n), null);
   assert.match(
-    workRefusal(bid(), 7, job({ state: "Challenged" }), "agent.testnet") ?? "",
+    workRefusal(bid(), 7, job({ state: "Challenged" }), "agent.testnet", 0n) ??
+      "",
     /not funded/,
   );
   assert.match(
-    workRefusal(bid(), 7, job({ worker: "other.testnet" }), "agent.testnet") ??
-      "",
+    workRefusal(
+      bid(),
+      7,
+      job({ worker: "other.testnet" }),
+      "agent.testnet",
+      0n,
+    ) ?? "",
     /different worker/,
   );
   assert.match(
-    workRefusal(bid(), 7, job({ amount: "1" }), "agent.testnet") ?? "",
+    workRefusal(bid(), 7, job({ amount: "1" }), "agent.testnet", 0n) ?? "",
     /other than the bid/,
   );
   assert.match(
-    workRefusal(bid(), 7, job({ token: "usd.testnet" }), "agent.testnet") ?? "",
+    workRefusal(bid(), 7, job({ token: "usd.testnet" }), "agent.testnet", 0n) ??
+      "",
     /other than the bid/,
   );
   assert.match(
-    workRefusal(bid(), 8, job(), "agent.testnet") ?? "",
+    workRefusal(bid(), 7, job(), "agent.testnet", 600_000_000_000n) ?? "",
+    /too little time/,
+  );
+  assert.match(
+    workRefusal(bid(), 8, job(), "agent.testnet", 0n) ?? "",
     /not linked/,
   );
 });

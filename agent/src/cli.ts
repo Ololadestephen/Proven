@@ -14,7 +14,10 @@ export interface ToolService {
   executeTool(
     name: string,
     args: unknown,
-    options?: { actor?: "buyer" | "honest" | "fake" | "agent"; dryRun?: boolean },
+    options?: {
+      actor?: "buyer" | "honest" | "fake" | "agent";
+      dryRun?: boolean;
+    },
   ): Promise<unknown>;
 }
 
@@ -53,8 +56,15 @@ function parseCommand(argv: readonly string[]): Command | undefined {
       command.dryRun = true;
     } else if (value === "--actor" && command.actor === undefined) {
       const actor = argv[++index];
-      if (actor !== "buyer" && actor !== "honest" && actor !== "fake" && actor !== "agent") {
-        throw new InputError("Invalid actor. Choose buyer, honest, fake, or agent.");
+      if (
+        actor !== "buyer" &&
+        actor !== "honest" &&
+        actor !== "fake" &&
+        actor !== "agent"
+      ) {
+        throw new InputError(
+          "Invalid actor. Choose buyer, honest, fake, or agent.",
+        );
       }
       command.actor = actor;
     } else if (!value.startsWith("-") && command.json === undefined) {
