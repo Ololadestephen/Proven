@@ -21,10 +21,10 @@ import { ReadError } from "./model.ts";
 const PUBLIC = new URL("../public/", import.meta.url);
 const FILES: Record<string, [string, string]> = {
   "/": ["index.html", "text/html; charset=utf-8"],
-  "/app": ["app.html", "text/html; charset=utf-8"],
-  "/app/": ["app.html", "text/html; charset=utf-8"],
-  "/market": ["market.html", "text/html; charset=utf-8"],
-  "/market/": ["market.html", "text/html; charset=utf-8"],
+  "/app": ["market.html", "text/html; charset=utf-8"],
+  "/app/": ["market.html", "text/html; charset=utf-8"],
+  "/evidence": ["app.html", "text/html; charset=utf-8"],
+  "/evidence/": ["app.html", "text/html; charset=utf-8"],
   "/market.css": ["market.css", "text/css; charset=utf-8"],
   "/build/market.css": ["../dist/market.css", "text/css; charset=utf-8"],
   "/build/market.js": ["../dist/market.js", "text/javascript; charset=utf-8"],
@@ -194,7 +194,13 @@ export function createApp(
       const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
       if (url.search)
         throw new ReadError("Query parameters are not supported.", 400);
-      if (url.pathname === "/market" || url.pathname === "/market/")
+      // The market moved to /app. The old address keeps working.
+      if (url.pathname === "/market" || url.pathname === "/market/") {
+        res.writeHead(308, { Location: "/app" });
+        res.end();
+        return;
+      }
+      if (url.pathname === "/app" || url.pathname === "/app/")
         res.setHeader("Content-Security-Policy", MARKET_CSP);
       if (url.pathname.startsWith("/api/market")) {
         json(res, 200, await marketRoute(req, url.pathname, devWallet));

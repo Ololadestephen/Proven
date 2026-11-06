@@ -41,6 +41,16 @@ function Icon({ kind }: { kind: WorkspaceSection }) {
           <rect x="3" y="14" width="7" height="7" rx="1.8" />
           <rect x="14" y="14" width="7" height="7" rx="1.8" />
         </>
+      ) : kind === "market" ? (
+        <>
+          <path d="m4 9 2-5h12l2 5M4 9h16M5 9v11h14V9M9 20v-6h6v6" />
+          <path d="M3 9v2a2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 2-2" />
+        </>
+      ) : kind === "post" ? (
+        <>
+          <rect x="3" y="3" width="18" height="18" rx="4" />
+          <path d="M12 8v8M8 12h8" />
+        </>
       ) : kind === "lookup" ? (
         <>
           <rect x="5" y="3" width="14" height="18" rx="2" />
@@ -94,10 +104,12 @@ export function AnimatedList({
   preview = false,
   onNavigate,
   items = ITEMS,
+  defaultSection = "workspace",
 }: {
   preview?: boolean;
   onNavigate?: () => void;
   items?: ReadonlyArray<NavigationItem>;
+  defaultSection?: WorkspaceSection;
 }) {
   const [active, setActive] = useState<WorkspaceSection>(() =>
     preview
@@ -105,6 +117,7 @@ export function AnimatedList({
       : sectionFromHash(
           window.location.hash,
           items === ITEMS ? undefined : items,
+          defaultSection,
         ),
   );
   const anchors = useRef<Array<HTMLAnchorElement | null>>([]);
@@ -116,6 +129,7 @@ export function AnimatedList({
         sectionFromHash(
           window.location.hash,
           items === ITEMS ? undefined : items,
+          defaultSection,
         ),
       );
     const inspect = () => setActive("lookup");
@@ -125,7 +139,7 @@ export function AnimatedList({
       window.removeEventListener("hashchange", sync);
       document.removeEventListener("proven-job", inspect);
     };
-  }, [preview, items]);
+  }, [preview, items, defaultSection]);
   function keyboard(event: KeyboardEvent<HTMLElement>) {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const index = anchors.current.findIndex(

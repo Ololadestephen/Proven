@@ -22,6 +22,8 @@ test("local HTTP only exposes allowed read routes, never private files or transa
     "/",
     "/app",
     "/app/",
+    "/evidence",
+    "/evidence/",
     "/guide",
     "/guide/",
     "/theme.css",
@@ -96,4 +98,29 @@ test("local HTTP only exposes allowed read routes, never private files or transa
     request.on("error", () => resolve(0));
   });
   assert.equal(badHost, 403);
+});
+
+test("the market is the app, keeps its old address, and only it gets the wallet policy", async (t) => {
+  const app = createApp(async () => ({}) as never);
+  app.listen(0, "127.0.0.1");
+  await once(app, "listening");
+  t.after(() => app.close());
+  const address = app.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  const market = await fetch(`${base}/app`);
+  assert.match(await market.text(), /build\/market\.js/);
+  assert.match(
+    market.headers.get("content-security-policy") ?? "",
+    /connect-src 'self' https:/,
+  );
+  const evidence = await fetch(`${base}/evidence`);
+  assert.match(await evidence.text(), /\/app\.js/);
+  assert.match(
+    evidence.headers.get("content-security-policy") ?? "",
+    /connect-src 'self';/,
+  );
+  const moved = await fetch(`${base}/market`, { redirect: "manual" });
+  assert.equal(moved.status, 308);
+  assert.equal(moved.headers.get("location"), "/app");
 });

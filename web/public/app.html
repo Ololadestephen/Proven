@@ -8,7 +8,7 @@
       name="description"
       content="Inspect a Proven testnet job, its recorded verdict, and the limits of its evidence."
     />
-    <title>Proven · Workspace</title>
+    <title>Proven · Job evidence</title>
     <link rel="stylesheet" href="/theme.css" />
     <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/build/ui.css" />
@@ -30,10 +30,13 @@
         <p class="sidebar-label">YOUR WORKSPACE</p>
         <div id="workspace-navigation">
           <nav class="sidebar-nav" aria-label="App navigation">
-            <a href="#workspace" aria-current="page"
-              ><span class="nav-icon" aria-hidden="true">▦</span>Overview</a
+            <a href="/app"
+              ><span class="nav-icon" aria-hidden="true">▦</span>Market</a
             >
-            <a href="#lookup"
+            <a href="/app#post-job"
+              ><span class="nav-icon" aria-hidden="true">+</span>Post a job</a
+            >
+            <a href="#lookup" aria-current="page"
               ><span class="nav-icon" aria-hidden="true">▤</span>Job evidence</a
             >
             <a href="#demo"
@@ -46,7 +49,6 @@
           </nav>
         </div>
         <div class="sidebar-bottom">
-          <a href="/market">Job market </a>
           <a href="/guide">How Proven works </a>
           <p>Checkable work.<br />Payment with a record.</p>
         </div>
@@ -56,7 +58,7 @@
           <section class="workspace-intro" aria-labelledby="workspace-title">
             <div>
               <p class="eyebrow">Good work. Clear evidence.</p>
-              <h1 id="workspace-title">Your work, with proof.</h1>
+              <h1 id="workspace-title">Finished work, with proof.</h1>
               <p>
                 Inspect a job, follow its acceptance check, and see where the
                 payment went.
@@ -335,7 +337,7 @@
             </ul>
             <div class="settlement-note">
               <span class="small-label">Cross-chain settlement</span>
-              <p>Quotes only. No mainnet payout is implemented.</p>
+              <p>Quotes only. Cross-chain payouts are not implemented.</p>
             </div>
           </aside>
         </main>

@@ -833,36 +833,11 @@ function App() {
           New jobs and funding are paused on this escrow.
         </p>
       ) : null}
-      <dl className="market-stats" aria-label="Board snapshot">
-        <div>
-          <dt>Open jobs</dt>
-          <dd>
-            {market ? bids.filter((b) => b.state === "Open").length : "—"}
-          </dd>
-        </div>
-        <div>
-          <dt>In progress</dt>
-          <dd>
-            {market ? bids.filter((b) => b.state === "Claimed").length : "—"}
-          </dd>
-        </div>
-        <div>
-          <dt>Completed</dt>
-          <dd>
-            {market ? bids.filter((b) => b.state === "Done").length : "—"}
-          </dd>
-        </div>
-      </dl>
-      <div className="market-section-heading">
-        <div>
-          <p className="eyebrow">DISCOVER THE WORK</p>
-          <h2 className="market-section" id="market-bids">
-            Jobs on the board
-          </h2>
-        </div>
-        <p className="market-note">
-          Current contract state · refreshes automatically
-        </p>
+      <div className="workspace-section-heading">
+        <h2 id="market-bids">Jobs on the board</h2>
+        <a className="button button-secondary" href="#post-job">
+          Post a job
+        </a>
       </div>
       {market && bids.length === 0 ? <p>No bids yet.</p> : null}
       <div className="market-list">

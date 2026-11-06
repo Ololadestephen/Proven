@@ -114,7 +114,7 @@ if (jobs) createRoot(jobs).render(<RecordedJobs />);
 const cta = document.getElementById("reactbits-cta");
 if (cta)
   createRoot(cta).render(
-    <StarBorder href="/app#demo">Explore the demo</StarBorder>,
+    <StarBorder href="/evidence#demo">Explore the demo</StarBorder>,
   );
 
 const navigation = document.getElementById("workspace-navigation");

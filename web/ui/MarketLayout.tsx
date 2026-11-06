@@ -1,13 +1,6 @@
 import type { ReactNode } from "react";
 import { WorkspaceNavigation } from "./WorkspaceNavigation.tsx";
-import type { NavigationItem } from "./navigation-state.ts";
-
-const MARKET_NAVIGATION: ReadonlyArray<NavigationItem> = [
-  { id: "workspace", label: "Market", href: "#market-overview" },
-  { id: "lookup", label: "Post a job", href: "#post-job" },
-  { id: "demo", label: "Job evidence", href: "/app", icon: "lookup" },
-  { id: "trust", label: "Trust & limits", href: "#market-trust" },
-];
+import { MARKET_NAVIGATION } from "./navigation-state.ts";
 
 export function MarketLayout({
   walletControls,
@@ -29,7 +22,10 @@ export function MarketLayout({
           Proven
         </a>
         <p className="sidebar-label">YOUR WORKSPACE</p>
-        <WorkspaceNavigation items={MARKET_NAVIGATION} />
+        <WorkspaceNavigation
+          items={MARKET_NAVIGATION}
+          defaultSection="market"
+        />
         <div className="sidebar-bottom">
           <a href="/guide">How Proven works</a>
           <p>
@@ -41,13 +37,13 @@ export function MarketLayout({
       </aside>
       <div className="app-area">
         <main className="shell main-content market" id="market-overview">
-          <section className="market-intro" aria-labelledby="market-title">
+          <section className="workspace-intro" aria-labelledby="market-title">
             <div>
-              <p className="eyebrow">WORK WITH A CHECKABLE FINISH</p>
-              <h1 id="market-title">The market for work that proves itself.</h1>
+              <p className="eyebrow">Good work. Clear evidence.</p>
+              <h1 id="market-title">Your work, with proof.</h1>
               <p className="market-lead">
-                Post precise conditions. Find a worker. Follow the result
-                through payment.
+                Browse checkable work, post a job, and follow its delivery
+                through the recorded payment.
               </p>
             </div>
             <div className="market-account">

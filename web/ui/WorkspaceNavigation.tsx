@@ -1,13 +1,19 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import { AnimatedList } from "./react-bits/AnimatedList.tsx";
 import "./WorkspaceNavigation.css";
-import type { NavigationItem } from "./navigation-state.ts";
+import {
+  EVIDENCE_NAVIGATION,
+  type NavigationItem,
+  type WorkspaceSection,
+} from "./navigation-state.ts";
 
 /** A mobile disclosure, with the same always-visible desktop navigation. */
 export function WorkspaceNavigation({
-  items,
+  items = EVIDENCE_NAVIGATION,
+  defaultSection = "lookup",
 }: {
   items?: ReadonlyArray<NavigationItem>;
+  defaultSection?: WorkspaceSection;
 }) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -51,7 +57,11 @@ export function WorkspaceNavigation({
         <span>{open ? "Close menu" : "Menu"}</span>
       </button>
       <div id="workspace-menu-content" className="workspace-menu-content">
-        <AnimatedList onNavigate={close} items={items} />
+        <AnimatedList
+          onNavigate={close}
+          items={items}
+          defaultSection={defaultSection}
+        />
       </div>
     </div>
   );
