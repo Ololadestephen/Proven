@@ -138,7 +138,7 @@ export async function custodyRead(
   });
   if (!response.ok)
     throw new PublicError(
-      "Could not read the testnet custody wallet. Check its credential and policy.",
+      "Could not read the custody wallet. Check its credential and policy.",
     );
   return response.json();
 }

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { PublicError } from "./errors.ts";
+import { networkSettings } from "./network.ts";
 import { accountId } from "./validation.ts";
 import type { Actor } from "./types.ts";
 
@@ -26,8 +27,11 @@ export function loadConfig(selected?: Actor): Config {
     /* Read-only/dry-run use needs no credentials. */
   }
   const get = (name: string) => process.env[name] ?? file[name];
-  if ((get("NEAR_NETWORK") ?? "testnet") !== "testnet")
-    throw new PublicError("This agent interface supports testnet only.");
+  const net = networkSettings(
+    get("NEAR_NETWORK"),
+    get("PROVEN_STAGE2_APPROVED"),
+  );
+  const mainnet = net.network === "mainnet";
   const actor = selected ?? get("PROVEN_ACTOR") ?? "buyer";
   if (
     actor !== "buyer" &&
@@ -37,29 +41,31 @@ export function loadConfig(selected?: Actor): Config {
   )
     throw new PublicError("Invalid actor.");
   const escrow = accountId(
-    get("ESCROW_CONTRACT") ?? "escrow-v3.proven.testnet",
+    mainnet
+      ? (get("MAINNET_ESCROW_ACCOUNT_ID") ?? "")
+      : (get("ESCROW_CONTRACT") ?? "escrow-v3.proven.testnet"),
   );
-  if (!escrow.endsWith(".testnet"))
-    throw new PublicError("Escrow must be a testnet account.");
-  const rpc = get("NEAR_RPC_URL") ?? "https://test.rpc.fastnear.com";
-  if (
-    ![
-      "https://test.rpc.fastnear.com",
-      "https://near-testnet.drpc.org",
-      "https://testnet-rpc.intea.rs",
-      "https://rpc.testnet.near.org",
-      "https://archival-rpc.testnet.near.org",
-    ].includes(rpc)
-  )
-    throw new PublicError("Use an approved testnet RPC endpoint.");
-  const custodyApi =
-    get("PROVEN_CUSTODY_API") ?? "https://testnet-api.outlayer.ai";
-  if (custodyApi !== "https://testnet-api.outlayer.ai")
-    throw new PublicError("Use the testnet custody API.");
-  const prefix = actor === "honest" ? "PROVEN_HONEST" : "PROVEN_FAKE";
+  if (!escrow.endsWith(net.suffix))
+    throw new PublicError("The escrow is not on this network.");
+  const rpc = mainnet
+    ? (get("MAINNET_RPC_URL") ?? net.rpcs[0])
+    : (get("NEAR_RPC_URL") ?? net.rpcs[0]);
+  if (!(net.rpcs as readonly string[]).includes(rpc))
+    throw new PublicError("Use an approved RPC endpoint for this network.");
+  const custodyApi = get("PROVEN_CUSTODY_API") ?? net.custodyApi;
+  if (custodyApi !== net.custodyApi)
+    throw new PublicError("Use this network's custody API.");
+  const prefix = mainnet
+    ? actor === "honest"
+      ? "MAINNET_WORKER_A_SCOPED"
+      : "MAINNET_WORKER_B_SCOPED"
+    : actor === "honest"
+      ? "PROVEN_HONEST"
+      : "PROVEN_FAKE";
+  const buyerPrefix = mainnet ? "MAINNET_BUYER" : "PROVEN_BUYER";
   const account =
     actor === "buyer"
-      ? get("PROVEN_BUYER_ACCOUNT_ID")
+      ? get(`${buyerPrefix}_ACCOUNT_ID`)
       : actor === "agent"
         ? get("PROVEN_AGENT_ACCOUNT_ID")
         : get(`${prefix}_ACCOUNT_ID`);
@@ -72,7 +78,7 @@ export function loadConfig(selected?: Actor): Config {
     socket: get("PROVEN_RELAY_SOCKET") ?? `${ROOT}runs/private/relay.sock`,
     custodyKey:
       actor === "buyer"
-        ? get("PROVEN_BUYER_CUSTODY_KEY")
+        ? get(`${buyerPrefix}_CUSTODY_KEY`)
         : actor === "agent"
           ? get("PROVEN_AGENT_CUSTODY_KEY")
           : undefined,
@@ -83,8 +89,14 @@ export function loadConfig(selected?: Actor): Config {
         : get(`${prefix}_PRIVATE_KEY`),
     demoSession: process.env.PROVEN_DEMO_SESSION,
     allowedWorkers: (
-      get("PROVEN_BUYER_WORKERS") ??
-      [get("PROVEN_HONEST_ACCOUNT_ID"), get("PROVEN_FAKE_ACCOUNT_ID")]
+      (mainnet ? undefined : get("PROVEN_BUYER_WORKERS")) ??
+      (mainnet
+        ? [
+            get("MAINNET_WORKER_A_ACCOUNT_ID"),
+            get("MAINNET_WORKER_B_ACCOUNT_ID"),
+          ]
+        : [get("PROVEN_HONEST_ACCOUNT_ID"), get("PROVEN_FAKE_ACCOUNT_ID")]
+      )
         .filter(Boolean)
         .join(",")
     )

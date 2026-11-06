@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { PublicError } from "./errors.ts";
 import { loadConfig } from "./config.ts";
 import { createRuntime } from "./near.ts";
+import { attestationUrl } from "./network.ts";
 import { boardTools, executeBoardTool, isBoardTool } from "./board-tools.ts";
 import {
   accountId,
@@ -137,9 +138,7 @@ function checkedFiles(
 }
 function status(job: Job) {
   const attestation = (request: string | null) =>
-    request
-      ? `https://testnet-api.outlayer.ai/attestations/by-request/${request}`
-      : null;
+    request ? attestationUrl(request) : null;
   return {
     ...job,
     challenge_attestation: attestation(job.challenge_request_id),

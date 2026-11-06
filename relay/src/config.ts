@@ -28,7 +28,33 @@ function required(name: string, fallback?: string): string {
   return value;
 }
 
+export const MAINNET_RPC_URLS: readonly string[] = [
+  "https://rpc.mainnet.fastnear.com",
+  "https://rpc.mainnet.near.org",
+];
+
+/** Unaudited, owner-funded Stage 2 only: refused without the approval flag, and no default escrow. */
+function loadMainnetConfig(): Config {
+  if (process.env.PROVEN_STAGE2_APPROVED !== "yes")
+    throw new Error("Mainnet is refused without the Stage 2 approval flag.");
+  const key = required("MAINNET_OPS_PRIVATE_KEY");
+  if (!key.startsWith("ed25519:"))
+    throw new Error("MAINNET_OPS_PRIVATE_KEY must be an ed25519 key");
+  const rpcUrl = process.env.MAINNET_RPC_URL || MAINNET_RPC_URLS[0]!;
+  if (!MAINNET_RPC_URLS.includes(rpcUrl))
+    throw new Error("Use an approved mainnet RPC endpoint");
+  return {
+    rpcUrl,
+    relayAccountId: required("MAINNET_OPS_ACCOUNT_ID"),
+    relayPrivateKey: key as KeyPairString,
+    escrowContract: required("MAINNET_ESCROW_ACCOUNT_ID"),
+    outlayerContract: "outlayer.near",
+    outlayerApi: "https://api.outlayer.ai",
+  };
+}
+
 export function loadConfig(): Config {
+  if (process.env.NEAR_NETWORK === "mainnet") return loadMainnetConfig();
   const key = required("RELAY_PRIVATE_KEY", "NEAR_PRIVATE_KEY");
   if (!key.startsWith("ed25519:"))
     throw new Error("RELAY_PRIVATE_KEY must be an ed25519 key");

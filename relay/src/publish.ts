@@ -92,7 +92,7 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         sha256: hash,
-        url: `https://test.fastfs.io/${account.accountId}/${config.outlayerContract}/${path}`,
+        url: `https://${config.outlayerContract === "outlayer.near" ? "main" : "test"}.fastfs.io/${account.accountId}/${config.outlayerContract}/${path}`,
         bytes: content.length,
       },
       null,

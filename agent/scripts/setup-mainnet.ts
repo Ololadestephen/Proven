@@ -1,0 +1,311 @@
+// Stage 2 mainnet setup, for an unaudited, owner-funded mainnet deployment. Run only after the mainnet
+// gate in PLAN.md section 14 has passed, with PROVEN_STAGE2_APPROVED=yes. It uses only the new Proven
+// accounts the owner created and funded, and never spends past the budget below.
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts accounts
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts escrow <wasm>
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts wallet
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts workers
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts verify-config
+// Each one-time step is recorded before it runs, and an unknown outcome stops rather than repeats.
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { parseEnv } from "node:util";
+import {
+  Account,
+  JsonRpcProvider,
+  KeyPair,
+  KeyPairSigner,
+  actions,
+} from "near-api-js";
+import { ROOT } from "../src/config.ts";
+import { assertPolicy, custodyRead } from "../src/custody.ts";
+import { PublicError, publicMessage } from "../src/errors.ts";
+import { networkSettings } from "../src/network.ts";
+
+const MAX_JOB = 10n ** 23n; // 0.1 NEAR, enforced by the contract.
+const MAX_HELD = 10n ** 24n; // 1 NEAR, enforced by the contract.
+const BUDGET = 35n * 10n ** 23n; // 3.5 NEAR across the new accounts.
+const MAX_POLICY_STORAGE = 5n * 10n ** 22n;
+const WORKER_KEY_ALLOWANCE = 2n * 10n ** 22n;
+const WORKER_METHODS = [
+  "deliver",
+  "release",
+  "refund",
+  "expire",
+  "cancel_stale_outlayer_execution",
+];
+
+const net = networkSettings(
+  process.env.NEAR_NETWORK,
+  process.env.PROVEN_STAGE2_APPROVED,
+);
+if (net.network !== "mainnet")
+  throw new PublicError("This script is for mainnet only.");
+const envPath = `${ROOT}.env`;
+const env = parseEnv(readFileSync(envPath, "utf8"));
+const provider = new JsonRpcProvider({ url: net.rpcs[0] });
+const evidencePath = `${ROOT}runs/stage2-setup.json`;
+const evidence: Record<string, unknown> = existsSync(evidencePath)
+  ? (JSON.parse(readFileSync(evidencePath, "utf8")) as Record<string, unknown>)
+  : {};
+const record = () =>
+  writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, {
+    mode: 0o600,
+  });
+
+function saveEnv(values: Record<string, string>) {
+  let content = readFileSync(envPath, "utf8");
+  for (const [name, value] of Object.entries(values)) {
+    content = `${content.replace(new RegExp(`^${name}=.*$\\n?`, "m"), "").trimEnd()}\n${name}=${value}\n`;
+    env[name] = value;
+  }
+  const temp = `${envPath}.proven-setup-${process.pid}`;
+  writeFileSync(temp, content, { mode: 0o600, flag: "wx" });
+  renameSync(temp, envPath);
+}
+
+function account(prefix: string): Account {
+  const id = env[`${prefix}_ACCOUNT_ID`];
+  const key = env[`${prefix}_PRIVATE_KEY`];
+  if (!id?.endsWith(".near") || !key?.startsWith("ed25519:"))
+    throw new PublicError(`${prefix} is not set up in .env.`);
+  return new Account(
+    id,
+    provider,
+    new KeyPairSigner(KeyPair.fromString(key as `ed25519:${string}`)),
+  );
+}
+
+async function once(name: string, step: () => Promise<string>) {
+  if (evidence[name] === "started")
+    throw new PublicError(`${name} has an unknown outcome. Inspect it first.`);
+  if (evidence[name]) return;
+  evidence[name] = "started";
+  record();
+  evidence[name] = await step();
+  record();
+  console.log(`${name}: ${String(evidence[name])}`);
+}
+
+const settled = (result: {
+  status: unknown;
+  transaction: { hash: string };
+}) => {
+  if (!(
+    typeof result.status === "object" &&
+    result.status &&
+    "SuccessValue" in result.status
+  ))
+    throw new PublicError(`Transaction failed: ${result.transaction.hash}`);
+  return result.transaction.hash;
+};
+
+async function balances() {
+  let total = 0n;
+  const rows: Record<string, string> = {};
+  const ids = ["ESCROW", "OPS", "WORKER_A", "WORKER_B", "BUYER"]
+    .map((prefix) => env[`MAINNET_${prefix}_ACCOUNT_ID`])
+    .filter((id): id is string => Boolean(id));
+  for (const id of ids) {
+    const view = await provider
+      .viewAccount({ accountId: id })
+      .catch(() => null);
+    const amount = view ? BigInt(view.amount) : 0n;
+    total += amount;
+    rows[id] = (Number(amount) / 1e24).toFixed(4);
+  }
+  console.log(
+    JSON.stringify({ balances_near: rows, total_near: Number(total) / 1e24 }),
+  );
+  if (total > BUDGET)
+    throw new PublicError("The accounts hold more than the approved budget.");
+}
+
+async function deployEscrow(wasmPath: string) {
+  const ops = env.MAINNET_OPS_ACCOUNT_ID;
+  const url = env.MAINNET_VERIFIER_URL;
+  const hash = env.MAINNET_VERIFIER_HASH;
+  if (!ops || !url || !hash)
+    throw new PublicError(
+      "Publish the verifier first and set its URL and hash.",
+    );
+  const escrow = account("MAINNET_ESCROW");
+  await once("escrow_deploy", async () =>
+    settled(
+      await escrow.signAndSendTransaction({
+        receiverId: escrow.accountId,
+        actions: [
+          actions.deployContract(readFileSync(wasmPath)),
+          actions.functionCall(
+            "new",
+            {
+              owner: ops,
+              outlayer: "outlayer.near",
+              verifier_url: url,
+              verifier_hash: hash,
+              secrets_owner: ops,
+              max_job_amount: MAX_JOB.toString(),
+              max_held: MAX_HELD.toString(),
+            },
+            100_000_000_000_000n,
+            0n,
+          ),
+        ],
+      }),
+    ),
+  );
+}
+
+async function post(path: string, body: unknown, key?: string) {
+  const response = await fetch(`${net.custodyApi}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(key ? { authorization: `Bearer ${key}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!response.ok)
+    throw new PublicError(
+      `Custody request ${path} failed: ${response.status}.`,
+    );
+  return (await response.json()) as Record<string, unknown>;
+}
+
+async function setupWallet() {
+  const escrow = env.MAINNET_ESCROW_ACCOUNT_ID;
+  if (!escrow) throw new PublicError("MAINNET_ESCROW_ACCOUNT_ID is not set.");
+  if (!env.MAINNET_BUYER_CUSTODY_KEY) {
+    await once("buyer_registered", async () => {
+      const wallet = await post("/register", {});
+      if (
+        typeof wallet.api_key !== "string" ||
+        typeof wallet.wallet_id !== "string" ||
+        typeof wallet.near_account_id !== "string"
+      )
+        throw new PublicError("Unexpected registration fields; not printed.");
+      saveEnv({
+        MAINNET_BUYER_CUSTODY_KEY: wallet.api_key,
+        MAINNET_BUYER_WALLET_ID: wallet.wallet_id,
+        MAINNET_BUYER_ACCOUNT_ID: wallet.near_account_id,
+      });
+      return wallet.near_account_id;
+    });
+  }
+  const key = env.MAINNET_BUYER_CUSTODY_KEY!;
+  const stored = JSON.parse(
+    readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+  ) as {
+    rules: { addresses: { list: string[] } };
+    capabilities: Record<string, unknown>;
+  };
+  stored.rules.addresses.list = [escrow];
+  stored.capabilities.sign_message = {
+    allowed: true,
+    allowed_recipients: ["proven-relay"],
+  };
+  await once("buyer_policy", async () => {
+    const owner = account("MAINNET_OPS");
+    const encrypted = await post(
+      "/wallet/v1/encrypt-policy",
+      { wallet_id: env.MAINNET_BUYER_WALLET_ID, ...stored },
+      key,
+    );
+    const signed = await post(
+      "/wallet/v1/sign-policy",
+      { encrypted_data: encrypted.encrypted_base64, caller: owner.accountId },
+      key,
+    );
+    const args = {
+      wallet_pubkey: `ed25519:${String(signed.public_key_hex)}`,
+      encrypted_data: encrypted.encrypted_base64,
+      storage_refund_to: null,
+    };
+    const quote = await provider.callFunction({
+      contractId: "outlayer.near",
+      method: "estimate_wallet_policy_cost",
+      args,
+    });
+    const cost =
+      typeof quote === "string"
+        ? quote
+        : (quote as { required_deposit?: string }).required_deposit;
+    if (!cost || BigInt(cost) > MAX_POLICY_STORAGE)
+      throw new PublicError("The policy storage quote is unknown or too high.");
+    const hash = settled(
+      await owner.callFunctionRaw({
+        contractId: "outlayer.near",
+        methodName: "store_wallet_policy",
+        args: { ...args, wallet_signature: signed.signature_hex },
+        deposit: cost,
+        gas: 100_000_000_000_000n,
+      }),
+    );
+    await post("/wallet/v1/invalidate-cache", {
+      wallet_id: env.MAINNET_BUYER_WALLET_ID,
+    });
+    assertPolicy(
+      await custodyRead(net.custodyApi, key, "/wallet/v1/policy"),
+      escrow,
+    );
+    return hash;
+  });
+  console.log(
+    `Fund this buyer wallet with 0.45 NEAR: ${env.MAINNET_BUYER_ACCOUNT_ID}`,
+  );
+}
+
+/** Workers sign with keys that can only call the worker's methods on the escrow, never full-access. */
+async function setupWorkers() {
+  const escrow = env.MAINNET_ESCROW_ACCOUNT_ID;
+  if (!escrow) throw new PublicError("MAINNET_ESCROW_ACCOUNT_ID is not set.");
+  for (const letter of ["A", "B"]) {
+    const worker = account(`MAINNET_WORKER_${letter}`);
+    const name = `MAINNET_WORKER_${letter}_SCOPED_PRIVATE_KEY`;
+    if (!env[name])
+      saveEnv({ [name]: KeyPair.fromRandom("ed25519").toString() });
+    saveEnv({
+      [`MAINNET_WORKER_${letter}_SCOPED_ACCOUNT_ID`]: worker.accountId,
+    });
+    const key = KeyPair.fromString(env[name] as `ed25519:${string}`);
+    await once(`worker_${letter}_key`, async () =>
+      settled(
+        await worker.signAndSendTransaction({
+          receiverId: worker.accountId,
+          actions: [
+            actions.addFunctionCallAccessKey(
+              key.getPublicKey(),
+              escrow,
+              WORKER_METHODS,
+              WORKER_KEY_ALLOWANCE,
+            ),
+          ],
+        }),
+      ),
+    );
+  }
+}
+
+async function main() {
+  const [command, argument] = process.argv.slice(2);
+  await balances();
+  if (command === "accounts") return;
+  if (command === "escrow") return deployEscrow(argument);
+  if (command === "wallet") return setupWallet();
+  if (command === "workers") return setupWorkers();
+  if (command === "verify-config") {
+    const config = await provider.callFunction({
+      contractId: env.MAINNET_ESCROW_ACCOUNT_ID!,
+      method: "get_config",
+      args: {},
+    });
+    console.log(JSON.stringify(config));
+    return;
+  }
+  throw new PublicError("Unknown command.");
+}
+
+main().catch((error) => {
+  console.error(publicMessage(error));
+  process.exitCode = 1;
+});

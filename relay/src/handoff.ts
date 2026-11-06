@@ -587,15 +587,21 @@ async function main(): Promise<void> {
     import("./secret.ts"),
   ]);
   const config = loadConfig();
-  if (
-    process.env.NEAR_NETWORK !== "testnet" ||
-    !config.escrowContract.endsWith(".testnet") ||
-    config.outlayerContract !== "outlayer.testnet" ||
-    config.outlayerApi !== "https://testnet-api.outlayer.ai" ||
-    !TESTNET_RPC_URLS.includes(config.rpcUrl) ||
-    !TESTNET_RPC_URLS.includes(config.broadcastRpcUrl ?? config.rpcUrl)
-  )
-    throw new Refused();
+  const onTestnet =
+    process.env.NEAR_NETWORK === "testnet" &&
+    config.escrowContract.endsWith(".testnet") &&
+    config.outlayerContract === "outlayer.testnet" &&
+    config.outlayerApi === "https://testnet-api.outlayer.ai" &&
+    TESTNET_RPC_URLS.includes(config.rpcUrl) &&
+    TESTNET_RPC_URLS.includes(config.broadcastRpcUrl ?? config.rpcUrl);
+  const onMainnet =
+    process.env.NEAR_NETWORK === "mainnet" &&
+    process.env.PROVEN_STAGE2_APPROVED === "yes" &&
+    config.escrowContract.endsWith(".near") &&
+    config.outlayerContract === "outlayer.near" &&
+    config.outlayerApi === "https://api.outlayer.ai" &&
+    args[0] !== "--demo-compute";
+  if (!onTestnet && !onMainnet) throw new Refused();
   let timing: TimingSink | undefined;
   if (args[0] === "--demo-compute") {
     const directory = dirname(DEFAULT_SOCKET);
