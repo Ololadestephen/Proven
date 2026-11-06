@@ -274,3 +274,12 @@ fn a_bound_rejected_challenge_with_many_missed_fakes_stays_within_the_output_lim
     let text = run_with_secrets(input.to_string().as_bytes(), |name| (name == "NEAR_REQUEST_ID").then(|| u64::MAX.to_string()));
     assert!(text.len() <= MAX_OUTPUT_BYTES, "{}", text.len());
 }
+
+#[test]
+fn recursion_and_endless_loops_get_a_verdict_instead_of_crashing() {
+    let check = example("function-job/check-strong.json");
+    let recursion = wasm_deliverable(r#"(module (func $f (export "vat") (param i64 i64) (result i64) (call $f (local.get 0) (local.get 1))))"#);
+    let endless = wasm_deliverable(r#"(module (func (export "vat") (param i64 i64) (result i64) (loop $l (br $l)) (i64.const 0)))"#);
+    assert_eq!(verify(&check, &recursion)["failed_rule"], "basic");
+    assert_eq!(verify(&check, &endless)["failed_rule"], "basic");
+}

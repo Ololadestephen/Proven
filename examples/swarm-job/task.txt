@@ -1,0 +1,24 @@
+Extract these supplier invoices into JSON, exactly in this format and nothing else:
+{"rows":[{"invoice_id":"...","supplier":"...","lines":[{"description":"...","amount_cents":0}],"total_cents":0}]}
+
+Rules:
+- One row per valid invoice, in any order. Amounts are in US cents, as integers.
+- A line's amount is quantity times unit price. A credit or discount is its own line with a negative amount.
+- total_cents is the sum of that invoice's lines. Ignore any "balance due", previous balance or shipping-free note: they are not lines.
+- Leave out voided invoices. A reprint repeats an earlier invoice: count it once.
+- Keep each supplier's name and each line's description as printed.
+
+Documents:
+
+INV-3001 | Northwind Office Co. | Printer paper, 5 reams: $124.75 | Toner cartridge: 2 x $64.50
+INV-3002 | Bluepeak Supplies | Desk lamp 3 x $38.99 | Trade discount -$10.00 | Balance due incl. prior $206.97
+INV-3003 | Harbor Stationers | Stapler: $12.50 *** VOID - issued in error ***
+INV-3004 | Harbor Stationers | Notebooks, pack of 12: 1.249,50 USD | Whiteboard markers: 7,25 USD (European number format)
+INV-3005 | Kestrel Freight | Pallet delivery: USD 410 | Fuel surcharge: USD 37.20
+INV-3001 (REPRINT) | Northwind Office Co. | Printer paper, 5 reams: $124.75 | Toner cartridge: 2 x $64.50
+INV-3006 | Bluepeak Supplies | USB-C cable 12 @ $9.95 | Cable ties 4 @ $4.50 | Credit for damaged cable -$9.95
+INV-3007 | Northwind Office Co. | Monitor stand: $327.50 | Envelopes, box of 500: $21.90 | Sticky notes, 24 pads: 3 x $16.40
+INV-3008 | Kestrel Freight | Storage, 6 days at $18.25 per day | Late pickup fee: $45
+INV-3009 | Harbor Stationers | Ink pens, box of 50: 18,20 USD | Label maker tape: 2 x 13,99 USD | Goodwill credit: -5,00 USD
+INV-3010 | Bluepeak Supplies | Office chair mat: $45.50 **VOIDED, replaced by INV-3011**
+INV-3011 | Bluepeak Supplies | Office chair mat: $45.50 | Shredder bags: 2 x $11.50

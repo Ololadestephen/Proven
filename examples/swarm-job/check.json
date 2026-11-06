@@ -1,0 +1,90 @@
+{
+ "kind": "data",
+ "proven_check": 1,
+ "verifier": "1a3521fde4a627cbbb16aeb31e774d36607164961e6c7490eb30d97ac30f3687",
+ "rules": [
+  {
+   "id": "rows",
+   "type": "row_count",
+   "min": 9,
+   "max": 9
+  },
+  {
+   "id": "fields",
+   "type": "fields",
+   "fields": {
+    "invoice_id": "string",
+    "supplier": "string",
+    "lines": "array",
+    "total_cents": "integer"
+   }
+  },
+  {
+   "id": "line_fields",
+   "type": "item_fields",
+   "array": "lines",
+   "fields": {
+    "description": "string",
+    "amount_cents": "integer"
+   }
+  },
+  {
+   "id": "unique_ids",
+   "type": "unique",
+   "field": "invoice_id"
+  },
+  {
+   "id": "line_amounts",
+   "type": "item_range",
+   "array": "lines",
+   "field": "amount_cents",
+   "min": -100000,
+   "max": 500000
+  },
+  {
+   "id": "reconcile",
+   "type": "sum_equals",
+   "array": "lines",
+   "item_field": "amount_cents",
+   "total_field": "total_cents"
+  },
+  {
+   "id": "grand_total",
+   "type": "column_total",
+   "field": "total_cents",
+   "equals": 285490
+  },
+  {
+   "id": "spot_3002",
+   "type": "spot_check",
+   "key_field": "invoice_id",
+   "key": "INV-3002",
+   "field": "total_cents",
+   "equals": 10697
+  },
+  {
+   "id": "spot_3004",
+   "type": "spot_check",
+   "key_field": "invoice_id",
+   "key": "INV-3004",
+   "field": "total_cents",
+   "equals": 125675
+  },
+  {
+   "id": "spot_3006",
+   "type": "spot_check",
+   "key_field": "invoice_id",
+   "key": "INV-3006",
+   "field": "total_cents",
+   "equals": 12745
+  },
+  {
+   "id": "spot_3009",
+   "type": "spot_check",
+   "key_field": "invoice_id",
+   "key": "INV-3009",
+   "field": "total_cents",
+   "equals": 4118
+  }
+ ]
+}

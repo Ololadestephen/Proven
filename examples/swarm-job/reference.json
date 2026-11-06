@@ -1,0 +1,151 @@
+{
+ "rows": [
+  {
+   "invoice_id": "INV-3001",
+   "supplier": "Northwind Office Co.",
+   "lines": [
+    {
+     "description": "Printer paper, 5 reams",
+     "amount_cents": 12475
+    },
+    {
+     "description": "Toner cartridge",
+     "amount_cents": 12900
+    }
+   ],
+   "total_cents": 25375
+  },
+  {
+   "invoice_id": "INV-3002",
+   "supplier": "Bluepeak Supplies",
+   "lines": [
+    {
+     "description": "Desk lamp",
+     "amount_cents": 11697
+    },
+    {
+     "description": "Trade discount",
+     "amount_cents": -1000
+    }
+   ],
+   "total_cents": 10697
+  },
+  {
+   "invoice_id": "INV-3004",
+   "supplier": "Harbor Stationers",
+   "lines": [
+    {
+     "description": "Notebooks, pack of 12",
+     "amount_cents": 124950
+    },
+    {
+     "description": "Whiteboard markers",
+     "amount_cents": 725
+    }
+   ],
+   "total_cents": 125675
+  },
+  {
+   "invoice_id": "INV-3005",
+   "supplier": "Kestrel Freight",
+   "lines": [
+    {
+     "description": "Pallet delivery",
+     "amount_cents": 41000
+    },
+    {
+     "description": "Fuel surcharge",
+     "amount_cents": 3720
+    }
+   ],
+   "total_cents": 44720
+  },
+  {
+   "invoice_id": "INV-3006",
+   "supplier": "Bluepeak Supplies",
+   "lines": [
+    {
+     "description": "USB-C cable",
+     "amount_cents": 11940
+    },
+    {
+     "description": "Cable ties",
+     "amount_cents": 1800
+    },
+    {
+     "description": "Credit for damaged cable",
+     "amount_cents": -995
+    }
+   ],
+   "total_cents": 12745
+  },
+  {
+   "invoice_id": "INV-3007",
+   "supplier": "Northwind Office Co.",
+   "lines": [
+    {
+     "description": "Monitor stand",
+     "amount_cents": 32750
+    },
+    {
+     "description": "Envelopes, box of 500",
+     "amount_cents": 2190
+    },
+    {
+     "description": "Sticky notes, 24 pads",
+     "amount_cents": 4920
+    }
+   ],
+   "total_cents": 39860
+  },
+  {
+   "invoice_id": "INV-3008",
+   "supplier": "Kestrel Freight",
+   "lines": [
+    {
+     "description": "Storage, 6 days",
+     "amount_cents": 10950
+    },
+    {
+     "description": "Late pickup fee",
+     "amount_cents": 4500
+    }
+   ],
+   "total_cents": 15450
+  },
+  {
+   "invoice_id": "INV-3009",
+   "supplier": "Harbor Stationers",
+   "lines": [
+    {
+     "description": "Ink pens, box of 50",
+     "amount_cents": 1820
+    },
+    {
+     "description": "Label maker tape",
+     "amount_cents": 2798
+    },
+    {
+     "description": "Goodwill credit",
+     "amount_cents": -500
+    }
+   ],
+   "total_cents": 4118
+  },
+  {
+   "invoice_id": "INV-3011",
+   "supplier": "Bluepeak Supplies",
+   "lines": [
+    {
+     "description": "Office chair mat",
+     "amount_cents": 4550
+    },
+    {
+     "description": "Shredder bags",
+     "amount_cents": 2300
+    }
+   ],
+   "total_cents": 6850
+  }
+ ]
+}
