@@ -533,6 +533,8 @@ function BidCard({
   const verdictDone = job?.verdict_request_id ?? null;
   useEffect(() => {
     if (cleanJobId === null) return;
+    if (viewer === null || (viewer !== bid.buyer && viewer !== job?.worker))
+      return;
     const clean = (kind: "Challenge" | "Verify") => {
       const mark = `proven-cleaned-${market.escrow}-${cleanJobId}-${kind}`;
       try {
@@ -549,7 +551,15 @@ function BidCard({
     };
     if (challengeDone) clean("Challenge");
     if (verdictDone) clean("Verify");
-  }, [cleanJobId, challengeDone, verdictDone, market.escrow]);
+  }, [
+    cleanJobId,
+    challengeDone,
+    verdictDone,
+    market.escrow,
+    viewer,
+    bid.buyer,
+    job?.worker,
+  ]);
 
   const needsPrivate =
     step?.id === "challenge" && (!savedCheck || !savedReference);

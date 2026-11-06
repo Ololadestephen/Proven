@@ -232,6 +232,8 @@ function profile(job: HandoffJob, jobId: number, kind: RunKind): string {
 /** Paid work is kept this long after delivery for the buyer to collect, then deleted. */
 export const COLLECT_RETENTION_MS = 30 * 24 * 3_600_000;
 const SWEEP_EVERY_MS = 3_600_000;
+const READ_RETRIES = 10;
+const READ_RETRY_MS = 1_000;
 
 /** Deletes refunded, expired and cancelled work, paid work past retention, and every private check
  * once its job has ended. A failed read deletes nothing. Returns the deleted deliverables' job ids. */
@@ -312,7 +314,18 @@ export async function createHandoffHandler(
     request: Request | DemoRequest,
     session?: string,
   ): Promise<Record<string, unknown>> {
-    const job = await deps.getJob(request.job_id);
+    let job = await deps.getJob(request.job_id);
+    // A read can lag a delivery that has just landed by a few seconds, so look again before refusing.
+    for (
+      let read = 0;
+      read < READ_RETRIES &&
+      request.action === "pin_verification" &&
+      job?.state === "Funded";
+      read++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, READ_RETRY_MS));
+      job = await deps.getJob(request.job_id);
+    }
     requireSafe(
       job &&
         job.secrets_owner === deps.accountId &&
@@ -480,7 +493,11 @@ export async function createHandoffHandler(
     queues.set(request.job_id, pending);
     try {
       return { ok: true, result: await pending };
-    } catch {
+    } catch (error) {
+      // The reason stays on the operator's terminal. No private text is in these errors.
+      console.error(
+        `relay refused ${request.action} on job ${request.job_id}: ${String(error).slice(0, 200)}`,
+      );
       return refused();
     } finally {
       if (queues.get(request.job_id) === pending) queues.delete(request.job_id);

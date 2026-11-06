@@ -701,3 +701,32 @@ test("a failed read deletes nothing", async () => {
     await f.cleanup();
   }
 });
+
+test("a pin waits out a read that lags a delivery which has just landed", async () => {
+  const f = await fixture();
+  try {
+    const handle = await createHandoffHandler(f.deps, f.directory);
+    await handle(challenge());
+    f.job.state = "Delivered";
+    await handle(delivery());
+    f.job.state = "Funded";
+    setTimeout(() => {
+      f.job.state = "Delivered";
+    }, 1_500);
+    assert.equal((await handle(pin())).ok, true);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a pin still refuses a job that never gets delivered", async () => {
+  const f = await fixture();
+  try {
+    const handle = await createHandoffHandler(f.deps, f.directory);
+    await handle(challenge());
+    f.job.state = "Challenged";
+    assert.equal((await handle(pin())).ok, false);
+  } finally {
+    await f.cleanup();
+  }
+});
