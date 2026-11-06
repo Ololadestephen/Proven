@@ -9,9 +9,6 @@
   .shell {
     width: calc(100% - 48px);
   }
-  .workspace-topbar {
-    padding-inline: 24px;
-  }
   .workspace-intro {
     align-items: flex-start;
     flex-direction: column;
@@ -82,10 +79,6 @@
   }
   .app-area {
     margin: 0;
-  }
-  .workspace-topbar {
-    height: 60px;
-    padding-inline: 20px;
   }
   .shell {
     width: calc(100% - 36px);
@@ -190,14 +183,6 @@
   }
 }
 @media (max-width: 390px) {
-  .workspace-topbar {
-    padding-inline: 14px;
-    gap: 8px;
-  }
-  .environment {
-    padding: 7px;
-    font-size: 9px;
-  }
   .sidebar-nav a {
     padding: 8px;
   }

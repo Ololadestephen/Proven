@@ -124,7 +124,6 @@ a:focus-visible {
   line-height: 1.8;
   color: var(--muted);
 }
-.signal-dot,
 .feedback-dot {
   width: 6px;
   height: 6px;

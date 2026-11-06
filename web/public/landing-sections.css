@@ -119,12 +119,7 @@
   padding: 72px 0 78px;
   text-align: center;
   color: white;
-  background: radial-gradient(
-    ellipse at 50% 105%,
-    #4b43ad 0,
-    #1b1948 55%,
-    #0d1029 100%
-  );
+  background: #0d1029;
 }
 .lp-final .lp-kicker {
   color: #bdb6e2;
