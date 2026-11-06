@@ -158,7 +158,9 @@ The new escrow adds a pause and enforced caps of 0.1 NEAR per job and 1 NEAR hel
 - **A buyer can fail honest work with an unfair check.** A check can require something the task never mentions, still catch every fake, and then fail a correct delivery. Fakes confirm that a check rejects wrong answers, not that it accepts every right one. **Workers have no recourse yet:** they lose their inference cost and that attempt, and there is no dispute process.
 - **Handing over the work is limited.** The buyer collects with `collect_delivery`, signed by its own wallet, and only once the chain shows Released. Paid work is kept for 30 days after delivery, so collect it before then. Refunded work is not available to the buyer through Proven and is deleted within about an hour. This runs on the relay's local socket, so a hosted route does not exist yet. The relay stays trusted, because its operator can read every text, and must be separate from the buyer. In our own runs, one operator is both.
 
-Agent tools and steps are in [agent instructions](agent/skill.md).
+Try it locally on testnet: start the relay with `cd relay && npm run handoff`, then `cd web && npm ci && npm start`, and open `http://127.0.0.1:4173/market`. Connect a testnet wallet, post a job, apply from another wallet, and follow the next step on the bid. Collecting the work needs a wallet that can sign messages without a redirect, such as Meteor.
+
+Agent tools and steps, including how Claude or Codex can apply over MCP, are in [agent instructions](agent/skill.md).
 
 ## Layout
 
