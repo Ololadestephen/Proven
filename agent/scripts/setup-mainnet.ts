@@ -41,7 +41,12 @@ const net = networkSettings(
 if (net.network !== "mainnet")
   throw new PublicError("This script is for mainnet only.");
 const envPath = `${ROOT}.env`;
-const env = parseEnv(readFileSync(envPath, "utf8"));
+const env: Record<string, string | undefined> = {
+  ...parseEnv(readFileSync(envPath, "utf8")),
+  ...process.env,
+};
+/** Reads the chain and prints every write it would make, and sends nothing. */
+const dry = process.argv.includes("--dry-run");
 const provider = new JsonRpcProvider({ url: net.rpcs[0] });
 const evidencePath = `${ROOT}runs/stage2-setup.json`;
 const evidence: Record<string, unknown> = existsSync(evidencePath)
@@ -76,6 +81,12 @@ function account(prefix: string): Account {
 }
 
 async function once(name: string, step: () => Promise<string>) {
+  if (dry) {
+    console.log(
+      `would run: ${name}${evidence[name] ? " (already recorded)" : ""}`,
+    );
+    return;
+  }
   if (evidence[name] === "started")
     throw new PublicError(`${name} has an unknown outcome. Inspect it first.`);
   if (evidence[name]) return;
@@ -124,6 +135,24 @@ async function deployEscrow(wasmPath: string) {
   const ops = env.MAINNET_OPS_ACCOUNT_ID;
   const url = env.MAINNET_VERIFIER_URL;
   const hash = env.MAINNET_VERIFIER_HASH;
+  if (dry) {
+    const size = readFileSync(wasmPath).length;
+    console.log(
+      JSON.stringify({
+        would_deploy: env.MAINNET_ESCROW_ACCOUNT_ID,
+        code_bytes: size,
+        storage_near: size / 100_000,
+        owner: ops,
+        secrets_owner: ops,
+        outlayer: "outlayer.near",
+        verifier_url: url,
+        verifier_hash: hash,
+        max_job_near: 0.1,
+        max_held_near: 1,
+      }),
+    );
+    return;
+  }
   if (!ops || !url || !hash)
     throw new PublicError(
       "Publish the verifier first and set its URL and hash.",
@@ -175,6 +204,21 @@ async function post(path: string, body: unknown, key?: string) {
 async function setupWallet() {
   const escrow = env.MAINNET_ESCROW_ACCOUNT_ID;
   if (!escrow) throw new PublicError("MAINNET_ESCROW_ACCOUNT_ID is not set.");
+  if (dry) {
+    console.log(
+      JSON.stringify({
+        would_register: "a free custody wallet",
+        would_store_policy: {
+          receivers: [escrow],
+          per_call_near: 0.1,
+          daily_near: 1,
+          sign_message_only_for: "proven-relay",
+        },
+        controller: env.MAINNET_OPS_ACCOUNT_ID,
+      }),
+    );
+    return;
+  }
   if (!env.MAINNET_BUYER_CUSTODY_KEY) {
     await once("buyer_registered", async () => {
       const wallet = await post("/register", {});
@@ -259,6 +303,20 @@ async function setupWallet() {
 async function setupWorkers() {
   const escrow = env.MAINNET_ESCROW_ACCOUNT_ID;
   if (!escrow) throw new PublicError("MAINNET_ESCROW_ACCOUNT_ID is not set.");
+  if (dry) {
+    console.log(
+      JSON.stringify({
+        would_add_keys_on: [
+          env.MAINNET_WORKER_A_ACCOUNT_ID,
+          env.MAINNET_WORKER_B_ACCOUNT_ID,
+        ],
+        receiver: escrow,
+        methods: WORKER_METHODS,
+        allowance_near: 0.02,
+      }),
+    );
+    return;
+  }
   for (const letter of ["A", "B"]) {
     const worker = account(`MAINNET_WORKER_${letter}`);
     const name = `MAINNET_WORKER_${letter}_SCOPED_PRIVATE_KEY`;
@@ -287,13 +345,19 @@ async function setupWorkers() {
 }
 
 async function main() {
-  const [command, argument] = process.argv.slice(2);
+  const [command, argument] = process.argv
+    .slice(2)
+    .filter((arg) => arg !== "--dry-run");
   await balances();
   if (command === "accounts") return;
   if (command === "escrow") return deployEscrow(argument);
   if (command === "wallet") return setupWallet();
   if (command === "workers") return setupWorkers();
   if (command === "verify-config") {
+    if (dry) {
+      console.log("would read get_config from the escrow");
+      return;
+    }
     const config = await provider.callFunction({
       contractId: env.MAINNET_ESCROW_ACCOUNT_ID!,
       method: "get_config",
