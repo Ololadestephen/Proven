@@ -261,3 +261,10 @@
     margin: 0 0 0 4px;
   }
 }
+
+.record-preview-label {
+  cursor: default;
+}
+.record-preview-label:hover {
+  color: #655ccd;
+}

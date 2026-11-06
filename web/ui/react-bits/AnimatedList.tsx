@@ -89,17 +89,14 @@ function AnimatedItem({
     </motion.li>
   );
 }
-export function AnimatedList({
-  hrefPrefix = "",
-}: {
-  hrefPrefix?: "" | "/app";
-}) {
+export function AnimatedList({ preview = false }: { preview?: boolean }) {
   const [active, setActive] = useState<WorkspaceSection>(() =>
-    sectionFromHash(window.location.hash),
+    preview ? "workspace" : sectionFromHash(window.location.hash),
   );
   const anchors = useRef<Array<HTMLAnchorElement | null>>([]);
   const reduced = useReducedMotion();
   useEffect(() => {
+    if (preview) return;
     const sync = () => setActive(sectionFromHash(window.location.hash));
     const inspect = () => setActive("lookup");
     window.addEventListener("hashchange", sync);
@@ -108,7 +105,7 @@ export function AnimatedList({
       window.removeEventListener("hashchange", sync);
       document.removeEventListener("proven-job", inspect);
     };
-  }, []);
+  }, [preview]);
   function keyboard(event: KeyboardEvent<HTMLElement>) {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const index = anchors.current.findIndex(
@@ -128,8 +125,8 @@ export function AnimatedList({
     <MotionConfig reducedMotion="user">
       <nav
         className="animated-navigation"
-        aria-label="App navigation"
-        onKeyDown={keyboard}
+        aria-label={preview ? "Workspace navigation preview" : "App navigation"}
+        onKeyDown={preview ? undefined : keyboard}
       >
         <ul className="animated-list">
           {ITEMS.map((item, index) => (
@@ -139,9 +136,9 @@ export function AnimatedList({
                   anchors.current[index] = node;
                 }}
                 className="animated-link"
-                href={`${hrefPrefix}#${item.id}`}
+                href={preview ? undefined : `#${item.id}`}
                 aria-current={active === item.id ? "location" : undefined}
-                onClick={select}
+                onClick={preview ? undefined : select}
               >
                 {active === item.id && (
                   <motion.span

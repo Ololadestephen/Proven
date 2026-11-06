@@ -47,9 +47,9 @@ function JobCard({
         </span>
       </div>
       {landing ? (
-        <a className="record-open" href={`/app#job-${id}`}>
-          Inspect the evidence
-        </a>
+        <span className="record-open record-preview-label">
+          Recorded evidence
+        </span>
       ) : (
         <button type="button" className="record-open" onClick={inspect}>
           Open job {id}
@@ -71,7 +71,7 @@ function LandingPreview() {
     <div className="product-preview">
       <aside className="preview-sidebar" aria-label="Workspace preview">
         <span className="preview-p">p.</span>
-        <AnimatedList hrefPrefix="/app" />
+        <AnimatedList preview />
       </aside>
       <div className="preview-main">
         <div className="preview-toolbar">
