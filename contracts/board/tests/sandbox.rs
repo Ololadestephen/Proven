@@ -15,6 +15,7 @@ const VERIFIER: &str = "55555555555555555555555555555555555555555555555555555555
 const OTHER: &str = "6666666666666666666666666666666666666666666666666666666666666666";
 const SEC: u64 = 1_000_000_000;
 const WINDOW: u64 = 60;
+const GRACE: u64 = 120;
 const NONE: NearToken = NearToken::from_yoctonear(0);
 const ONE_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 
@@ -56,6 +57,7 @@ async fn setup() -> anyhow::Result<Env> {
             "owner": owner.id(), "outlayer": outlayer.id(),
             "verifier_url": "https://example.test/verifier.wasm",
             "verifier_hash": VERIFIER, "secrets_owner": owner.id(),
+            "max_job_amount": (1_000 * ONE_NEAR).to_string(), "max_held": (10_000 * ONE_NEAR).to_string(),
         }))
         .transact()
         .await?
@@ -472,7 +474,7 @@ async fn a_linked_claim_lapses_only_if_the_job_was_never_funded() -> anyhow::Res
     let bid = open_bid(&env).await?;
     claim(&env, &env.agent, bid).await?.into_result()?;
     let job = funded_job(&env, bid, &env.agent).await?;
-    advance(&env, WINDOW + 5).await?;
+    advance(&env, WINDOW + GRACE + 5).await?;
     assert_eq!(sync(&env, bid).await?, "Claimed");
     deliver(&env, &env.agent, job).await?.into_result()?;
     refused(&claim(&env, &env.second, bid).await?, "cannot be claimed");
@@ -483,7 +485,10 @@ async fn a_linked_claim_lapses_only_if_the_job_was_never_funded() -> anyhow::Res
     let unfunded = job_for(&env, &env.buyer, &env.agent, CHECK, ONE_NEAR).await?;
     link(&env, idle, unfunded).await?.into_result()?;
     refused(&claim(&env, &env.second, idle).await?, "cannot be claimed");
+    // Past the window but inside the grace it stays, then lapses.
     advance(&env, WINDOW + 5).await?;
+    assert_eq!(sync(&env, idle).await?, "Claimed");
+    advance(&env, GRACE + 5).await?;
     assert_eq!(sync(&env, idle).await?, "Open");
     assert!(attempt(&env, idle, &env.agent).await?["Lapsed"].is_object());
     refused(&claim(&env, &env.agent, idle).await?, "must wait");
@@ -722,5 +727,60 @@ async fn same_account_self_claim_is_blocked_but_a_second_controlled_account_can_
         .json()?;
     assert_eq!(unrelated_before, unrelated_after);
     assert!(env.escrow.view_account().await?.balance.as_yoctonear() >= ONE_NEAR);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_job_too_short_to_finish_cannot_be_linked() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid = open_bid(&env).await?;
+    claim(&env, &env.agent, bid).await?.into_result()?;
+    let now = env.sandbox.view_block().await?.timestamp();
+    let short: u64 = on_escrow(
+        &env,
+        &env.buyer,
+        "create_job",
+        json!({
+            "worker": env.agent.id(), "spec_hash": CHECK, "fakes_hash": REFERENCE,
+            "amount": ONE_NEAR.to_string(), "token": null,
+            "deadline": (now + 600 * SEC).to_string(), "verdict_window_secs": 1_800,
+            "verifier_hash": VERIFIER,
+        }),
+        NearToken::from_millinear(50),
+    )
+    .await?
+    .into_result()?
+    .json()?;
+    refused(&link(&env, bid, short).await?, "too little time");
+    assert!(bid_of(&env, bid).await?["claim"]["job_id"].is_null());
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_allowlist_set_on_a_bid_limits_who_can_claim() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let bid: u64 = on_board(
+        &env,
+        &env.buyer,
+        "post_bid",
+        json!({
+            "description": "Convert these invoice lines to JSON.", "amount": ONE_NEAR.to_string(),
+            "check_hash": CHECK, "reference_hash": REFERENCE, "verifier_hash": VERIFIER,
+            "claim_window_secs": WINDOW, "allowed_workers": [env.agent.id()],
+        }),
+        NearToken::from_millinear(100),
+    )
+    .await?
+    .into_result()?
+    .json()?;
+    review(&env, bid, true).await?.into_result()?;
+    refused(
+        &claim(&env, &env.second, bid).await?,
+        "does not allow this worker",
+    );
+    claim(&env, &env.agent, bid).await?.into_result()?;
+    // A bid with no list stays open to any registered agent.
+    let open = open_bid(&env).await?;
+    claim(&env, &env.second, open).await?.into_result()?;
     Ok(())
 }

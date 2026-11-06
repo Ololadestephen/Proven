@@ -27,6 +27,14 @@ const NANOS: u64 = 1_000_000_000;
 const POST_RESERVE: NearToken = NearToken::from_millinear(10);
 /// Pays for what a claim writes: the attempt record and, later, the linked job id.
 pub const CLAIM_DEPOSIT: NearToken = NearToken::from_millinear(5);
+/// A linked job must leave at least this long to run, so a buyer cannot use up an agent's one attempt
+/// with a job too short to finish.
+const MIN_JOB_TIME_LEFT_NANOS: u64 = 1_800 * NANOS;
+/// A linked claim lapses only this long after its window, well past the point the buyer's tool stops
+/// funding, so a fund and a sync almost never meet.
+const LINK_GRACE_NANOS: u64 = 120 * NANOS;
+const MAX_PAST_JOBS: usize = 20;
+const MAX_ALLOWED_WORKERS: usize = 20;
 const READ_GAS: Gas = Gas::from_tgas(15);
 const CALLBACK_GAS: Gas = Gas::from_tgas(25);
 
@@ -90,7 +98,10 @@ pub struct Bid {
     pub claim: Option<Claim>,
     pub claims_made: u32,
     pub funded_attempts: u32,
+    /// The latest jobs only. `funded_attempts` keeps the full count.
     pub past_jobs: Vec<PastJob>,
+    /// `None` is open entry. Otherwise only these accounts can claim, fixed when the bid is posted.
+    pub allowed_workers: Option<Vec<AccountId>>,
 }
 
 #[near(serializers = [json, borsh])]
@@ -136,6 +147,7 @@ pub struct JobView {
     pub fakes_hash: String,
     pub verifier_hash: String,
     pub state: String,
+    pub deadline: U64,
 }
 
 #[ext_contract(ext_escrow)]
@@ -231,6 +243,7 @@ impl Board {
         reference_hash: String,
         verifier_hash: String,
         claim_window_secs: u32,
+        allowed_workers: Option<Vec<AccountId>>,
     ) -> BidId {
         let before = env::storage_usage();
         require!(
@@ -245,6 +258,12 @@ impl Board {
             (MIN_CLAIM_WINDOW_SECS..=MAX_CLAIM_WINDOW_SECS).contains(&claim_window_secs),
             "claim_window_secs must be 60 to 86400"
         );
+        if let Some(workers) = &allowed_workers {
+            require!(
+                !workers.is_empty() && workers.len() <= MAX_ALLOWED_WORKERS,
+                "allowed_workers must list 1 to 20 accounts"
+            );
+        }
         let id = self.next_bid;
         self.next_bid += 1;
         self.bids.insert(
@@ -263,6 +282,7 @@ impl Board {
                 claims_made: 0,
                 funded_attempts: 0,
                 past_jobs: Vec::new(),
+                allowed_workers,
             },
         );
         self.bids.flush();
@@ -361,6 +381,12 @@ impl Board {
             "this bid cannot be claimed now"
         );
         require!(bid.buyer != agent, "a buyer cannot claim its own bid");
+        if let Some(workers) = &bid.allowed_workers {
+            require!(
+                workers.contains(&agent),
+                "this bid does not allow this worker"
+            );
+        }
         let window = bid.claim_window_secs as u64;
         match self.attempts.get(&(bid_id, agent.clone())) {
             None => {}
@@ -443,6 +469,10 @@ impl Board {
         require!(job.amount == bid.amount, "the job has a different amount");
         require!(job.token.is_none(), "the job must be paid in NEAR");
         require!(
+            job.deadline.0 >= env::block_timestamp().saturating_add(MIN_JOB_TIME_LEFT_NANOS),
+            "the job leaves too little time to finish"
+        );
+        require!(
             unfunded(&job.state) || job.state == "Funded",
             "the job has gone past funding"
         );
@@ -506,7 +536,7 @@ impl Board {
             Some("CheckRejected") => {
                 self.end_claim(bid_id, &agent, BidState::Closed, false);
             }
-            Some(state) if unfunded(state) && now > expires_at => {
+            Some(state) if unfunded(state) && now > expires_at.saturating_add(LINK_GRACE_NANOS) => {
                 self.lapse_claim(bid_id, &agent, now)
             }
             // Funded or running. A linked claim never lapses while its job can still finish.
@@ -692,6 +722,9 @@ impl Board {
                 funded,
                 bid_state_after: after,
             });
+            if bid.past_jobs.len() > MAX_PAST_JOBS {
+                bid.past_jobs.remove(0);
+            }
         }
     }
 
@@ -729,6 +762,7 @@ mod tests {
             HASH.to_string(),
             HASH.to_string(),
             60,
+            None,
         );
         context(4, NearToken::from_yoctonear(0), 1);
         board.record_review(
@@ -822,6 +856,27 @@ mod tests {
             BidState::Claimed
         );
         assert_eq!(board.bid(0).claim.as_ref().unwrap().job_id, Some(7));
+    }
+
+    #[test]
+    fn past_jobs_keep_only_the_latest_and_the_count_stays_true() {
+        let mut board = board_with_open_bid();
+        let agent = accounts(1);
+        for job in 0..(MAX_PAST_JOBS as u64 + 3) {
+            let bid = board.bid_mut(0);
+            bid.claim = Some(Claim {
+                number: 1,
+                agent: agent.clone(),
+                claimed_at: U64(0),
+                expires_at: U64(0),
+                job_id: Some(job),
+            });
+            board.end_claim(0, &agent, BidState::Open, true);
+        }
+        let bid = board.bid(0);
+        assert_eq!(bid.funded_attempts, MAX_PAST_JOBS as u32 + 3);
+        assert_eq!(bid.past_jobs.len(), MAX_PAST_JOBS);
+        assert_eq!(bid.past_jobs[0].job_id, 3);
     }
 
     #[test]
