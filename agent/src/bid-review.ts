@@ -36,14 +36,26 @@ export function parseReview(text: string): ReviewAnswer | null {
   } catch {
     return null;
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return null;
   const { allow, reason, ...rest } = value as Record<string, unknown>;
   if (Object.keys(rest).length > 0) return null;
-  if (typeof allow !== "boolean" || typeof reason !== "string" || reason.length > MAX_REASON_CHARS) return null;
+  if (
+    typeof allow !== "boolean" ||
+    typeof reason !== "string" ||
+    reason.length > MAX_REASON_CHARS
+  )
+    return null;
   return { allow, reason };
 }
 
-export async function reviewBid(client: ModelClient, key: string, description: string, run: string, limitNanoUsd: number): Promise<ReviewResult> {
+export async function reviewBid(
+  client: ModelClient,
+  key: string,
+  description: string,
+  run: string,
+  limitNanoUsd: number,
+): Promise<ReviewResult> {
   const call = await client.call({
     spender: "review",
     stage: "bid-review",

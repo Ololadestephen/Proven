@@ -31,11 +31,21 @@ export interface Bid {
   verifier_hash: string;
   claim_window_secs: number;
   state: string;
-  review: { allow: boolean; review_hash: string; model: string; chat_id: string } | null;
+  review: {
+    allow: boolean;
+    review_hash: string;
+    model: string;
+    chat_id: string;
+  } | null;
   claim: Claim | null;
   claims_made: number;
   funded_attempts: number;
-  past_jobs: Array<{ agent: string; job_id: number; funded: boolean; bid_state_after: string }>;
+  past_jobs: Array<{
+    agent: string;
+    job_id: number;
+    funded: boolean;
+    bid_state_after: string;
+  }>;
 }
 export interface Agent {
   wallet: string;
@@ -52,10 +62,16 @@ export interface Wallet {
 }
 
 /** Link before fund: the buyer funds only a claim that is still active and linked to this job. */
-export function fundRefusal(bid: Bid, jobId: number, now: bigint): string | null {
-  if (bid.state !== "Claimed" || !bid.claim) return "the bid has no active claim";
+export function fundRefusal(
+  bid: Bid,
+  jobId: number,
+  now: bigint,
+): string | null {
+  if (bid.state !== "Claimed" || !bid.claim)
+    return "the bid has no active claim";
   if (bid.claim.job_id !== jobId) return "the claim is not linked to this job";
-  if (now + FUND_MARGIN_NANOS >= BigInt(bid.claim.expires_at)) return "the claim window is about to end";
+  if (now + FUND_MARGIN_NANOS >= BigInt(bid.claim.expires_at))
+    return "the claim window is about to end";
   return null;
 }
 
@@ -65,8 +81,16 @@ export class BoardClient {
     this.provider = new JsonRpcProvider({ url: rpc });
   }
 
-  async view<T>(method: string, args: Record<string, unknown>, contractId = BOARD): Promise<T> {
-    return (await this.provider.callFunction({ contractId, method, args })) as T;
+  async view<T>(
+    method: string,
+    args: Record<string, unknown>,
+    contractId = BOARD,
+  ): Promise<T> {
+    return (await this.provider.callFunction({
+      contractId,
+      method,
+      args,
+    })) as T;
   }
   bid(bidId: number): Promise<Bid | null> {
     return this.view("get_bid", { bid_id: bidId });
@@ -85,31 +109,79 @@ export class BoardClient {
     return BigInt(block.header.timestamp_nanosec);
   }
 
-  private async write(wallet: Wallet, method_name: string, args: Record<string, unknown>, deposit: bigint, gas: string): Promise<CallResult> {
-    const tx = await custodyCall(wallet.api, wallet.key, wallet.account, wallet.escrow, {
-      receiver_id: BOARD,
-      method_name,
-      args,
-      deposit: deposit.toString(),
-      gas,
-    });
-    const result = await waitTransactionResult(this.provider, tx, wallet.account);
-    if (result.failed) throw new PublicError(`Board call ${method_name} failed on chain: ${tx}`);
-    if (result.pending) throw new PublicError(`Board call ${method_name} has an unknown outcome: ${tx}. Read the bid before doing anything else.`);
+  private async write(
+    wallet: Wallet,
+    method_name: string,
+    args: Record<string, unknown>,
+    deposit: bigint,
+    gas: string,
+  ): Promise<CallResult> {
+    const tx = await custodyCall(
+      wallet.api,
+      wallet.key,
+      wallet.account,
+      wallet.escrow,
+      {
+        receiver_id: BOARD,
+        method_name,
+        args,
+        deposit: deposit.toString(),
+        gas,
+      },
+    );
+    const result = await waitTransactionResult(
+      this.provider,
+      tx,
+      wallet.account,
+    );
+    if (result.failed)
+      throw new PublicError(`Board call ${method_name} failed on chain: ${tx}`);
+    if (result.pending)
+      throw new PublicError(
+        `Board call ${method_name} has an unknown outcome: ${tx}. Read the bid before doing anything else.`,
+      );
     return result;
   }
 
-  postBid(wallet: Wallet, args: { description: string; amount: string; check_hash: string; reference_hash: string; verifier_hash: string; claim_window_secs: number }) {
+  postBid(
+    wallet: Wallet,
+    args: {
+      description: string;
+      amount: string;
+      check_hash: string;
+      reference_hash: string;
+      verifier_hash: string;
+      claim_window_secs: number;
+    },
+  ) {
     return this.write(wallet, "post_bid", args, POST_DEPOSIT, SHORT_GAS);
   }
   register(wallet: Wallet, args: Omit<Agent, "wallet">) {
-    return this.write(wallet, "register_agent", args, REGISTER_DEPOSIT, SHORT_GAS);
+    return this.write(
+      wallet,
+      "register_agent",
+      args,
+      REGISTER_DEPOSIT,
+      SHORT_GAS,
+    );
   }
   claim(wallet: Wallet, bidId: number) {
-    return this.write(wallet, "claim", { bid_id: bidId }, CLAIM_DEPOSIT, SHORT_GAS);
+    return this.write(
+      wallet,
+      "claim",
+      { bid_id: bidId },
+      CLAIM_DEPOSIT,
+      SHORT_GAS,
+    );
   }
   link(wallet: Wallet, bidId: number, jobId: number) {
-    return this.write(wallet, "link_job", { bid_id: bidId, job_id: jobId }, 0n, READ_GAS);
+    return this.write(
+      wallet,
+      "link_job",
+      { bid_id: bidId, job_id: jobId },
+      0n,
+      READ_GAS,
+    );
   }
   sync(wallet: Wallet, bidId: number) {
     return this.write(wallet, "sync", { bid_id: bidId }, 0n, READ_GAS);

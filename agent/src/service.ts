@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { PublicError } from "./errors.ts";
 import { loadConfig } from "./config.ts";
 import { createRuntime } from "./near.ts";
+import { boardTools, executeBoardTool, isBoardTool } from "./board-tools.ts";
 import {
   accountId,
   fields,
@@ -92,8 +93,8 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
       ["request_id"],
     ],
   ];
-export const tools = definitions.map(
-  ([name, description, properties, required]) => ({
+export const tools = [
+  ...definitions.map(([name, description, properties, required]) => ({
     name,
     description,
     inputSchema: {
@@ -102,8 +103,9 @@ export const tools = definitions.map(
       required,
       additionalProperties: false,
     } as Record<string, unknown>,
-  }),
-);
+  })),
+  ...boardTools,
+];
 
 function checkedFiles(
   check: string,
@@ -160,9 +162,9 @@ export function createService(runtime: Runtime) {
     return value;
   }
   function payable(dry: boolean) {
-    if (!dry && runtime.actor !== "buyer")
+    if (!dry && runtime.actor !== "buyer" && runtime.actor !== "agent")
       throw new PublicError(
-        "Payable agent calls require buyer custody; scoped worker keys cannot attach NEAR.",
+        "Payable agent calls require a custody wallet; scoped worker keys cannot attach NEAR.",
       );
   }
   async function submit(
@@ -419,9 +421,15 @@ export async function executeTool(
   args: unknown,
   options?: { actor?: Actor; dryRun?: boolean },
 ): Promise<unknown> {
-  return createService(createRuntime(loadConfig(options?.actor)))(
-    name,
-    args,
-    options?.dryRun,
-  );
+  const config = loadConfig(options?.actor);
+  const service = createService(createRuntime(config));
+  if (isBoardTool(name))
+    return executeBoardTool(
+      name,
+      args,
+      config,
+      (job_id) => service("fund_job", { job_id }),
+      options?.dryRun,
+    );
+  return service(name, args, options?.dryRun);
 }

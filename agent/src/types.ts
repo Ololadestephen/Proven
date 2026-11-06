@@ -1,4 +1,4 @@
-export type Actor = "buyer" | "honest" | "fake";
+export type Actor = "buyer" | "honest" | "fake" | "agent";
 export type RunKind = "Challenge" | "Verify";
 export interface Job {
   buyer: string;

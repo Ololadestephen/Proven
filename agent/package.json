@@ -12,6 +12,7 @@
     "mcp": "node src/mcp.ts",
     "demo": "node src/demo.ts",
     "settlement": "node src/settlement-cli.ts",
+    "feed": "node src/feed.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test src/*.test.ts",
     "format": "prettier --write src scripts",

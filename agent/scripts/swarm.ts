@@ -12,15 +12,26 @@ const [command, first, second, third, fourth] = process.argv.slice(2);
 
 async function main() {
   if (command === "post") return postBid(first);
-  if (command === "review") return runReview(Number(first), second ?? "NEARAI_KEY_REVIEW");
+  if (command === "review")
+    return runReview(Number(first), second ?? "NEARAI_KEY_REVIEW");
   if (command === "attempt") {
     const evidence = `${ROOT}runs/swarm-bid-${first}-${second}.jsonl`;
     const log = (step: string, detail: unknown) => {
-      const line = JSON.stringify({ at: new Date().toISOString(), step, detail });
+      const line = JSON.stringify({
+        at: new Date().toISOString(),
+        step,
+        detail,
+      });
       appendFileSync(evidence, `${line}\n`);
       console.log(line);
     };
-    return attempt(Number(first), second, third, fourth ?? `NEARAI_KEY_AGENT_${second.toUpperCase()}`, log);
+    return attempt(
+      Number(first),
+      second,
+      third,
+      fourth ?? `NEARAI_KEY_AGENT_${second.toUpperCase()}`,
+      log,
+    );
   }
   throw new Error("Usage: swarm.ts post|review|attempt");
 }

@@ -28,7 +28,7 @@ export function loadConfig(selected?: Actor): Config {
   if ((get("NEAR_NETWORK") ?? "testnet") !== "testnet")
     throw new PublicError("This agent interface supports testnet only.");
   const actor = selected ?? get("PROVEN_ACTOR") ?? "buyer";
-  if (actor !== "buyer" && actor !== "honest" && actor !== "fake")
+  if (actor !== "buyer" && actor !== "honest" && actor !== "fake" && actor !== "agent")
     throw new PublicError("Invalid actor.");
   const escrow = accountId(
     get("ESCROW_CONTRACT") ?? "escrow-v2.proven.testnet",
@@ -54,7 +54,9 @@ export function loadConfig(selected?: Actor): Config {
   const account =
     actor === "buyer"
       ? get("PROVEN_BUYER_ACCOUNT_ID")
-      : get(`${prefix}_ACCOUNT_ID`);
+      : actor === "agent"
+        ? get("PROVEN_AGENT_ACCOUNT_ID")
+        : get(`${prefix}_ACCOUNT_ID`);
   if (account) accountId(account);
   return {
     actor,
@@ -62,9 +64,17 @@ export function loadConfig(selected?: Actor): Config {
     rpc,
     custodyApi,
     socket: get("PROVEN_RELAY_SOCKET") ?? `${ROOT}runs/private/relay.sock`,
-    custodyKey: actor === "buyer" ? get("PROVEN_BUYER_CUSTODY_KEY") : undefined,
+    custodyKey:
+      actor === "buyer"
+        ? get("PROVEN_BUYER_CUSTODY_KEY")
+        : actor === "agent"
+          ? get("PROVEN_AGENT_CUSTODY_KEY")
+          : undefined,
     account,
-    key: actor === "buyer" ? undefined : get(`${prefix}_PRIVATE_KEY`),
+    key:
+      actor === "buyer" || actor === "agent"
+        ? undefined
+        : get(`${prefix}_PRIVATE_KEY`),
     demoSession: process.env.PROVEN_DEMO_SESSION,
   };
 }

@@ -114,10 +114,10 @@ export function createRuntime(
     async submit(plan: CallPlan) {
       if (plan.receiver_id !== config.escrow)
         throw new PublicError("Only this escrow may receive agent calls.");
-      if (config.actor === "buyer") {
+      if (config.actor === "buyer" || config.actor === "agent") {
         if (!config.custodyKey || !config.account)
           throw new PublicError(
-            "Buyer custody credentials are missing. Full-access buyer keys are never accepted by this interface.",
+            "Custody credentials are missing. Full-access keys are never accepted by this interface.",
           );
         const tx = await custodyCall(
           config.custodyApi,
