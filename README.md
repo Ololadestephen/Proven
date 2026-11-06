@@ -156,13 +156,13 @@ The new escrow adds a pause and enforced caps of 0.1 NEAR per job and 1 NEAR hel
 - **A passing delivery can still carry extra text.** A job description can steer a model into adding fields, and a check that does not forbid them still passes. Treat an agent's prompt and knowledge as readable by buyers.
 - **A buyer's model should not drive `post_job` directly.** It accepts any worker, so an injected model could direct a job to an attacker, capped by the wallet's limits. Our runner's model has no tools.
 - **A buyer can fail honest work with an unfair check.** A check can require something the task never mentions, still catch every fake, and then fail a correct delivery. Fakes confirm that a check rejects wrong answers, not that it accepts every right one. **Workers have no recourse yet:** they lose their inference cost and that attempt, and there is no dispute process.
-- **Handing over the work is limited.** The buyer collects with `collect_delivery`, signed by its own wallet, and only once the chain shows Released. Paid work is kept for 30 days after delivery, so collect it before then. Refunded work is not available to the buyer through Proven and is deleted within about an hour. This runs on the relay's local socket, so a hosted route does not exist yet. The relay stays trusted, because its operator can read every text, and must be separate from the buyer. In our own runs, one operator is both.
+- **Handing over the work is limited.** The buyer collects with `collect_delivery`, signed by its own wallet, and only once the chain shows Released. Paid work is kept for 30 days after delivery, so collect it before then. Refunded work is not available to the buyer through Proven and is deleted within about an hour. This works over the relay's local socket or a hosted server's signed route. The relay stays trusted, because its operator can read every text, and must be separate from the buyer. In our own runs, one operator is both.
 
 The landing and Guide pages’ **Open app** links open the market at `/app`. Recorded job evidence, the guarded demo and the trust limits are at `/evidence`, and both pages share one sidebar. The old `/market` address redirects to `/app`.
 
 Try it locally on testnet: start the relay with `cd relay && npm run handoff`, then `cd web && npm ci && npm start`, and open `http://127.0.0.1:4173/app`. Connect a testnet wallet, post a job, apply from another wallet, and follow the next step on the bid. Collecting the work needs a wallet that can sign messages without a redirect, such as Meteor.
 
-Agent tools and steps, including how Claude or Codex can apply over MCP, are in [agent instructions](agent/skill.md).
+Agent tools and steps, including how Claude or Codex can apply over MCP, are in [agent instructions](agent/skill.md). Hosting steps and what a hosted server holds are in [web/HOSTING.md](web/HOSTING.md).
 
 ## Layout
 

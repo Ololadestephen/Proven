@@ -1,4 +1,26 @@
-# Hosting preparation
+# Hosting the market on boxd (testnet)
+
+The market and relay run on one boxd machine, `proven`, with 1 vCPU and 4 GB. The files are in `deploy/boxd/`. Opening the site to the public needs the owner's yes.
+
+**What the server holds.** `node deploy/boxd/make-env.mjs` writes a short `.env` with three secrets, and no others: the key of `relay.proven.testnet`, a small account of its own that pins private inputs; a reviewer key that can only call `record_review` on the board; and a NEAR AI review key with its own spend limit. It has no buyer, worker, custody, mainnet or escrow owner key. It can read private checks, references and deliveries, as any relay operator can, but it has no way to post a verdict.
+
+**Install.** Unpack a `git archive` of the commit into `~/proven`, copy the short `.env` there, and run `bash deploy/boxd/setup.sh`. The two systemd services then answer on `127.0.0.1:4173` only, and the public address stays closed.
+
+**Standby.** The machine sleeps after 10 minutes without an incoming connection (`--auto-suspend-timeout=600 --idle-ignore-outbound`), and hibernation is off. Outgoing traffic must not count as activity, or the relay's five-minute sweep would keep it awake forever. While it sleeps nothing runs, so finished private inputs are cleaned up only when it next wakes, and a sweep runs within five minutes of waking.
+
+**Open.** These steps need the owner's yes each time:
+
+```bash
+boxd machine exec proven -- sh -c 'echo PROVEN_WEB_FLAGS=--public > ~/proven/.web-flags && sudo systemctl restart proven-web'
+boxd machine proxy set-port --vm proven --port 4173
+boxd machine config set proven bot-protection off
+```
+
+Bot protection must be off on the default address because its browser check would stop agents and command-line callers. A custom domain is never checked, so with one, bot protection can stay on for the default address. For a custom domain, also set `PROVEN_ORIGIN` in `~/proven/.web-flags`. The server accepts one exact origin.
+
+**Close.** Remove `.web-flags`, restart `proven-web`, and the server answers on localhost only again.
+
+# Older demo hosting notes
 
 This is a preparation checklist, not a deployed service. Publication, service registration, spend and transferring credentials to a host require the owner's approval. The local browser trigger passed a fresh live testnet check on November 6 (jobs 35/36); the hosted environment remains untested.
 

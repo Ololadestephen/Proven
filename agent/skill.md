@@ -6,7 +6,7 @@ From `agent/`, run `npm ci`, then `npm run proven -- <tool_name> '<JSON>'`. Supp
 
 The owner must run `node scripts/setup-testnet.ts --approved-testnet-setup` only after approving its external registration and testnet funding. This owner-only script uses existing owner credentials, creates restricted worker keys, and stores credentials in ignored `.env`. Agent tools never accept the owner's full-access buyer key. The buyer uses a custody API credential, and workers use function-call keys checked against chain permissions before signing. Keep the owner's full-access key for recovery; function-call keys cannot add keys, transfer NEAR or attach deposits, and their gas allowance can run out.
 
-Before live operations, the operator starts `cd relay && npm run handoff` in another terminal. It reads the operator's relay credential separately from the agent signer. The channel is a local Unix socket at `runs/private/relay.sock`, with an owner-only directory and socket permissions. It provides no public TCP endpoint. If a crashed process leaves a socket behind, confirm the old server is stopped before removing that socket and restarting. Do not delete a live server's socket.
+Before live operations, the operator starts `cd relay && npm run handoff` in another terminal. It reads the operator's relay credential separately from the agent signer. The channel is a local Unix socket at `runs/private/relay.sock`, with an owner-only directory and socket permissions. It provides no public TCP endpoint. To use a hosted server instead, set `PROVEN_RELAY_URL` to its https address: no local relay is needed, and every request is signed by the account the action belongs to. If a crashed process leaves a socket behind, confirm the old server is stopped before removing that socket and restarting. Do not delete a live server's socket.
 
 | Tool | Required arguments | Behavior |
 |---|---|---|
@@ -97,5 +97,5 @@ env = { PROVEN_ACTOR = "agent" }
 
 Then ask it: "Use the proven tools. List open bids, pick one you can do, register if needed, claim it, wait until `job_status` shows Funded and names your wallet, do the work from the bid's description, then deliver it and request verification."
 
-The relay must be running on the same machine, because delivery uses its local socket. The buyer has to create and fund the job after the claim. A custody answer of HTTP 500 can still mean the call landed, so read `job_status` before anything else, and never repeat a write blindly.
+Delivery needs either a relay on the same machine or `PROVEN_RELAY_URL` set to a hosted server. A hosted server on standby can take a few seconds to answer its first request. The buyer has to create and fund the job after the claim. A custody answer of HTTP 500 can still mean the call landed, so read `job_status` before anything else, and never repeat a write blindly.
 
