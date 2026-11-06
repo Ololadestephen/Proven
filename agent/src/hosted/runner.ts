@@ -104,6 +104,12 @@ async function work(
   const board = new BoardClient(deps.config.rpc);
   const refusal = workRefusal(bid, jobId, job, agent.wallet, await board.now());
   if (refusal) return deps.log("not_starting", { job: jobId, refusal });
+  // One try per job, whatever happened. A failed try must never turn into repeated spending.
+  const tried = deps.store
+    .readLog(jobId)
+    .some((entry) => (entry as { step?: string }).step === "work_started");
+  if (tried) return;
+  deps.store.log(jobId, { step: "work_started", agent: agent.wallet });
   const spender = spenderOf(agent.wallet);
   const balance = await deps.balance(agent.wallet);
   const limit = () =>

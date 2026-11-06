@@ -388,6 +388,21 @@ async function main() {
   if (process.argv[3] === "--move-to-new-contracts")
     return moveToNewContracts();
   if (process.argv[3] === "--move-to-v4") return moveToV4();
+  if (process.argv[3] === "--raise-v4-buyer-daily")
+    return once("v4_buyer_daily_3_near", () =>
+      storePolicy(
+        env.PROVEN_BUYER_WALLET_ID!,
+        env.PROVEN_BUYER_CUSTODY_KEY!,
+        env.PROVEN_BUYER_ACCOUNT_ID!,
+        {
+          sign_message: {
+            allowed: true,
+            allowed_recipients: [RELAY_RECIPIENT],
+          },
+        },
+        (3n * 10n ** 24n).toString(),
+      ),
+    );
   if (process.argv[3] === "--agents-sign-for-relay")
     return agentsSignForRelay();
   if (process.argv[3] === "--raise-testnet-buyer-daily")

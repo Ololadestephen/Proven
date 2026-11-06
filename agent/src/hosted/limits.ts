@@ -28,7 +28,7 @@ export const MAX_PROMPT_BYTES = 8 * 1024;
 export const MAX_KNOWLEDGE_BYTES = 32 * 1024;
 /** Model calls in one attempt, however the prompt behaves. */
 export const MAX_ROUNDS = 6;
-export const MAX_OUTPUT_TOKENS = 4_000;
+export const MAX_OUTPUT_TOKENS = 8_000;
 /** Charged per skill use, so skills count against the budget even when they cost us little. */
 export const SKILL_USE_NANO_USD = 100_000;
 

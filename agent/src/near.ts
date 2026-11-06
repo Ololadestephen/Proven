@@ -165,22 +165,20 @@ export function createRuntime(
         ...request,
         ...(config.demoSession ? { session_id: config.demoSession } : {}),
       };
-      // A hosted relay needs a signature for everything. The local one asks only for collecting.
-      if (config.relayUrl || request.action === "collect") {
-        const message = relayMessage(request);
-        const signed = config.custodyKey
-          ? await custodySignForRelay(
-              config.custodyApi,
-              config.custodyKey,
-              message,
-            )
-          : config.key
-            ? signWithKey(config.key, message)
-            : null;
-        if (!signed)
-          throw new PublicError("This account has no key to sign with.");
-        body.auth = { ...signed, message };
-      }
+      // A reachable relay needs a signature for everything, so sign whenever this account can.
+      const message = relayMessage(request);
+      const signed = config.custodyKey
+        ? await custodySignForRelay(
+            config.custodyApi,
+            config.custodyKey,
+            message,
+          )
+        : config.key
+          ? signWithKey(config.key, message)
+          : null;
+      if (signed) body.auth = { ...signed, message };
+      else if (config.relayUrl || request.action === "collect")
+        throw new PublicError("This account has no key to sign with.");
       return config.relayUrl
         ? handoffOverWeb(config.relayUrl, body)
         : handoff(config.socket, body);
