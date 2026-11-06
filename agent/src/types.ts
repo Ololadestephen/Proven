@@ -51,4 +51,10 @@ export interface Runtime {
   now(): Promise<bigint>;
   submit(plan: CallPlan): Promise<CallResult>;
   handoff(request: Record<string, unknown>): Promise<unknown>;
+  /** A signature addressed to the relay. Only a custody wallet can give one. */
+  signForRelay?(message: string): Promise<{
+    public_key: string;
+    signature_base64: string;
+    nonce_base64: string;
+  }>;
 }

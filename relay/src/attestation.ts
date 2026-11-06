@@ -61,7 +61,8 @@ function u64le(value: number): Buffer {
 
 /** OutLayer's task hash (V1): the 32 bytes Intel's quote signs in report_data. */
 export function taskHash(r: AttestationRecord): string {
-  const text = (s: string | null | undefined) => (s == null ? [] : [Buffer.from(s, "utf8")]);
+  const text = (s: string | null | undefined) =>
+    s == null ? [] : [Buffer.from(s, "utf8")];
   const parts: Buffer[] = [
     ...text(r.task_type),
     i64le(r.task_id),
@@ -82,30 +83,59 @@ export function taskHash(r: AttestationRecord): string {
 }
 
 /** Returns the task hash if every check passes; throws naming the first check that failed. */
-export function checkAttestation(r: AttestationRecord, expected: Expected): string {
+export function checkAttestation(
+  r: AttestationRecord,
+  expected: Expected,
+): string {
   const fail = (what: string) => {
     throw new Error(`attestation check failed: ${what}`);
   };
   if (r.task_type !== "execute") fail("task type is not execute");
-  if (r.wasm_hash !== expected.wasmHash) fail("wasm_hash is not the job's verifier build");
-  if (r.executed_wasm_sha256 !== undefined && r.executed_wasm_sha256 !== expected.wasmHash) fail("executed WASM is not the job's verifier build");
-  if (r.input_hash !== sha256Hex(expected.inputText)) fail("input_hash is not the hash of the job's input");
-  if (r.output_hash !== expected.outputHash) fail("output_hash is not the recorded report hash");
-  if (expected.secretsRef !== undefined && r.secrets_ref !== expected.secretsRef) fail("secrets_ref is not the job's secret");
-  if (expected.caller !== undefined && r.caller_account_id !== expected.caller) fail("caller is not the expected account");
-  if (expected.transactionHash !== undefined && r.transaction_hash !== expected.transactionHash) fail("transaction hash is not the expected one");
+  if (r.wasm_hash !== expected.wasmHash)
+    fail("wasm_hash is not the job's verifier build");
+  if (
+    r.executed_wasm_sha256 !== undefined &&
+    r.executed_wasm_sha256 !== expected.wasmHash
+  )
+    fail("executed WASM is not the job's verifier build");
+  if (r.input_hash !== sha256Hex(expected.inputText))
+    fail("input_hash is not the hash of the job's input");
+  if (r.output_hash !== expected.outputHash)
+    fail("output_hash is not the recorded report hash");
+  if (
+    expected.secretsRef !== undefined &&
+    r.secrets_ref !== expected.secretsRef
+  )
+    fail("secrets_ref is not the job's secret");
+  if (expected.caller !== undefined && r.caller_account_id !== expected.caller)
+    fail("caller is not the expected account");
+  if (
+    expected.transactionHash !== undefined &&
+    r.transaction_hash !== expected.transactionHash
+  )
+    fail("transaction hash is not the expected one");
 
   const quote = Buffer.from(r.tdx_quote, "base64");
   if (quote.length < REPORT_DATA_OFFSET + 32) fail("quote is too short");
   if (quote.readUInt16LE(0) !== 4) fail("quote is not TDX version 4");
-  const committed = quote.subarray(REPORT_DATA_OFFSET, REPORT_DATA_OFFSET + 32).toString("hex");
+  const committed = quote
+    .subarray(REPORT_DATA_OFFSET, REPORT_DATA_OFFSET + 32)
+    .toString("hex");
   const computed = taskHash(r);
-  if (committed !== computed) fail("the quote does not commit to this execution (task hash mismatch)");
-  if (quote.subarray(RTMR3_OFFSET, REPORT_DATA_OFFSET).toString("hex") !== r.worker_measurement) fail("RTMR3 in the quote is not the recorded worker measurement");
+  if (committed !== computed)
+    fail("the quote does not commit to this execution (task hash mismatch)");
+  if (
+    quote.subarray(RTMR3_OFFSET, REPORT_DATA_OFFSET).toString("hex") !==
+    r.worker_measurement
+  )
+    fail("RTMR3 in the quote is not the recorded worker measurement");
   return computed;
 }
 
-export async function fetchAttestation(api: string, requestId: number): Promise<AttestationRecord> {
+export async function fetchAttestation(
+  api: string,
+  requestId: number,
+): Promise<AttestationRecord> {
   // The record appears shortly after the execution resolves on chain.
   for (let attempt = 0; attempt < 10; attempt++) {
     const response = await fetch(`${api}/attestations/by-request/${requestId}`);

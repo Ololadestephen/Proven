@@ -13,7 +13,10 @@ export function canonicalJson(value: unknown): string {
   if (value !== null && typeof value === "object") {
     const entries = Object.keys(value as Record<string, unknown>)
       .sort()
-      .map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`);
+      .map(
+        (k) =>
+          `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`,
+      );
     return `{${entries.join(",")}}`;
   }
   return JSON.stringify(value);

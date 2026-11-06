@@ -30,8 +30,24 @@ function u32(value: number): Buffer {
 }
 
 /** Borsh `FastfsData::Partial`: one chunk of a file larger than a chunk (or a whole small file). */
-export function partialPayload(path: string, offset: number, fullSize: number, mimeType: string, chunk: Buffer, nonce: number): Buffer {
-  return Buffer.concat([Buffer.from([1]), borshString(path), u32(offset), u32(fullSize), borshString(mimeType), u32(chunk.length), chunk, u32(nonce)]);
+export function partialPayload(
+  path: string,
+  offset: number,
+  fullSize: number,
+  mimeType: string,
+  chunk: Buffer,
+  nonce: number,
+): Buffer {
+  return Buffer.concat([
+    Buffer.from([1]),
+    borshString(path),
+    u32(offset),
+    u32(fullSize),
+    borshString(mimeType),
+    u32(chunk.length),
+    chunk,
+    u32(nonce),
+  ]);
 }
 
 async function main(): Promise<void> {
@@ -48,15 +64,41 @@ async function main(): Promise<void> {
   const nonce = Math.floor(Date.now() / 1000) - NONCE_EPOCH_SECS;
   for (let offset = 0; offset < content.length; offset += CHUNK_SIZE) {
     const chunk = content.subarray(offset, offset + CHUNK_SIZE);
-    const payload = partialPayload(path, offset, content.length, "application/wasm", chunk, nonce);
+    const payload = partialPayload(
+      path,
+      offset,
+      content.length,
+      "application/wasm",
+      chunk,
+      nonce,
+    );
     const response = await account.signAndSendTransaction({
       receiverId: config.outlayerContract,
-      actions: [actions.functionCall("__fastdata_fastfs", new Uint8Array(payload), 1n * TGAS, 0n)],
+      actions: [
+        actions.functionCall(
+          "__fastdata_fastfs",
+          new Uint8Array(payload),
+          1n * TGAS,
+          0n,
+        ),
+      ],
       throwOnFailure: false,
     });
-    console.error(`chunk at ${offset}: ${chunk.length} bytes, tx ${response.transaction.hash}`);
+    console.error(
+      `chunk at ${offset}: ${chunk.length} bytes, tx ${response.transaction.hash}`,
+    );
   }
-  console.log(JSON.stringify({ sha256: hash, url: `https://test.fastfs.io/${account.accountId}/${config.outlayerContract}/${path}`, bytes: content.length }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        sha256: hash,
+        url: `https://test.fastfs.io/${account.accountId}/${config.outlayerContract}/${path}`,
+        bytes: content.length,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 if (import.meta.main) {

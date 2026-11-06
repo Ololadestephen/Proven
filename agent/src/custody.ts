@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { PublicError } from "./errors.ts";
 import type { CallPlan } from "./types.ts";
 
@@ -57,12 +57,73 @@ export function assertPolicy(value: unknown, escrow: string): void {
     !/^\d+$/.test(daily) ||
     BigInt(daily) <= 0n ||
     BigInt(daily) > 10n ** 24n ||
-    CAPABILITIES.some((name) => p.capabilities?.[name]?.allowed !== false)
+    CAPABILITIES.some(
+      (name) =>
+        p.capabilities?.[name]?.allowed !== false && !relaySigning(name, p),
+    )
   ) {
     throw new PublicError(
       "Custody wallet must have the stored native-call policy limited to the escrow and the board, with signing capabilities disabled.",
     );
   }
+}
+
+/** The one thing signing may be open for: messages addressed to this project's relay. */
+export const RELAY_RECIPIENT = "proven-relay";
+function relaySigning(
+  name: string,
+  policy: {
+    capabilities?: Record<
+      string,
+      { allowed?: boolean; allowed_recipients?: unknown }
+    >;
+  },
+): boolean {
+  const list = policy.capabilities?.[name]?.allowed_recipients;
+  return (
+    name === "sign_message" &&
+    policy.capabilities?.[name]?.allowed === true &&
+    Array.isArray(list) &&
+    list.length === 1 &&
+    list[0] === RELAY_RECIPIENT
+  );
+}
+
+/** Signs one NEP-413 message for the relay. It can sign for nothing else. */
+export async function custodySignForRelay(
+  api: string,
+  key: string,
+  message: string,
+): Promise<{
+  public_key: string;
+  signature_base64: string;
+  nonce_base64: string;
+}> {
+  const nonce = randomBytes(32).toString("base64");
+  const response = await fetch(`${api}/wallet/v1/sign-message`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ message, recipient: RELAY_RECIPIENT, nonce }),
+    signal: AbortSignal.timeout(30000),
+    redirect: "error",
+  });
+  if (!response.ok)
+    throw new PublicError("The wallet would not sign the collect request.");
+  const body = (await response.json()) as {
+    public_key?: string;
+    signature_base64?: string;
+    nonce?: string;
+  };
+  if (!body.public_key || !body.signature_base64)
+    throw new PublicError("The wallet returned no signature.");
+  return {
+    public_key: body.public_key,
+    signature_base64: body.signature_base64,
+    nonce_base64: body.nonce ?? nonce,
+  };
 }
 
 export async function custodyRead(

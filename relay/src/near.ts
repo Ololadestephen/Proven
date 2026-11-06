@@ -73,6 +73,24 @@ export async function getJob(
   return job as unknown as Job;
 }
 
+/** Whether this key is on the account. A failed read counts as no, so it refuses. */
+export async function isAccessKey(
+  account: Account,
+  accountId: string,
+  publicKey: string,
+): Promise<boolean> {
+  try {
+    await account.provider.viewAccessKey({
+      accountId,
+      publicKey,
+      finalityQuery: { finality: "final" },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function secretsProfile(job: Job, jobId: number, kind: RunKind): string {
   return kind === "Challenge"
     ? `c${jobId}-${job.fakes_hash.slice(0, 12)}`

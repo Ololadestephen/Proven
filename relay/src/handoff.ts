@@ -5,6 +5,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  readdir,
   open,
   rename,
   unlink,
@@ -15,6 +16,7 @@ import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CollectVerifier, type CollectAuth } from "./buyer-auth.ts";
 import { isHash, sha256Hex } from "./hash.ts";
 import type { Job, RunKind } from "./near.ts";
 import type { TimingEvent, TimingSink } from "./timing.ts";
@@ -56,6 +58,8 @@ export interface HandoffDependencies {
     variables: Record<string, string>,
   ): Promise<{ transactionHash: string; ciphertextBytes: number }>;
   deleteSecret(verifierHash: string, profile: string): Promise<string>;
+  /** Whether this key is on the account, per the chain. */
+  isAccessKey(account: string, publicKey: string): Promise<boolean>;
   demoCompute?: DemoCompute;
   isSigningSuspended?: () => boolean;
 }
@@ -64,7 +68,8 @@ type Request =
   | { action: "challenge"; job_id: number; check: string; reference: string }
   | { action: "deliver"; job_id: number; deliverable: string }
   | { action: "pin_verification"; job_id: number }
-  | { action: "cleanup"; job_id: number; kind: RunKind };
+  | { action: "cleanup"; job_id: number; kind: RunKind }
+  | { action: "collect"; job_id: number; auth: CollectAuth };
 type DemoRequest = { action: "trigger"; job_id: number; kind: RunKind };
 export type HandoffReply =
   { ok: true; result: Record<string, unknown> } | { ok: false; error: string };
@@ -88,6 +93,7 @@ function parseRequest(value: unknown): Request | DemoRequest {
     deliver: ["action", "job_id", "deliverable"],
     pin_verification: ["action", "job_id"],
     cleanup: ["action", "job_id", "kind"],
+    collect: ["action", "job_id", "auth"],
     trigger: ["action", "job_id", "kind"],
   };
   requireSafe(
@@ -104,6 +110,15 @@ function parseRequest(value: unknown): Request | DemoRequest {
     );
   if (value.action === "deliver")
     requireSafe(typeof value.deliverable === "string");
+  if (value.action === "collect") {
+    const auth = value.auth;
+    requireSafe(
+      object(auth) &&
+        ["public_key", "signature_base64", "nonce_base64", "message"].every(
+          (field) => typeof auth[field] === "string",
+        ),
+    );
+  }
   if (value.action === "cleanup" || value.action === "trigger")
     requireSafe(value.kind === "Challenge" || value.kind === "Verify");
   requireSafe(Buffer.byteLength(JSON.stringify(value)) <= MAX_HANDOFF_BYTES);
@@ -214,6 +229,40 @@ function profile(job: HandoffJob, jobId: number, kind: RunKind): string {
     : `v${jobId}-${job.deliverable_hash!.slice(0, 12)}`;
 }
 
+/** Paid work is kept this long after delivery for the buyer to collect, then deleted. */
+export const COLLECT_RETENTION_MS = 30 * 24 * 3_600_000;
+const SWEEP_EVERY_MS = 3_600_000;
+
+/** Deletes refunded, expired and cancelled work, and paid work past retention. A failed read deletes
+ * nothing. Returns the job ids whose deliverables were deleted. */
+export async function sweepDeliveries(
+  deps: Pick<HandoffDependencies, "getJob" | "escrow">,
+  directory: string,
+  now = Date.now(),
+): Promise<number[]> {
+  const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
+  const deleted: number[] = [];
+  const names = await readdir(records).catch(() => [] as string[]);
+  for (const name of names) {
+    const parts = /^(\d+)\.deliverable\.json$/.exec(name);
+    if (!parts) continue;
+    const jobId = Number(parts[1]);
+    const file = join(records, name);
+    try {
+      const job = await deps.getJob(jobId);
+      const old = now - (await lstat(file)).mtimeMs > COLLECT_RETENTION_MS;
+      const gone = job === null || ["Refunded", "Expired"].includes(job.state);
+      if (gone || (job.state === "Released" && old)) {
+        await unlink(file);
+        deleted.push(jobId);
+      }
+    } catch {
+      /* Try again on the next sweep. */
+    }
+  }
+  return deleted;
+}
+
 export async function createHandoffHandler(
   deps: HandoffDependencies,
   directory: string,
@@ -222,6 +271,7 @@ export async function createHandoffHandler(
   const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
   await privateDirectory(records);
   const queues = new Map<number, Promise<unknown>>();
+  const collectVerifier = new CollectVerifier(deps.isAccessKey);
   const pinned = new Set<string>();
   let walletQueue = Promise.resolve<unknown>(undefined);
   function wallet<T>(action: () => Promise<T>): Promise<T> {
@@ -260,6 +310,20 @@ export async function createHandoffHandler(
         isHash(job.fakes_hash) &&
         isHash(job.verifier_hash),
     );
+    if (request.action === "collect") {
+      // Only the job's buyer, and only once the chain shows the worker has been paid.
+      requireSafe(job.state === "Released" && typeof job.buyer === "string");
+      requireSafe(
+        await collectVerifier.verify(
+          request.auth,
+          job.buyer as string,
+          request.job_id,
+        ),
+      );
+      const text = await readPrivate(path(request.job_id, "deliverable"));
+      requireSafe(sha256Hex(text) === job.deliverable_hash);
+      return { deliverable: text, deliverable_hash: job.deliverable_hash };
+    }
     if (request.action === "trigger") {
       return sponsor.trigger(request.job_id, request.kind, session ?? "", () =>
         pinned.has(`${request.job_id}:${request.kind}`),
@@ -303,7 +367,12 @@ export async function createHandoffHandler(
       });
       pinned.delete(`${request.job_id}:${request.kind}`);
       if (terminal) {
-        for (const kind of ["check", "deliverable"] as const) {
+        // Paid work stays until the buyer can collect it; see sweepDeliveries for how long.
+        const kinds =
+          job.state === "Released"
+            ? (["check"] as const)
+            : (["check", "deliverable"] as const);
+        for (const kind of kinds) {
           const file = path(request.job_id, kind);
           if (await safeExistingFile(file)) await unlink(file);
         }
@@ -479,6 +548,11 @@ export async function startHandoffServer(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const handle = await createHandoffHandler(deps, directory);
+  void sweepDeliveries(deps, directory);
+  setInterval(
+    () => void sweepDeliveries(deps, directory),
+    SWEEP_EVERY_MS,
+  ).unref();
   const server = createServer({ allowHalfOpen: true }, (socket) =>
     connection(socket, handle),
   );
@@ -614,6 +688,8 @@ async function main(): Promise<void> {
     accountId: account.accountId,
     escrow: config.escrowContract,
     getJob: (jobId) => near.getJob(account, config, jobId, timing),
+    isAccessKey: (accountId, publicKey) =>
+      near.isAccessKey(account, accountId, publicKey),
     storeSecret: (hash, name, variables) =>
       signing(() =>
         secret.storeSecret(

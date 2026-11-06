@@ -11,7 +11,12 @@ import {
   KeyPairSigner,
   actions,
 } from "near-api-js";
-import { BOARD, assertPolicy, custodyRead } from "../src/custody.ts";
+import {
+  BOARD,
+  RELAY_RECIPIENT,
+  assertPolicy,
+  custodyRead,
+} from "../src/custody.ts";
 import { ROOT } from "../src/config.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
 
@@ -95,10 +100,15 @@ async function storePolicy(
   walletId: string,
   key: string,
   account: string,
+  capabilities: Record<string, unknown> = {},
 ): Promise<string> {
-  const policy = JSON.parse(
+  const stored = JSON.parse(
     readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
-  ) as Record<string, unknown>;
+  ) as { capabilities: Record<string, unknown> };
+  const policy = {
+    ...stored,
+    capabilities: { ...stored.capabilities, ...capabilities },
+  };
   const owner = controller();
   const encrypted = await post(
     "/wallet/v1/encrypt-policy",
@@ -230,6 +240,16 @@ async function moveToNewContracts() {
       ),
     );
   }
+  await once("v3_buyer_collect_policy", () =>
+    storePolicy(
+      env.PROVEN_BUYER_WALLET_ID!,
+      env.PROVEN_BUYER_CUSTODY_KEY!,
+      env.PROVEN_BUYER_ACCOUNT_ID!,
+      {
+        sign_message: { allowed: true, allowed_recipients: [RELAY_RECIPIENT] },
+      },
+    ),
+  );
   await once("v3_reviewer_key", async () => {
     if (!env.PROVEN_REVIEWER_V2_PRIVATE_KEY)
       save({

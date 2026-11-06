@@ -1,3 +1,5 @@
+import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { collectMessage, nep413Digest, RELAY_RECIPIENT } from "./buyer-auth.ts";
 import assert from "node:assert/strict";
 import {
   chmod,
@@ -15,7 +17,9 @@ import type { Server } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  COLLECT_RETENTION_MS,
   createHandoffHandler,
+  sweepDeliveries,
   MAX_HANDOFF_BYTES,
   startHandoffServer,
 } from "./handoff.ts";
@@ -30,6 +34,7 @@ const deliverable = '{"private":"PRIVATE_DELIVERY"}';
 async function fixture() {
   const directory = await mkdtemp("/private/tmp/proven-handoff-");
   const job = {
+    buyer: "buyer.testnet",
     state: "Draft",
     spec_hash: sha256Hex(check),
     fakes_hash: sha256Hex(reference),
@@ -54,6 +59,7 @@ async function fixture() {
       stores.push({ hash, profile, variables });
       return { transactionHash: "pinned", ciphertextBytes: 256 };
     },
+    isAccessKey: async () => false,
     deleteSecret: async (_hash, profile) => {
       deletions.push(profile);
       return "deleted";
@@ -75,6 +81,11 @@ const challenge = (job_id = 1) => ({
   job_id,
   check,
   reference,
+});
+const collectRequest = (auth: Record<string, string>, job_id = 1) => ({
+  action: "collect",
+  job_id,
+  auth,
 });
 const delivery = (job_id = 1) => ({ action: "deliver", job_id, deliverable });
 const pin = (job_id = 1) => ({ action: "pin_verification", job_id });
@@ -233,7 +244,7 @@ test("mismatched hashes, verifier builds, owners, and states cannot pin", async 
     f.job.secrets_owner = "other.testnet";
     assert.equal((await handle(challenge())).ok, false);
     f.job.secrets_owner = f.deps.accountId;
-    f.job.state = "Funded";
+    f.job.state = "Delivered";
     assert.equal((await handle(challenge())).ok, false);
     assert.equal(f.stores.length, 0);
     assert.deepEqual(await readdir(f.records), []);
@@ -342,7 +353,8 @@ test("cleanup refuses pending runs and keeps checks between challenge and verifi
     assert.equal((await handle(pin())).ok, true);
     f.job.state = "Released";
     assert.equal((await handle(cleanup("Verify"))).ok, true);
-    assert.deepEqual(await readdir(f.records), []);
+    // Paid work stays for the buyer to collect.
+    assert.deepEqual(await readdir(f.records), ["1.deliverable.json"]);
     assert.equal(f.deletions.length, 2);
   } finally {
     await f.cleanup();
@@ -542,6 +554,107 @@ test("suspended operator refuses every queued signing action while public status
     assert.equal(cleanup.ok, false);
     assert.equal(f.deletions.length, 0);
     assert.equal((await handle({ action: "demo_status" })).ok, true);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a deliverable goes only to its buyer, only once Released, and paid work survives cleanup", async () => {
+  const f = await fixture();
+  try {
+    const handle = await createHandoffHandler(f.deps, f.directory);
+    const pair = generateKeyPairSync("ed25519");
+    const raw = pair.publicKey
+      .export({ format: "der", type: "spki" })
+      .subarray(-32);
+    let value = BigInt(`0x${raw.toString("hex")}`);
+    const alphabet =
+      "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let encoded = "";
+    while (value > 0n) {
+      encoded = alphabet[Number(value % 58n)] + encoded;
+      value /= 58n;
+    }
+    const signed = () => {
+      const nonce = randomBytes(32);
+      const message = collectMessage(1, Date.now());
+      return {
+        public_key: `ed25519:${encoded}`,
+        message,
+        nonce_base64: nonce.toString("base64"),
+        signature_base64: sign(
+          null,
+          nep413Digest(message, nonce, RELAY_RECIPIENT),
+          pair.privateKey,
+        ).toString("base64"),
+      };
+    };
+    f.job.buyer = raw.toString("hex");
+    f.job.state = "Delivered";
+    assert.equal((await handle(delivery())).ok, true);
+
+    for (const state of [
+      "Delivered",
+      "Passed",
+      "Failed",
+      "Refunded",
+      "Expired",
+    ]) {
+      f.job.state = state;
+      assert.equal((await handle(collectRequest(signed()))).ok, false, state);
+    }
+    f.job.state = "Released";
+    f.job.run_started_at = null;
+    assert.equal(
+      (await handle(collectRequest({ ...signed(), public_key: "ed25519:1" })))
+        .ok,
+      false,
+    );
+    f.job.buyer = "someone-else.testnet";
+    assert.equal(
+      (await handle(collectRequest(signed()))).ok,
+      false,
+      "not the buyer",
+    );
+    f.job.buyer = raw.toString("hex");
+
+    assert.equal((await handle(cleanup("Verify"))).ok, true);
+    const reply = await handle(collectRequest(signed()));
+    assert.equal(reply.ok, true);
+    assert.equal(reply.ok && reply.result.deliverable, deliverable);
+
+    // Retention, then deletion. Nothing is deleted while a job is still open.
+    assert.deepEqual(await sweepDeliveries(f.deps, f.directory), []);
+    assert.deepEqual(
+      await sweepDeliveries(
+        f.deps,
+        f.directory,
+        Date.now() + COLLECT_RETENTION_MS + 1000,
+      ),
+      [1],
+    );
+    assert.equal((await handle(collectRequest(signed()))).ok, false, "deleted");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("refunded work is deleted by cleanup and by the sweep", async () => {
+  const f = await fixture();
+  try {
+    const handle = await createHandoffHandler(f.deps, f.directory);
+    f.job.state = "Delivered";
+    assert.equal((await handle(delivery())).ok, true);
+    f.job.state = "Refunded";
+    assert.deepEqual(await sweepDeliveries(f.deps, f.directory), [1]);
+    f.job.state = "Delivered";
+    assert.equal((await handle(delivery())).ok, true);
+    f.job.state = "Failed";
+    assert.deepEqual(await sweepDeliveries(f.deps, f.directory), []);
+    f.job.state = "Refunded";
+    f.job.run_started_at = null;
+    assert.equal((await handle(cleanup("Verify"))).ok, true);
+    assert.deepEqual(await sweepDeliveries(f.deps, f.directory), []);
   } finally {
     await f.cleanup();
   }

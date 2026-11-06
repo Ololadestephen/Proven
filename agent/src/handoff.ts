@@ -25,7 +25,7 @@ export async function handoff(
     client.on("connect", () => client.end(input));
     client.on("data", (chunk) => {
       data += chunk.toString();
-      if (Buffer.byteLength(data) > 65536)
+      if (Buffer.byteLength(data) > 524288)
         client.destroy(new Error("large response"));
     });
     client.on("error", () =>

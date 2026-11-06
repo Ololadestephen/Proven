@@ -1,7 +1,7 @@
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import type { Config } from "./config.ts";
 import { PublicError } from "./errors.ts";
-import { custodyCall } from "./custody.ts";
+import { custodyCall, custodySignForRelay } from "./custody.ts";
 import { handoff } from "./handoff.ts";
 import type { CallPlan, CallResult, Runtime } from "./types.ts";
 
@@ -154,6 +154,10 @@ export function createRuntime(
         worker.accountId,
       );
     },
+    signForRelay: config.custodyKey
+      ? (message) =>
+          custodySignForRelay(config.custodyApi, config.custodyKey!, message)
+      : undefined,
     handoff: (request) =>
       handoff(config.socket, {
         ...request,

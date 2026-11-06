@@ -22,6 +22,22 @@ test("stored escrow-only native-call policy passes; missing or broader policy fa
   const withBoard = policy();
   withBoard.rules.addresses.list = [escrow, BOARD];
   assert.doesNotThrow(() => assertPolicy(withBoard, escrow));
+  const signing = policy();
+  signing.capabilities.sign_message = {
+    allowed: true,
+    allowed_recipients: ["proven-relay"],
+  };
+  assert.doesNotThrow(() => assertPolicy(signing, escrow));
+  for (const allowed_recipients of [
+    undefined,
+    [],
+    ["other"],
+    ["proven-relay", "other"],
+  ]) {
+    const wide = policy();
+    wide.capabilities.sign_message = { allowed: true, allowed_recipients };
+    assert.throws(() => assertPolicy(wide, escrow));
+  }
   const boardOnly = policy();
   boardOnly.rules.addresses.list = [BOARD];
   assert.throws(() => assertPolicy(boardOnly, escrow));
