@@ -224,7 +224,9 @@ async function main() {
       }
       case "Passed":
       case "Failed": {
-        const settled = await named("release_or_refund", { job_id: id });
+        // Anyone can settle, and the payee is fixed by the job. Payouts need 50 Tgas, more gas than a
+        // worker's small balance can have held back, so the buyer's wallet sends it.
+        const settled = await buyer("release_or_refund", { job_id: id });
         log(
           job.state === "Passed" ? "release" : "refund",
           settled.transaction_hash,

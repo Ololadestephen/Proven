@@ -356,10 +356,13 @@ export function createService(runtime: Runtime) {
         throw new PublicError(
           "The delivery is already fixed to different bytes.",
         );
-      const call = plan("deliver", {
-        job_id: jobId,
-        deliverable_hash: commitment,
-      });
+      // Little gas, because attached gas is held back from a worker's small balance at a pessimistic price.
+      const call = plan(
+        "deliver",
+        { job_id: jobId, deliverable_hash: commitment },
+        "0",
+        "15000000000000",
+      );
       if (dry)
         return submit(call, true, {
           action: "deliver",
