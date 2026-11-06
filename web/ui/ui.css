@@ -118,12 +118,12 @@
 .preview-sidebar {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  width: 68px;
+  align-items: stretch;
+  width: 190px;
   flex-shrink: 0;
   background: #fff;
   border-right: 1px solid #e8e7ef;
-  padding: 20px 0;
+  padding: 20px 12px;
   gap: 18px;
 }
 .preview-p {
@@ -136,23 +136,7 @@
   place-items: center;
   font-size: 24px;
   font-weight: 700;
-  margin-bottom: 20px;
-}
-.preview-nav {
-  font-size: 22px;
-  color: #9a9bad;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-}
-.preview-nav.active {
-  border-radius: 8px;
-  background: #eeecff;
-  color: #746ae2;
-}
-.preview-nav.bottom {
-  margin-top: auto;
+  margin: 0 0 20px 14px;
 }
 .preview-main {
   flex: 1;
@@ -230,9 +214,6 @@
   .preview-content {
     padding: 18px;
   }
-  .preview-sidebar {
-    width: 46px;
-  }
   .preview-toolbar {
     padding: 0 14px;
     height: 50px;
@@ -262,5 +243,21 @@
   }
   .preview-network {
     font-size: 9px;
+  }
+}
+
+@media (max-width: 760px) {
+  .product-preview {
+    flex-direction: column;
+  }
+  .preview-sidebar {
+    width: 100%;
+    padding: 14px 10px;
+    border-right: 0;
+    border-bottom: 1px solid #e8e7ef;
+    gap: 12px;
+  }
+  .preview-sidebar .preview-p {
+    margin: 0 0 0 4px;
   }
 }

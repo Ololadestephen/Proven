@@ -69,12 +69,9 @@ function RecordedJobs() {
 function LandingPreview() {
   return (
     <div className="product-preview">
-      <aside className="preview-sidebar" aria-hidden="true">
+      <aside className="preview-sidebar" aria-label="Workspace preview">
         <span className="preview-p">p.</span>
-        <span className="preview-nav active">▦</span>
-        <span className="preview-nav">▤</span>
-        <span className="preview-nav">●</span>
-        <span className="preview-nav bottom">◇</span>
+        <AnimatedList hrefPrefix="/app" />
       </aside>
       <div className="preview-main">
         <div className="preview-toolbar">

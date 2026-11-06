@@ -89,7 +89,11 @@ function AnimatedItem({
     </motion.li>
   );
 }
-export function AnimatedList() {
+export function AnimatedList({
+  hrefPrefix = "",
+}: {
+  hrefPrefix?: "" | "/app";
+}) {
   const [active, setActive] = useState<WorkspaceSection>(() =>
     sectionFromHash(window.location.hash),
   );
@@ -135,7 +139,7 @@ export function AnimatedList() {
                   anchors.current[index] = node;
                 }}
                 className="animated-link"
-                href={`#${item.id}`}
+                href={`${hrefPrefix}#${item.id}`}
                 aria-current={active === item.id ? "location" : undefined}
                 onClick={select}
               >
