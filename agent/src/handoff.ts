@@ -7,10 +7,15 @@ export async function handoff(
   request: Record<string, unknown>,
 ): Promise<unknown> {
   const info = await lstat(socket).catch(() => null);
+  // On a hosted server the relay runs as another user, and shares the socket with one group.
+  const shared =
+    process.env.PROVEN_RELAY_SOCKET_SHARED === "yes" &&
+    info !== null &&
+    (info.mode & 0o007) === 0 &&
+    (process.getgroups?.() ?? []).includes(info.gid);
   if (
     !info?.isSocket() ||
-    (info.mode & 0o077) !== 0 ||
-    info.uid !== process.getuid?.()
+    (!shared && ((info.mode & 0o077) !== 0 || info.uid !== process.getuid?.()))
   )
     throw new PublicError(
       "Private relay socket is unavailable or has unsafe permissions.",

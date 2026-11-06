@@ -178,12 +178,20 @@ async function work(
   });
   if (result.deliverable === null)
     return deps.log("no_delivery", { job: jobId, refusal: result.refusal });
+  deps.store.saveDelivery(jobId, result.deliverable);
+  await handOver(deps, agent, jobId);
+}
+
+/** Records the delivery on chain if needed, and gives the relay its text. Safe to repeat with the same bytes. */
+async function handOver(deps: RunnerDeps, agent: HostedAgent, jobId: number) {
+  const deliverable = deps.store.readDelivery(jobId);
+  if (deliverable === null) return false;
   const tool = createService(
     createRuntime(agentConfig(agent, deps.config, deps.treasury)),
   );
   const delivered = (await tool("deliver", {
     job_id: jobId,
-    deliverable: result.deliverable,
+    deliverable,
   })) as { transaction_hash?: string; private_handoff?: unknown };
   deps.store.log(jobId, {
     step: "deliver",
@@ -192,6 +200,8 @@ async function work(
   });
   if (!delivered.private_handoff)
     throw new PublicError("The private handoff failed.");
+  deps.store.removeDelivery(jobId);
+  return true;
 }
 
 /** Moves one agent's active job one step along. Returns true if it holds a claim. */
@@ -225,6 +235,8 @@ async function advance(
     case "Funded":
       return work(deps, agent, bid, bidId, jobId, job);
     case "Delivered": {
+      // A delivery the relay does not have yet goes first, or the run would have nothing to check.
+      await handOver(deps, agent, jobId);
       const run = (await tool("request_verification", { job_id: jobId })) as {
         transaction_hash?: string;
         job?: Job;

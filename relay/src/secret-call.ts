@@ -43,6 +43,9 @@ export async function secretCall(
   if (!outcome)
     throw new Error(`Secret transaction remains unconfirmed: ${hash}`);
   if (typeof outcome.status !== "object" || !("SuccessValue" in outcome.status))
-    throw new Error(`Secret transaction failed: ${hash}`);
+    // The contract's own reason, such as a secret that is already gone. It holds no secret text.
+    throw new Error(
+      `Secret transaction failed: ${hash} ${JSON.stringify(outcome.status).slice(0, 300)}`,
+    );
   return outcome;
 }

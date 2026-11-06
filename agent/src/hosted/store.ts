@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -88,6 +89,25 @@ export class HostedStore {
     } catch {
       return false;
     }
+  }
+  /** Kept until the relay has it, so a failed hand-over can never lose work already fixed on chain. */
+  saveDelivery(jobId: number, text: string) {
+    writeFileSync(join(this.dir, "logs", `job-${jobId}.delivery`), text, {
+      mode: 0o600,
+    });
+  }
+  readDelivery(jobId: number): string | null {
+    try {
+      return readFileSync(
+        join(this.dir, "logs", `job-${jobId}.delivery`),
+        "utf8",
+      );
+    } catch {
+      return null;
+    }
+  }
+  removeDelivery(jobId: number) {
+    rmSync(join(this.dir, "logs", `job-${jobId}.delivery`), { force: true });
   }
   log(jobId: number, entry: Record<string, unknown>) {
     const path = join(this.dir, "logs", `job-${jobId}.jsonl`);
