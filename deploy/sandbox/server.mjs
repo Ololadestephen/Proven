@@ -132,7 +132,58 @@ const WRITERS = {
   node: `node -e "const f=require('fs'),p=require('path'),d=JSON.parse(f.readFileSync('/work/.files.json'));for(const[n,c]of Object.entries(d)){const t=p.resolve('/work',n);if(t.startsWith('/work/')){f.mkdirSync(p.dirname(t),{recursive:true});f.writeFileSync(t,c)}}"`,
 };
 
-let busy = false;
+// One run at a time on this small machine, shared fairly. Each agent can have one run going and one
+// waiting, and turns go round the agents that are waiting, so nobody can keep others out by asking more
+// often. A run takes at most 30 seconds, so a place in the queue is refused if it could not start soon.
+const MAX_RUNS_PER_HOUR = 20;
+const MAX_WAIT_MS = 60_000;
+const waiting = new Map();
+const lastRuns = new Map();
+let current = null;
+
+function allowedThisHour(agent, now = Date.now()) {
+  const recent = (lastRuns.get(agent) ?? []).filter(
+    (at) => now - at < 3_600_000,
+  );
+  lastRuns.set(agent, recent);
+  if (lastRuns.size > 10_000) lastRuns.delete(lastRuns.keys().next().value);
+  return recent.length < MAX_RUNS_PER_HOUR;
+}
+function next() {
+  if (current !== null || waiting.size === 0) return;
+  // A Map keeps its order, and a served agent goes to the back when it asks again.
+  const [agent, start] = waiting.entries().next().value;
+  waiting.delete(agent);
+  current = agent;
+  start();
+}
+function takeTurn(agent) {
+  if (waiting.has(agent)) return Promise.resolve(false);
+  if (!allowedThisHour(agent)) return Promise.resolve(false);
+  // Every agent ahead could use a whole run.
+  if (
+    (waiting.size + (current === null ? 0 : 1)) * TIME_LIMIT_MS >
+    MAX_WAIT_MS * 2
+  )
+    return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      waiting.delete(agent);
+      resolve(false);
+    }, MAX_WAIT_MS);
+    waiting.set(agent, () => {
+      clearTimeout(timer);
+      lastRuns.get(agent).push(Date.now());
+      resolve(true);
+    });
+    next();
+  });
+}
+function endTurn() {
+  current = null;
+  next();
+}
+
 createServer(async (req, res) => {
   const reply = (code, body) => {
     res.writeHead(code, { "content-type": "application/json" });
@@ -149,9 +200,13 @@ createServer(async (req, res) => {
     text += String(chunk);
     if (text.length > MAX_BODY) return reply(413, { error: "Too large." });
   }
-  // One at a time: a queue of hostile runs must not add up on one small machine.
-  if (busy) return reply(429, { error: "Another run is in progress." });
-  busy = true;
+  const agent = String(req.headers["x-agent"] ?? "");
+  if (!/^[a-z0-9:._-]{2,80}$/.test(agent))
+    return reply(400, { error: "Say which agent this is for." });
+  if (!(await takeTurn(agent)))
+    return reply(429, {
+      error: "The sandbox is busy, or this agent has used its runs for now.",
+    });
   const dir = mkdtempSync(join(tmpdir(), "run-"));
   try {
     const body = JSON.parse(text);
@@ -177,7 +232,7 @@ createServer(async (req, res) => {
   } catch (error) {
     reply(400, { error: String(error?.message ?? "Refused.").slice(0, 200) });
   } finally {
-    busy = false;
+    endTurn();
     rmSync(dir, { recursive: true, force: true });
   }
 }).listen(PORT, LISTEN, () => console.log(`Sandbox on ${LISTEN}:${PORT}.`));

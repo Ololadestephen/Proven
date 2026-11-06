@@ -4,25 +4,31 @@ import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const token = readFileSync(new URL("./token", import.meta.url), "utf8").trim();
-async function run(body) {
+async function run(body, agent = "attack-test") {
   const response = await fetch("http://127.0.0.1:4191/run", {
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
+      "x-agent": agent,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(60_000),
   });
   return { status: response.status, ...(await response.json()) };
 }
-const py = (code, extra = {}) =>
-  run({
-    language: "python",
-    files: { "main.py": code },
-    command: "python3 main.py",
-    ...extra,
-  });
+let attacker = 0;
+// A fresh name per case, so the hourly limit does not end this test early.
+const py = (code, extra = {}, agent = `attack-${attacker++}`) =>
+  run(
+    {
+      language: "python",
+      files: { "main.py": code },
+      command: "python3 main.py",
+      ...extra,
+    },
+    agent,
+  );
 
 const results = [];
 function report(name, passed, detail) {
@@ -290,6 +296,72 @@ report(
     /(Network|unreachable|Errno)/i.test(r.output),
   `${r.repo_bytes} bytes; ${r.output}`,
 );
+
+// ---- One stranger against everyone else: the machine runs one at a time, so this is the real risk.
+{
+  const loop = "while True: pass\n";
+  const stranger = py(loop, {}, "stranger");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const second = await py(loop, {}, "stranger").catch(() => null);
+  const third = py('print("victim")', {}, "victim-one");
+  const started = Date.now();
+  const served = await third;
+  report(
+    "another agent waits its turn instead of being refused",
+    served.status === 200 &&
+      served.output.includes("victim") &&
+      Date.now() - started < 60_000,
+    `status ${served.status} after ${Date.now() - started} ms`,
+  );
+  await stranger;
+  report(
+    "one agent gets one run waiting, not a queue of its own",
+    second === null || second.status === 200 || second.status === 429,
+    second?.status,
+  );
+}
+{
+  // Keep asking for 60 seconds as one agent, while another asks now and then.
+  let stop = false;
+  let strangerRuns = 0;
+  const flood = (async () => {
+    while (!stop) {
+      await Promise.all(
+        [1, 2, 3].map(() => py("while True: pass\n", {}, "flooder")),
+      );
+      strangerRuns += 1;
+    }
+  })();
+  let ok = 0;
+  let refused = 0;
+  let longest = 0;
+  const start = Date.now();
+  while (Date.now() - start < 60_000) {
+    const began = Date.now();
+    const reply = await py('print("still here")', {}, `victim-${ok + refused}`);
+    longest = Math.max(longest, Date.now() - began);
+    if (reply.status === 200) ok += 1;
+    else refused += 1;
+  }
+  stop = true;
+  await flood;
+  report(
+    "a flood from one agent cannot keep others out",
+    ok >= 2 && refused === 0 && longest < 60_000,
+    `others served ${ok}, refused ${refused}, longest wait ${longest} ms`,
+  );
+}
+{
+  const replies = [];
+  for (let i = 0; i < 22; i++)
+    replies.push((await py("print(1)", {}, "hourly")).status);
+  report(
+    "each agent has an hourly limit",
+    replies.filter((status) => status === 200).length === 20 &&
+      replies.slice(-2).every((status) => status === 429),
+    replies.join(" "),
+  );
+}
 
 const failed = results.filter((ok) => !ok).length;
 console.log(`\n${results.length - failed} of ${results.length} passed.`);

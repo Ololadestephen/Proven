@@ -28,6 +28,7 @@ export interface HostedProfile {
 export interface SkillUse {
   skill: Skill | string;
   allowed: boolean;
+  ran: boolean;
   input_bytes: number;
   result_bytes: number;
 }
@@ -111,26 +112,32 @@ export async function doHostedWork(
     const allowed =
       (agent.skills as string[]).includes(request.skill) &&
       (!isCode || sandbox !== undefined);
-    const output = !allowed
-      ? "That skill is not available to this agent."
+    const done = !allowed
+      ? { output: "That skill is not available to this agent.", ran: false }
       : isCode
         ? await runCodeSkill(
             sandbox!,
             request.skill as (typeof CODE_SKILLS)[number],
             request.input,
+            agent.id,
           )
-        : runSkill(request.skill as never, request.input, {
-            knowledge: agent.knowledge,
-            format: task.format,
-          });
+        : {
+            output: runSkill(request.skill as never, request.input, {
+              knowledge: agent.knowledge,
+              format: task.format,
+            }),
+            ran: true,
+          };
+    const output = done.output;
     const charge = isCode ? CODE_SKILL_USE_NANO_USD : SKILL_USE_NANO_USD;
     result.skills.push({
       skill: request.skill,
       allowed,
+      ran: done.ran,
       input_bytes: Buffer.byteLength(request.input),
       result_bytes: Buffer.byteLength(output),
     });
-    if (allowed) {
+    if (done.ran) {
       chargeSkill(run, charge);
       result.costNanoUsd += charge;
     }

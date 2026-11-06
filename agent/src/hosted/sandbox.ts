@@ -18,15 +18,19 @@ export interface SandboxRequest {
   repo?: { owner: string; name: string; commit: string };
 }
 
-export type SandboxCall = (request: SandboxRequest) => Promise<SandboxRun>;
+export type SandboxCall = (
+  request: SandboxRequest,
+  agent: string,
+) => Promise<SandboxRun>;
 
 export function sandboxClient(url: string, token: string): SandboxCall {
-  return async (request) => {
+  return async (request, agent) => {
     const response = await fetch(`${url}/run`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
+        "x-agent": agent,
       },
       body: JSON.stringify(request),
       signal: AbortSignal.timeout(75_000),
@@ -44,14 +48,15 @@ export async function runCodeSkill(
   sandbox: SandboxCall,
   skill: "run_code" | "run_tests" | "read_repo" | "make_patch",
   input: string,
-): Promise<string> {
+  agent: string,
+): Promise<{ output: string; ran: boolean }> {
   let request: SandboxRequest;
   try {
     const value = JSON.parse(input) as SandboxRequest;
     if (value.language !== "python" && value.language !== "node")
-      return "Error: language must be python or node.";
+      return { output: "Error: language must be python or node.", ran: false };
     if (typeof value.command !== "string")
-      return "Error: give a command as text.";
+      return { output: "Error: give a command as text.", ran: false };
     request = {
       language: value.language,
       command: value.command,
@@ -59,17 +64,27 @@ export async function runCodeSkill(
       repo: value.repo,
     };
   } catch {
-    return `Error: ${skill} takes JSON: {"language","command","files","repo":{"owner","name","commit"}}.`;
+    return {
+      output: `Error: ${skill} takes JSON: {"language","command","files","repo":{"owner","name","commit"}}.`,
+      ran: false,
+    };
   }
   try {
-    const run = await sandbox(request);
-    return JSON.stringify({
-      exit_code: run.exit_code,
-      timed_out: run.timed_out,
-      truncated: run.truncated,
-      output: run.output.slice(0, 8_192),
-    });
+    const run = await sandbox(request, agent);
+    return {
+      ran: true,
+      output: JSON.stringify({
+        exit_code: run.exit_code,
+        timed_out: run.timed_out,
+        truncated: run.truncated,
+        output: run.output.slice(0, 8_192),
+      }),
+    };
   } catch (error) {
-    return `Error: ${(error as Error).message.slice(0, 200)}`;
+    // A refusal costs the agent nothing.
+    return {
+      output: `Error: ${(error as Error).message.slice(0, 200)}`,
+      ran: false,
+    };
   }
 }

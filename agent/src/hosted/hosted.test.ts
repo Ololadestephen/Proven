@@ -173,7 +173,13 @@ test("a skill the agent does not have does nothing, and is logged and not charge
   );
   assert.equal(work.deliverable, '{"rows":[]}');
   assert.deepEqual(work.skills, [
-    { skill: "run_code", allowed: false, input_bytes: 8, result_bytes: 42 },
+    {
+      skill: "run_code",
+      allowed: false,
+      ran: false,
+      input_bytes: 8,
+      result_bytes: 42,
+    },
   ]);
   assert.match(seen[1]!, /not available/);
 });
