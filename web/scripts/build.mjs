@@ -3,6 +3,23 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 await build({
   absWorkingDir: fileURLToPath(new URL("../", import.meta.url)),
+  entryPoints: ["ui/market.tsx"],
+  bundle: true,
+  outdir: "dist",
+  format: "esm",
+  target: "es2022",
+  minify: true,
+  jsx: "automatic",
+  legalComments: "eof",
+  define: {
+    "process.env.NODE_ENV": '"production"',
+    global: "globalThis",
+  },
+  alias: { buffer: "buffer", util: "util" },
+});
+
+await build({
+  absWorkingDir: fileURLToPath(new URL("../", import.meta.url)),
   entryPoints: ["ui/ui.tsx"],
   bundle: true,
   outdir: "dist",
