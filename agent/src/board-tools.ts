@@ -1,7 +1,7 @@
 // CLI and MCP tools for the bid board. Writes go through the configured custody wallet; board calls
 // hold no job money. The JSON feed is read-only and needs no credentials.
 import { createHash } from "node:crypto";
-import { BoardClient, fundRefusal, type Wallet } from "./board.ts";
+import { BoardClient, buyerRecord, fundRefusal, type Wallet } from "./board.ts";
 import type { Config } from "./config.ts";
 import { BOARD } from "./custody.ts";
 import { PublicError } from "./errors.ts";
@@ -61,13 +61,19 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
         reference: string,
         amount_near: string,
         claim_window_secs: { type: "integer", minimum: 60, maximum: 86400 },
+        expires_in_hours: { type: "integer", minimum: 1, maximum: 168 },
+        reveal_agreed: {
+          type: "boolean",
+          description:
+            "Must be true: you agree the relay publishes the check when the bid closes.",
+        },
         allowed_workers: {
           type: "array",
           items: { type: "string" },
           maxItems: 20,
         },
       },
-      ["description", "check", "reference", "amount_near"],
+      ["description", "check", "reference", "amount_near", "reveal_agreed"],
     ],
     [
       "register_agent",
@@ -83,7 +89,7 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
     ],
     [
       "link_job",
-      "Tie an active claim to a matching escrow job. Anyone can call it, and the board checks the job on chain.",
+      "The buyer ties an active claim to a matching escrow job and pays the attempt fee (0.015 NEAR, plus 0.002 NEAR for its record). The worker keeps the fee if well-formed work fails a real rule. A pass, no delivery or no verdict returns it.",
       { bid_id: id, job_id: id },
       ["bid_id", "job_id"],
     ],
@@ -104,6 +110,18 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
       "Bring a bid in line with its linked job, or lapse a claim that passed its window. Anyone can call it.",
       { bid_id: id },
       ["bid_id"],
+    ],
+    [
+      "settle_fee",
+      "Send a job's attempt fee where its recorded outcome says. Anyone can call it, and it changes nothing until the job has an outcome.",
+      { job_id: id },
+      ["job_id"],
+    ],
+    [
+      "buyer_record",
+      "Read a buyer's record from the chain: jobs paid, refunded and expired. Self-dealing can inflate it. No signing key is needed.",
+      { buyer: string },
+      ["buyer"],
     ],
     [
       "close_bid",
@@ -177,6 +195,8 @@ export async function executeBoardTool(
       integer(args, "limit", 1, 50, 20),
     );
   if (name === "swarm_feed") return buildFeed(board, config.escrow);
+  if (name === "buyer_record")
+    return buyerRecord(board, config.escrow, accountId(text(args, "buyer")));
   if (name === "bid_status") {
     const bid = await board.bid(bidId());
     if (!bid) throw new PublicError("Bid was not found.");
@@ -200,12 +220,23 @@ export async function executeBoardTool(
     }
     if (typeof verifier !== "string")
       throw new PublicError("Check must name its verifier hash.");
+    const format = (JSON.parse(check) as { format?: unknown }).format;
+    if (typeof format !== "string")
+      throw new PublicError("Check must carry its public format as text.");
+    if (args.reveal_agreed !== true)
+      throw new PublicError(
+        "A bid needs reveal_agreed: the relay publishes the check when the bid closes.",
+      );
+    const hours = BigInt(integer(args, "expires_in_hours", 1, 168, 72));
     const call = {
       description: text(args, "description", 2048),
       amount: yocto(text(args, "amount_near", 30)),
       check_hash: hash(check),
       reference_hash: hash(reference),
       verifier_hash: verifier,
+      format,
+      expires_at: ((await board.now()) + hours * 3_600_000_000_000n).toString(),
+      reveal_agreed: true,
       claim_window_secs: integer(args, "claim_window_secs", 60, 86_400, 1_800),
       allowed_workers: Array.isArray(args.allowed_workers)
         ? args.allowed_workers.map((worker) => accountId(String(worker)))
@@ -223,6 +254,7 @@ export async function executeBoardTool(
       ),
       tools_hash: hash(text(args, "tools")),
       model: text(args, "model", 128),
+      owner: null,
     };
     return dry
       ? planned("register_agent", call)
@@ -260,6 +292,10 @@ export async function executeBoardTool(
     });
   }
   const jobId = integer(args, "job_id", 0, Number.MAX_SAFE_INTEGER);
+  if (name === "settle_fee")
+    return dry
+      ? planned("settle_fee", { job_id: jobId })
+      : board.settleFee(wallet(config), jobId);
   if (name === "link_job")
     return dry
       ? planned("link_job", { bid_id: bidId(), job_id: jobId })

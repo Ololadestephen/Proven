@@ -9,7 +9,7 @@ import {
 } from "./custody.ts";
 import { publicMessage } from "./errors.ts";
 
-const escrow = "escrow-v3.proven.testnet";
+const escrow = "escrow-v4.proven.testnet";
 const policy = () => ({
   ...JSON.parse(
     readFileSync(new URL("../custody-policy.json", import.meta.url), "utf8"),

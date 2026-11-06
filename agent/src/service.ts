@@ -242,9 +242,14 @@ export function createService(runtime: Runtime) {
         fakes_hash: hash(reference),
         verifier_hash: cfg.verifier_hash,
       });
+      const format = (JSON.parse(check) as { format?: unknown }).format;
+      if (typeof format !== "string")
+        throw new PublicError(
+          "The check must carry its public format as text.",
+        );
       const deadline =
         (await runtime.now()) +
-        BigInt(integer(args, "deadline_seconds", 600, 2592000, 3600)) *
+        BigInt(integer(args, "deadline_seconds", 600, 86400, 3600)) *
           1000000000n;
       const call = plan(
         "create_job",
@@ -252,6 +257,7 @@ export function createService(runtime: Runtime) {
           worker,
           spec_hash: hash(check),
           fakes_hash: hash(reference),
+          format_hash: hash(format),
           amount: yocto(text(args, "amount_near", 30)),
           token: null,
           deadline: deadline.toString(),
@@ -259,7 +265,7 @@ export function createService(runtime: Runtime) {
             args,
             "verdict_window_secs",
             1800,
-            604800,
+            86400,
             1800,
           ),
           verifier_hash: cfg.verifier_hash,

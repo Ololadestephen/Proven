@@ -6,7 +6,7 @@ import type { Job } from "./types.ts";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const PAYMENT = 10000000000000000000000n;
-const CHECK = JSON.stringify({ verifier: "a".repeat(64) });
+const CHECK = JSON.stringify({ verifier: "a".repeat(64), format: "{}" });
 function fixture() {
   const evidence: DemoEvidence = { scripted: true, dry_run: false, cases: [] };
   const jobs = new Map<number, Job>();

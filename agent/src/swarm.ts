@@ -151,13 +151,20 @@ export async function postBid(jobDir: string) {
   const description = readFileSync(`${ROOT}${jobDir}/task.txt`, "utf8");
   const check = readFileSync(`${ROOT}${jobDir}/check.json`, "utf8");
   const reference = readFileSync(`${ROOT}${jobDir}/reference.json`, "utf8");
-  const { verifier } = JSON.parse(check) as { verifier: string };
-  const result = await new BoardClient(config.rpc).postBid(wallet, {
+  const { verifier, format } = JSON.parse(check) as {
+    verifier: string;
+    format: string;
+  };
+  const board = new BoardClient(config.rpc);
+  const result = await board.postBid(wallet, {
     description,
     amount: (10n ** 22n).toString(),
     check_hash: sha256(check),
     reference_hash: sha256(reference),
     verifier_hash: verifier,
+    format,
+    expires_at: ((await board.now()) + 72n * 3_600_000_000_000n).toString(),
+    reveal_agreed: true,
     claim_window_secs: CLAIM_WINDOW_SECS,
   });
   return { bid_id: result.result, transaction_hash: result.transaction_hash };
@@ -195,7 +202,8 @@ export async function runReview(bidId: number, keyName: string) {
     new JsonRpcProvider({ url: config.rpc }),
     new KeyPairSigner(
       KeyPair.fromString(
-        values.PROVEN_REVIEWER_V2_PRIVATE_KEY as `ed25519:${string}`,
+        (values.PROVEN_REVIEWER_V3_PRIVATE_KEY ??
+          values.PROVEN_REVIEWER_V2_PRIVATE_KEY) as `ed25519:${string}`,
       ),
     ),
   );

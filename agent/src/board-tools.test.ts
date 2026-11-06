@@ -26,10 +26,16 @@ test("board tools have schemas and are recognised", () => {
 });
 
 test("a dry post_bid fixes the hashes and the verifier named in the check", async () => {
-  const check = JSON.stringify({ verifier: "a".repeat(64) });
+  const check = JSON.stringify({ verifier: "a".repeat(64), format: "{}" });
   const result = (await executeBoardTool(
     "post_bid",
-    { description: "Do it", check, reference: "r", amount_near: "0.01" },
+    {
+      description: "Do it",
+      check,
+      reference: "r",
+      amount_near: "0.01",
+      reveal_agreed: true,
+    },
     config,
     never,
     never,
@@ -43,7 +49,7 @@ test("a dry post_bid fixes the hashes and the verifier named in the check", asyn
 });
 
 test("a description over the board's limit, unknown fields and a keyless write are refused", async () => {
-  const check = JSON.stringify({ verifier: "a".repeat(64) });
+  const check = JSON.stringify({ verifier: "a".repeat(64), format: "{}" });
   await assert.rejects(
     executeBoardTool(
       "post_bid",
@@ -52,6 +58,7 @@ test("a description over the board's limit, unknown fields and a keyless write a
         check,
         reference: "r",
         amount_near: "0.01",
+        reveal_agreed: true,
       },
       config,
       never,

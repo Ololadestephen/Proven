@@ -10,6 +10,7 @@ const bid = (over: Partial<Bid> = {}): Bid =>
   ({
     state: "Claimed",
     amount: "10",
+    expires_at: (EXPIRES * 1000n).toString(),
     claim: {
       number: 1,
       agent: "agent.testnet",

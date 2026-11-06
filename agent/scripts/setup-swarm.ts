@@ -21,7 +21,7 @@ import { ROOT } from "../src/config.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
 
 const API = "https://testnet-api.outlayer.ai";
-const ESCROW = "escrow-v3.proven.testnet";
+const ESCROW = "escrow-v4.proven.testnet";
 const FUNDING = 400000000000000000000000n; // 0.4 NEAR for each agent wallet.
 const MAX_POLICY_STORAGE = 50000000000000000000000n; // 0.05 NEAR.
 const REVIEW_KEY_ALLOWANCE = 250000000000000000000000n; // 0.25 NEAR of gas.
@@ -273,6 +273,57 @@ async function raiseTestnetBuyerDaily() {
 }
 
 /** Moves existing wallets and the review key to the new escrow and board. Run after those deploy. */
+/** The wallets' policies allow escrow-v4 and board-v3, and a new reviewer key can record reviews there. */
+async function moveToV4() {
+  const relaySigning = {
+    sign_message: { allowed: true, allowed_recipients: [RELAY_RECIPIENT] },
+  };
+  await once("v4_buyer_policy", () =>
+    storePolicy(
+      env.PROVEN_BUYER_WALLET_ID!,
+      env.PROVEN_BUYER_CUSTODY_KEY!,
+      env.PROVEN_BUYER_ACCOUNT_ID!,
+      relaySigning,
+    ),
+  );
+  for (const letter of ["A", "B", "C"]) {
+    const prefix = `PROVEN_AGENT_${letter}`;
+    await once(`v4_agent_${letter}_policy`, () =>
+      storePolicy(
+        env[`${prefix}_WALLET_ID`]!,
+        env[`${prefix}_CUSTODY_KEY`]!,
+        env[`${prefix}_ACCOUNT_ID`]!,
+        relaySigning,
+      ),
+    );
+  }
+  await once("v4_reviewer_key", async () => {
+    if (!env.PROVEN_REVIEWER_V3_PRIVATE_KEY)
+      save({
+        PROVEN_REVIEWER_V3_PRIVATE_KEY:
+          KeyPair.fromRandom("ed25519").toString(),
+      });
+    const key = KeyPair.fromString(
+      env.PROVEN_REVIEWER_V3_PRIVATE_KEY as `ed25519:${string}`,
+    );
+    const owner = controller();
+    const result = await owner.signAndSendTransaction({
+      receiverId: owner.accountId,
+      actions: [
+        actions.addFunctionCallAccessKey(
+          key.getPublicKey(),
+          BOARD,
+          ["record_review"],
+          REVIEW_KEY_ALLOWANCE,
+        ),
+      ],
+    });
+    if (!(typeof result.status === "object" && "SuccessValue" in result.status))
+      throw new PublicError("Installing the reviewer key failed.");
+    return result.transaction.hash;
+  });
+}
+
 async function moveToNewContracts() {
   await once("v3_buyer_policy", () =>
     storePolicy(
@@ -336,6 +387,7 @@ async function main() {
     throw new PublicError("The owner-approved testnet setup flag is required.");
   if (process.argv[3] === "--move-to-new-contracts")
     return moveToNewContracts();
+  if (process.argv[3] === "--move-to-v4") return moveToV4();
   if (process.argv[3] === "--agents-sign-for-relay")
     return agentsSignForRelay();
   if (process.argv[3] === "--raise-testnet-buyer-daily")

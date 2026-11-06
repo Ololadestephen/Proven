@@ -7,7 +7,11 @@ import type { Actor, CallPlan, Job, Runtime } from "./types.ts";
 const digest = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 const build = "c".repeat(64),
-  check = JSON.stringify({ verifier: build, private: "hidden-check" }),
+  check = JSON.stringify({
+    verifier: build,
+    format: "{}",
+    private: "hidden-check",
+  }),
   reference = "private-reference",
   delivery = "private-delivery";
 function fixture(state = "Delivered", actor: Actor = "buyer") {
