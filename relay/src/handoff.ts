@@ -233,8 +233,8 @@ function profile(job: HandoffJob, jobId: number, kind: RunKind): string {
 export const COLLECT_RETENTION_MS = 30 * 24 * 3_600_000;
 const SWEEP_EVERY_MS = 3_600_000;
 
-/** Deletes refunded, expired and cancelled work, and paid work past retention. A failed read deletes
- * nothing. Returns the job ids whose deliverables were deleted. */
+/** Deletes refunded, expired and cancelled work, paid work past retention, and every private check
+ * once its job has ended. A failed read deletes nothing. Returns the deleted deliverables' job ids. */
 export async function sweepDeliveries(
   deps: Pick<HandoffDependencies, "getJob" | "escrow">,
   directory: string,
@@ -244,15 +244,25 @@ export async function sweepDeliveries(
   const deleted: number[] = [];
   const names = await readdir(records).catch(() => [] as string[]);
   for (const name of names) {
-    const parts = /^(\d+)\.deliverable\.json$/.exec(name);
+    const parts = /^(\d+)\.(deliverable|check)\.json$/.exec(name);
     if (!parts) continue;
     const jobId = Number(parts[1]);
     const file = join(records, name);
     try {
       const job = await deps.getJob(jobId);
+      const refused =
+        job === null || ["Refunded", "Expired"].includes(job.state);
+      if (parts[2] === "check") {
+        if (
+          refused ||
+          job?.state === "Released" ||
+          job?.state === "CheckRejected"
+        )
+          await unlink(file);
+        continue;
+      }
       const old = now - (await lstat(file)).mtimeMs > COLLECT_RETENTION_MS;
-      const gone = job === null || ["Refunded", "Expired"].includes(job.state);
-      if (gone || (job.state === "Released" && old)) {
+      if (refused || (job?.state === "Released" && old)) {
         await unlink(file);
         deleted.push(jobId);
       }
@@ -693,7 +703,7 @@ async function main(): Promise<void> {
   await startHandoffServer({
     accountId: account.accountId,
     escrow: config.escrowContract,
-    getJob: (jobId) => near.getJob(account, config, jobId, timing),
+    getJob: (jobId) => near.readJob(account, config, jobId, timing),
     isAccessKey: (accountId, publicKey) =>
       near.isAccessKey(account, accountId, publicKey),
     storeSecret: (hash, name, variables) =>

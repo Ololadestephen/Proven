@@ -52,12 +52,13 @@ export function relayAccount(config: Config, singleAttempt = false): Account {
   return new Account(config.relayAccountId, provider, signer);
 }
 
-export async function getJob(
+/** Null means the chain says the job does not exist, as after a cancel. A failed read throws. */
+export async function readJob(
   account: Account,
   config: Config,
   jobId: number,
   timing?: TimingSink,
-): Promise<Job> {
+): Promise<Job | null> {
   const job = await timed(
     "job_read",
     () =>
@@ -68,9 +69,19 @@ export async function getJob(
       }),
     timing,
   );
+  return (job ?? null) as unknown as Job | null;
+}
+
+export async function getJob(
+  account: Account,
+  config: Config,
+  jobId: number,
+  timing?: TimingSink,
+): Promise<Job> {
+  const job = await readJob(account, config, jobId, timing);
   if (!job)
     throw new Error(`job ${jobId} not found on ${config.escrowContract}`);
-  return job as unknown as Job;
+  return job;
 }
 
 /** Whether this key is on the account. A failed read counts as no, so it refuses. */

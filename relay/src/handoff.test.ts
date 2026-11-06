@@ -659,3 +659,45 @@ test("refunded work is deleted by cleanup and by the sweep", async () => {
     await f.cleanup();
   }
 });
+
+test("the sweep deletes a private check once its job has ended, and not before", async () => {
+  const f = await fixture();
+  try {
+    const handle = await createHandoffHandler(f.deps, f.directory);
+    assert.equal((await handle(challenge())).ok, true);
+    for (const state of [
+      "Challenged",
+      "Funded",
+      "Delivered",
+      "Passed",
+      "Failed",
+    ]) {
+      f.job.state = state;
+      await sweepDeliveries(f.deps, f.directory);
+      assert.deepEqual(await readdir(f.records), ["1.check.json"], state);
+    }
+    f.job.state = "Released";
+    await sweepDeliveries(f.deps, f.directory);
+    assert.deepEqual(await readdir(f.records), []);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a failed read deletes nothing", async () => {
+  const f = await fixture();
+  try {
+    const handle = await createHandoffHandler(f.deps, f.directory);
+    assert.equal((await handle(challenge())).ok, true);
+    const failing = {
+      ...f.deps,
+      getJob: async () => {
+        throw new Error("rpc down");
+      },
+    };
+    await sweepDeliveries(failing, f.directory);
+    assert.deepEqual(await readdir(f.records), ["1.check.json"]);
+  } finally {
+    await f.cleanup();
+  }
+});
