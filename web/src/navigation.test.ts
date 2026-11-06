@@ -27,3 +27,16 @@ test("navigation wraps focus and leaves Tab and unrelated keys native", () => {
   assert.equal(navigationIndex("ArrowDown", -1, 4), null);
   assert.equal(navigationIndex("ArrowDown", 0, 0), null);
 });
+
+test("market navigation matches its own section anchors and retains an explicit evidence destination", () => {
+  const items = [
+    { id: "workspace" as const, label: "Market", href: "#market-overview" },
+    { id: "lookup" as const, label: "Post a job", href: "#post-job" },
+    { id: "demo" as const, label: "Job evidence", href: "/app" },
+    { id: "trust" as const, label: "Trust & limits", href: "#market-trust" },
+  ];
+  assert.equal(sectionFromHash("#post-job", items), "lookup");
+  assert.equal(sectionFromHash("#market-trust", items), "trust");
+  assert.equal(sectionFromHash("#market-overview", items), "workspace");
+  assert.equal(sectionFromHash("#unknown", items), "workspace");
+});

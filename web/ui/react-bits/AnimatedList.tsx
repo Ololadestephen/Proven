@@ -19,6 +19,7 @@ import {
   navigationIndex,
   sectionFromHash,
   type WorkspaceSection,
+  type NavigationItem,
 } from "../navigation-state.ts";
 import "./AnimatedList.css";
 
@@ -59,7 +60,7 @@ function Icon({ kind }: { kind: WorkspaceSection }) {
     </svg>
   );
 }
-const ITEMS: ReadonlyArray<{ id: WorkspaceSection; label: string }> = [
+const ITEMS: ReadonlyArray<NavigationItem> = [
   { id: "workspace", label: "Overview" },
   { id: "lookup", label: "Job evidence" },
   { id: "demo", label: "Live demo" },
@@ -92,18 +93,31 @@ function AnimatedItem({
 export function AnimatedList({
   preview = false,
   onNavigate,
+  items = ITEMS,
 }: {
   preview?: boolean;
   onNavigate?: () => void;
+  items?: ReadonlyArray<NavigationItem>;
 }) {
   const [active, setActive] = useState<WorkspaceSection>(() =>
-    preview ? "workspace" : sectionFromHash(window.location.hash),
+    preview
+      ? "workspace"
+      : sectionFromHash(
+          window.location.hash,
+          items === ITEMS ? undefined : items,
+        ),
   );
   const anchors = useRef<Array<HTMLAnchorElement | null>>([]);
   const reduced = useReducedMotion();
   useEffect(() => {
     if (preview) return;
-    const sync = () => setActive(sectionFromHash(window.location.hash));
+    const sync = () =>
+      setActive(
+        sectionFromHash(
+          window.location.hash,
+          items === ITEMS ? undefined : items,
+        ),
+      );
     const inspect = () => setActive("lookup");
     window.addEventListener("hashchange", sync);
     document.addEventListener("proven-job", inspect);
@@ -111,13 +125,13 @@ export function AnimatedList({
       window.removeEventListener("hashchange", sync);
       document.removeEventListener("proven-job", inspect);
     };
-  }, [preview]);
+  }, [preview, items]);
   function keyboard(event: KeyboardEvent<HTMLElement>) {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const index = anchors.current.findIndex(
       (anchor) => anchor === document.activeElement,
     );
-    const next = navigationIndex(event.key, index, ITEMS.length);
+    const next = navigationIndex(event.key, index, items.length);
     if (next === null) return;
     event.preventDefault();
     anchors.current[next]?.focus();
@@ -125,7 +139,10 @@ export function AnimatedList({
   function select(event: MouseEvent<HTMLAnchorElement>) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
       return;
-    setActive(sectionFromHash(event.currentTarget.hash));
+    setActive(
+      items.find((item) => item.id === event.currentTarget.dataset.section)
+        ?.id ?? "workspace",
+    );
     onNavigate?.();
   }
   return (
@@ -136,14 +153,15 @@ export function AnimatedList({
         onKeyDown={preview ? undefined : keyboard}
       >
         <ul className="animated-list">
-          {ITEMS.map((item, index) => (
+          {items.map((item, index) => (
             <AnimatedItem key={item.id} index={index}>
               <a
                 ref={(node) => {
                   anchors.current[index] = node;
                 }}
                 className="animated-link"
-                href={preview ? undefined : `#${item.id}`}
+                href={preview ? undefined : (item.href ?? `#${item.id}`)}
+                data-section={item.id}
                 aria-current={active === item.id ? "location" : undefined}
                 onClick={preview ? undefined : select}
               >
@@ -159,7 +177,7 @@ export function AnimatedList({
                     aria-hidden="true"
                   />
                 )}
-                <Icon kind={item.id} />
+                <Icon kind={item.icon ?? item.id} />
                 <span>{item.label}</span>
               </a>
             </AnimatedItem>

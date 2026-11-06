@@ -1,6 +1,16 @@
 export type WorkspaceSection = "workspace" | "lookup" | "demo" | "trust";
+export interface NavigationItem {
+  id: WorkspaceSection;
+  label: string;
+  href?: string;
+  icon?: WorkspaceSection;
+}
 /** Fragments select visible sections only; they never invoke demo actions. */
-export function sectionFromHash(hash: string): WorkspaceSection {
+export function sectionFromHash(
+  hash: string,
+  items?: ReadonlyArray<NavigationItem>,
+): WorkspaceSection {
+  if (items) return items.find((item) => item.href === hash)?.id ?? "workspace";
   if (/^#job-[0-9]{1,16}$/.test(hash)) return "lookup";
   const value = hash.slice(1);
   return value === "lookup" || value === "demo" || value === "trust"

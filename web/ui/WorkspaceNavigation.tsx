@@ -1,9 +1,14 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import { AnimatedList } from "./react-bits/AnimatedList.tsx";
 import "./WorkspaceNavigation.css";
+import type { NavigationItem } from "./navigation-state.ts";
 
 /** A mobile disclosure, with the same always-visible desktop navigation. */
-export function WorkspaceNavigation() {
+export function WorkspaceNavigation({
+  items,
+}: {
+  items?: ReadonlyArray<NavigationItem>;
+}) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
   function close() {
@@ -46,7 +51,7 @@ export function WorkspaceNavigation() {
         <span>{open ? "Close menu" : "Menu"}</span>
       </button>
       <div id="workspace-menu-content" className="workspace-menu-content">
-        <AnimatedList onNavigate={close} />
+        <AnimatedList onNavigate={close} items={items} />
       </div>
     </div>
   );

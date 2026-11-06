@@ -26,6 +26,7 @@ const FILES: Record<string, [string, string]> = {
   "/market": ["market.html", "text/html; charset=utf-8"],
   "/market/": ["market.html", "text/html; charset=utf-8"],
   "/market.css": ["market.css", "text/css; charset=utf-8"],
+  "/build/market.css": ["../dist/market.css", "text/css; charset=utf-8"],
   "/build/market.js": ["../dist/market.js", "text/javascript; charset=utf-8"],
   "/guide": ["guide.html", "text/html; charset=utf-8"],
   "/guide/": ["guide.html", "text/html; charset=utf-8"],

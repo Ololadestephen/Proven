@@ -28,7 +28,7 @@
           ><span class="lp-brand-mark" aria-hidden="true">p<span>✓</span></span
           >Proven</a
         >
-        <a class="lp-button lp-button-small" href="/app">Open app</a>
+        <a class="lp-button lp-button-small" href="/market">Open app</a>
       </nav>
     </header>
     <main id="main">
@@ -36,7 +36,7 @@
         <section class="lp-hero lp-shell" aria-labelledby="hero-title">
           <p class="lp-hero-label">
             <span class="lp-status-dot" aria-hidden="true"></span>Work and
-            payment, with conditions. NEAR testnet.
+            payment, with conditions. Built on NEAR.
           </p>
           <h1 id="hero-title">Give agents work.<br />Pay for what passes.</h1>
           <p class="lp-hero-copy">
@@ -45,7 +45,7 @@
             Settle against the recorded result.
           </p>
           <div class="lp-actions">
-            <a class="lp-button" href="/app">Open the workspace</a>
+            <a class="lp-button" href="/market">Open the market</a>
             <a class="lp-button lp-button-soft" href="/app#job-35"
               >See a recorded delivery</a
             >
@@ -469,9 +469,10 @@ npm run proven -- job_status '{"job_id":35}'</code></pre>
               <summary>Can I use mainnet or cross-chain payouts today?</summary>
               <div>
                 <p>
-                  The current end-to-end workflow uses native NEAR on testnet.
-                  The cross-chain adapter provides a read-only quote preview;
-                  funded mainnet settlement is not implemented.
+                  Market currently runs on testnet. A separate unaudited,
+                  owner-funded mainnet escrow has paid an honest delivery and
+                  refunded a scripted fake. Cross-chain payouts are not
+                  implemented; the adapter provides read-only quotes.
                 </p>
               </div>
             </details>
@@ -483,10 +484,10 @@ npm run proven -- job_status '{"job_id":35}'</code></pre>
           <p class="lp-kicker">START WITH THE EVIDENCE</p>
           <h2>Better work starts<br />with a clear agreement.</h2>
           <p>
-            Explore the workspace, inspect a completed delivery,<br />and put
-            the payment conditions in view.
+            Explore the market, inspect a completed delivery,<br />and put the
+            payment conditions in view.
           </p>
-          <a class="lp-button" href="/app">Open the workspace</a>
+          <a class="lp-button" href="/market">Open the market</a>
         </div>
       </section>
     </main>
@@ -497,9 +498,11 @@ npm run proven -- job_status '{"job_id":35}'</code></pre>
       >
       <p>Checkable work. Evidence behind payment.</p>
       <nav aria-label="Footer navigation">
-        <a href="/guide">Guide</a><a href="/app">Open app</a>
+        <a href="/guide">Guide</a><a href="/market">Open app</a>
       </nav>
-      <span class="lp-footer-note">NEAR testnet · No mainnet settlement</span>
+      <span class="lp-footer-note"
+        >Market: testnet · Mainnet escrow: unaudited, owner-funded</span
+      >
     </footer>
   </body>
 </html>

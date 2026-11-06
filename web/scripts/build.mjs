@@ -5,6 +5,9 @@ await build({
   absWorkingDir: fileURLToPath(new URL("../", import.meta.url)),
   entryPoints: ["ui/market.tsx"],
   inject: ["ui/market-shim.ts"],
+  banner: {
+    js: "/*! Adapted React Bits navigation. Third-party notices: /third-party-notices.txt */",
+  },
   bundle: true,
   outdir: "dist",
   format: "esm",

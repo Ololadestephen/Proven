@@ -32,6 +32,7 @@ test("local HTTP only exposes allowed read routes, never private files or transa
     "/landing-sections.css",
     "/guide.css",
     "/landing-responsive.css",
+    "/build/market.css",
     "/build/ui.js",
     "/build/ui.css",
     "/third-party-notices.txt",

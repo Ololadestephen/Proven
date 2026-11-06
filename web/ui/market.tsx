@@ -11,6 +11,8 @@ import {
   type Step,
 } from "./market-steps.ts";
 
+import { MarketLayout } from "./MarketLayout.tsx";
+
 const RELAY_RECIPIENT = "proven-relay";
 const TGAS = 1_000_000_000_000n;
 const NEAR = 10n ** 24n;
@@ -280,7 +282,7 @@ function PostJob({
       });
     });
   return (
-    <section className="market-card">
+    <section className="market-card" id="post-job">
       <div className="market-card-head">
         <h2>Post a job</h2>
         <button
@@ -689,6 +691,72 @@ function BidCard({
   );
 }
 
+function WalletControls({
+  wallet,
+  connect,
+  dev,
+  useDev,
+  onError,
+}: {
+  wallet: Wallet | null;
+  connect: (id: string) => Promise<void>;
+  dev: Record<string, string>;
+  useDev: (role: string) => void;
+  onError: (message: string) => void;
+}) {
+  return (
+    <div className="market-wallet" id="wallet">
+      {wallet ? (
+        <>
+          <span title={wallet.label}>{short(wallet.accountId)}</span>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => void wallet.signOut()}
+          >
+            Disconnect
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() =>
+              void connect("meteor-wallet").catch((reason: Error) =>
+                onError(reason.message),
+              )
+            }
+          >
+            Connect Meteor
+          </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() =>
+              void connect("my-near-wallet").catch((reason: Error) =>
+                onError(reason.message),
+              )
+            }
+          >
+            MyNearWallet
+          </button>
+          {Object.keys(dev).map((role) => (
+            <button
+              key={role}
+              type="button"
+              className="button button-secondary"
+              onClick={() => useDev(role)}
+            >
+              Dev {role}
+            </button>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [market, setMarket] = useState<Market | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -730,68 +798,17 @@ function App() {
   );
   const bids = useMemo(() => market?.bids ?? [], [market]);
   return (
-    <main className="market">
-      <header className="market-top">
-        <a className="wordmark" href="/">
-          Proven
-        </a>
-        <span className="market-network">Testnet</span>
-        <a href="/app">Workspace</a>
-        <div className="market-wallet" id="wallet">
-          {wallet ? (
-            <>
-              <span title={wallet.label}>{short(wallet.accountId)}</span>
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => void wallet.signOut()}
-              >
-                Disconnect
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="button button-primary"
-                onClick={() =>
-                  void connect("meteor-wallet").catch((reason: Error) =>
-                    setError(reason.message),
-                  )
-                }
-              >
-                Connect Meteor
-              </button>
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() =>
-                  void connect("my-near-wallet").catch((reason: Error) =>
-                    setError(reason.message),
-                  )
-                }
-              >
-                MyNearWallet
-              </button>
-              {Object.keys(dev).map((role) => (
-                <button
-                  key={role}
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => useDev(role)}
-                >
-                  Dev {role}
-                </button>
-              ))}
-            </>
-          )}
-        </div>
-      </header>
-      <h1>Job market</h1>
-      <p className="market-lead">
-        Post checkable work, let agents or people apply, and pay only when the
-        check passes. Everything here runs on NEAR testnet.
-      </p>
+    <MarketLayout
+      walletControls={
+        <WalletControls
+          wallet={wallet}
+          connect={connect}
+          dev={dev}
+          useDev={useDev}
+          onError={setError}
+        />
+      }
+    >
       <p className="market-warning">
         A buyer can fail honest work with an unfair check, and workers have no
         recourse yet. The relay can read private texts and stays trusted.
@@ -816,12 +833,37 @@ function App() {
           New jobs and funding are paused on this escrow.
         </p>
       ) : null}
-      {market ? (
-        <PostJob market={market} wallet={wallet} run={run} />
-      ) : (
-        <p>Reading the board…</p>
-      )}
-      <h2 className="market-section">Bids</h2>
+      <dl className="market-stats" aria-label="Board snapshot">
+        <div>
+          <dt>Open jobs</dt>
+          <dd>
+            {market ? bids.filter((b) => b.state === "Open").length : "—"}
+          </dd>
+        </div>
+        <div>
+          <dt>In progress</dt>
+          <dd>
+            {market ? bids.filter((b) => b.state === "Claimed").length : "—"}
+          </dd>
+        </div>
+        <div>
+          <dt>Completed</dt>
+          <dd>
+            {market ? bids.filter((b) => b.state === "Done").length : "—"}
+          </dd>
+        </div>
+      </dl>
+      <div className="market-section-heading">
+        <div>
+          <p className="eyebrow">DISCOVER THE WORK</p>
+          <h2 className="market-section" id="market-bids">
+            Jobs on the board
+          </h2>
+        </div>
+        <p className="market-note">
+          Current contract state · refreshes automatically
+        </p>
+      </div>
       {market && bids.length === 0 ? <p>No bids yet.</p> : null}
       <div className="market-list">
         {market
@@ -837,7 +879,12 @@ function App() {
             ))
           : null}
       </div>
-    </main>
+      {market ? (
+        <PostJob market={market} wallet={wallet} run={run} />
+      ) : (
+        <p>Reading the board…</p>
+      )}
+    </MarketLayout>
   );
 }
 
