@@ -127,6 +127,7 @@ export function createRuntime(
           config.account,
           config.escrow,
           plan,
+          config.hosted,
         );
         return waitTransactionResult(provider, tx, config.account);
       }

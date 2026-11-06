@@ -2,6 +2,8 @@
 // resumes without repeating a signed call. The buyer's steps and the agent's steps use separate
 // custody wallets. The model only ever produces candidate bytes for a job the chain says is funded:
 // job id, payee and amount all come from the chain. Only the escrow's recorded verdict moves money.
+import { workRefusal } from "./swarm-rules.ts";
+export { workRefusal };
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
@@ -44,8 +46,6 @@ export const AGENT_TOOLS = JSON.stringify(["submit_deliverable"]);
 const CLAIM_WINDOW_SECS = 1_800;
 const POLL_MS = 15_000;
 const POLLS = 40;
-/** Longer than one model call can take, plus time to deliver. */
-const MIN_WORK_NANOS = 420_000_000_000n;
 
 const pause = () =>
   new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
@@ -73,25 +73,6 @@ export function inferenceLimit(earnedYocto: bigint): number {
   const earned =
     (Number(earnedYocto) / YOCTO_PER_NEAR) * NOMINAL_NANO_USD_PER_NEAR;
   return Math.min(BASE_LIMIT_NANO_USD + earned, CEILING_NANO_USD);
-}
-
-/** The agent starts work only on a funded job naming it, for this bid's amount and active claim. */
-export function workRefusal(
-  bid: Bid,
-  jobId: number,
-  job: Job,
-  wallet: string,
-  now: bigint,
-): string | null {
-  if (job.state !== "Funded") return "the job is not funded";
-  if (now + MIN_WORK_NANOS >= BigInt(job.deadline))
-    return "too little time is left before the job's deadline";
-  if (job.worker !== wallet) return "the job names a different worker";
-  if (job.token !== null || job.amount !== bid.amount)
-    return "the job pays something other than the bid";
-  if (bid.claim?.agent !== wallet || bid.claim.job_id !== jobId)
-    return "this job is not linked to this agent's claim";
-  return null;
 }
 
 interface AgentFiles {

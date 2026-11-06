@@ -20,6 +20,8 @@ export interface Config {
   allowedWorkers: string[];
   /** A hosted relay's https address. Without it, the local socket is used. */
   relayUrl?: string;
+  /** Set for a hosted agent's wallet, whose stored policy also allows its owner and the treasury. */
+  hosted?: { owner: string; treasury: string };
 }
 export function loadConfig(selected?: Actor): Config {
   let file: Record<string, string | undefined> = {};

@@ -22,7 +22,17 @@ const maxDaily = (escrow: string) =>
   escrow.endsWith(".testnet") ? 3n * 10n ** 24n : 10n ** 24n;
 
 /** A readable-policy check is defense in depth; the TEE must enforce its on-chain policy too. */
-export function assertPolicy(value: unknown, escrow: string): void {
+/** A hosted agent's wallet may also send NEAR, but only to its owner and to the treasury. */
+export interface HostedWallet {
+  owner: string;
+  treasury: string;
+}
+
+export function assertPolicy(
+  value: unknown,
+  escrow: string,
+  hosted?: HostedWallet,
+): void {
   const p = value as {
     policy?: string;
     frozen?: boolean;
@@ -44,13 +54,26 @@ export function assertPolicy(value: unknown, escrow: string): void {
     Array.isArray(receivers) &&
     receivers.includes(escrow) &&
     receivers.length === new Set(receivers).size &&
-    receivers.every((receiver) => receiver === escrow || receiver === BOARD);
+    receivers.every(
+      (receiver) =>
+        receiver === escrow ||
+        receiver === BOARD ||
+        receiver === hosted?.owner ||
+        receiver === hosted?.treasury,
+    );
+  const types = p?.rules?.transaction_types;
+  const typesOk = hosted
+    ? Array.isArray(types) &&
+      types.length === 2 &&
+      types.includes("call") &&
+      types.includes("transfer")
+    : one(types, "call");
   const cap = p?.rules?.limits?.per_transaction?.native;
   const daily = p?.rules?.limits?.daily?.native;
   if (
     p?.policy !== "stored" ||
     p.frozen !== false ||
-    !one(p.rules?.transaction_types, "call") ||
+    !typesOk ||
     !one(p.rules?.allowed_tokens, "native") ||
     p.rules?.addresses?.mode !== "whitelist" ||
     !onlyEscrowAndBoard ||
@@ -227,6 +250,7 @@ export async function custodyCall(
   expectedAccount: string,
   escrow: string,
   plan: CallPlan,
+  hosted?: HostedWallet,
 ): Promise<string> {
   if (
     (plan.receiver_id !== escrow && plan.receiver_id !== BOARD) ||
@@ -251,7 +275,11 @@ export async function custodyCall(
     throw new PublicError(
       "Custody wallet identity differs from the configured unbound buyer account.",
     );
-  assertPolicy(await custodyRead(api, key, "/wallet/v1/policy"), escrow);
+  assertPolicy(
+    await custodyRead(api, key, "/wallet/v1/policy"),
+    escrow,
+    hosted,
+  );
   const response = await fetch(`${api}/wallet/v1/call`, {
     method: "POST",
     headers: {

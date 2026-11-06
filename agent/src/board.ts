@@ -70,6 +70,7 @@ export interface AttemptFee {
 }
 
 export interface Wallet {
+  hosted?: { owner: string; treasury: string };
   api: string;
   key: string;
   account: string;
@@ -144,6 +145,7 @@ export class BoardClient {
         deposit: deposit.toString(),
         gas,
       },
+      wallet.hosted,
     );
     const result = await waitTransactionResult(
       this.provider,
