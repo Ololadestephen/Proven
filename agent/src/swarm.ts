@@ -255,7 +255,13 @@ export async function attempt(
   }
 
   let bid = await readBid();
-  if (bid.claim && bid.claim.agent !== account) {
+  // Lapse a claim past its window first, so no job is created for a claim that has already ended.
+  if (
+    bid.claim &&
+    (bid.claim.agent !== account ||
+      (bid.claim.job_id === null &&
+        (await board.now()) > BigInt(bid.claim.expires_at)))
+  ) {
     await board.sync(agent.wallet, bidId);
     bid = await readBid();
   }
