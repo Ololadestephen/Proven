@@ -153,7 +153,11 @@ export async function postBid(
     reveal_agreed: true,
     claim_window_secs: CLAIM_WINDOW_SECS,
   });
-  return { bid_id: result.result, transaction_hash: result.transaction_hash };
+  return {
+    bid_id: result.result,
+    transaction_hash: result.transaction_hash,
+    check,
+  };
 }
 
 export async function runReview(bidId: number, keyName: string) {

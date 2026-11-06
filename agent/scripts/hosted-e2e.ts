@@ -137,7 +137,10 @@ if (!resumed)
   log("review", (await runReview(bidId, "NEARAI_KEY_REVIEW")).state);
 
 const board = new BoardClient(config.rpc);
-const check = readFileSync(`${ROOT}examples/swarm-job/check.json`, "utf8");
+const check =
+  "check" in posted
+    ? (posted.check as string)
+    : readFileSync(`${ROOT}examples/swarm-job/check.json`, "utf8");
 const reference = readFileSync(
   `${ROOT}examples/swarm-job/reference.json`,
   "utf8",

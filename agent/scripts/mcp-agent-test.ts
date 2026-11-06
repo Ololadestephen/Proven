@@ -192,7 +192,9 @@ if (onChain.claim?.agent !== wallet)
 
 // The buyer's side: the worker and amount come from the chain.
 const config = loadConfig("buyer");
-const check = readFileSync(`${ROOT}${jobDir}/${checkFile}`, "utf8");
+const check =
+  (posted?.check as string | undefined) ??
+  readFileSync(`${ROOT}${jobDir}/${checkFile}`, "utf8");
 const reference = readFileSync(`${ROOT}${jobDir}/${referenceFile}`, "utf8");
 let linked = onChain.claim?.job_id ?? null;
 if (linked === null) {
