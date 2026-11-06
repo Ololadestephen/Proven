@@ -527,6 +527,30 @@ function BidCard({
       }
     });
 
+  // Once a run has recorded its result, its private texts are deleted from OutLayer, whoever is viewing.
+  const cleanJobId = bid.claim?.job_id ?? bid.last_job?.id ?? null;
+  const challengeDone = job?.challenge_request_id ?? null;
+  const verdictDone = job?.verdict_request_id ?? null;
+  useEffect(() => {
+    if (cleanJobId === null) return;
+    const clean = (kind: "Challenge" | "Verify") => {
+      const mark = `proven-cleaned-${market.escrow}-${cleanJobId}-${kind}`;
+      try {
+        if (localStorage.getItem(mark)) return;
+        localStorage.setItem(mark, "1");
+      } catch {
+        return;
+      }
+      void api("/api/market/relay", {
+        action: "cleanup",
+        job_id: cleanJobId,
+        kind,
+      }).catch(() => undefined);
+    };
+    if (challengeDone) clean("Challenge");
+    if (verdictDone) clean("Verify");
+  }, [cleanJobId, challengeDone, verdictDone, market.escrow]);
+
   const needsPrivate =
     step?.id === "challenge" && (!savedCheck || !savedReference);
   return (
