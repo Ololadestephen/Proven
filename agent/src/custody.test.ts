@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { assertPolicy, custodyCall, custodyTransaction } from "./custody.ts";
+import { BOARD, assertPolicy, custodyCall, custodyTransaction } from "./custody.ts";
 import { publicMessage } from "./errors.ts";
 
 const escrow = "escrow-v2.proven.testnet";
@@ -14,6 +14,15 @@ const policy = () => ({
 });
 test("stored escrow-only native-call policy passes; missing or broader policy fails closed", () => {
   assert.doesNotThrow(() => assertPolicy(policy(), escrow));
+  const withBoard = policy();
+  withBoard.rules.addresses.list = [escrow, BOARD];
+  assert.doesNotThrow(() => assertPolicy(withBoard, escrow));
+  const boardOnly = policy();
+  boardOnly.rules.addresses.list = [BOARD];
+  assert.throws(() => assertPolicy(boardOnly, escrow));
+  const withStranger = policy();
+  withStranger.rules.addresses.list = [escrow, BOARD, "other.testnet"];
+  assert.throws(() => assertPolicy(withStranger, escrow));
   const alterations = [
     (p: any) => {
       p.policy = "none";

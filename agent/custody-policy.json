@@ -2,7 +2,7 @@
   "rules": {
     "transaction_types": ["call"],
     "allowed_tokens": ["native"],
-    "addresses": { "mode": "whitelist", "list": ["escrow-v2.proven.testnet"] },
+    "addresses": { "mode": "whitelist", "list": ["escrow-v2.proven.testnet", "board.proven.testnet"] },
     "limits": {
       "per_transaction": { "native": "100000000000000000000000" },
       "daily": { "native": "1000000000000000000000000" }

@@ -364,6 +364,10 @@ async fn a_failed_attempt_reopens_the_bid_for_another_agent_only() -> anyhow::Re
 
     assert_eq!(sync(&env, bid).await?, "Open");
     assert_eq!(bid_of(&env, bid).await?["funded_attempts"], 1);
+    let past = &bid_of(&env, bid).await?["past_jobs"][0];
+    assert_eq!(past["job_id"], job);
+    assert_eq!(past["funded"], true);
+    assert_eq!(past["bid_state_after"], "Open");
     refused(&claim(&env, &env.agent, bid).await?, "used its attempt");
     claim(&env, &env.second, bid).await?.into_result()?;
     let again = funded_job(&env, bid, &env.second).await?;

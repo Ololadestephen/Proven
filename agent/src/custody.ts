@@ -13,6 +13,9 @@ const CAPABILITIES = [
   "confidential",
   "payment_check",
 ];
+/** The bid board. It holds no job money, so a wallet may also call it. */
+export const BOARD = "board.proven.testnet";
+
 /** A readable-policy check is defense in depth; the TEE must enforce its on-chain policy too. */
 export function assertPolicy(value: unknown, escrow: string): void {
   const p = value as {
@@ -31,6 +34,12 @@ export function assertPolicy(value: unknown, escrow: string): void {
   };
   const one = (v: unknown, expected: string) =>
     Array.isArray(v) && v.length === 1 && v[0] === expected;
+  const receivers = p?.rules?.addresses?.list;
+  const onlyEscrowAndBoard =
+    Array.isArray(receivers) &&
+    receivers.includes(escrow) &&
+    receivers.length === new Set(receivers).size &&
+    receivers.every((receiver) => receiver === escrow || receiver === BOARD);
   const cap = p?.rules?.limits?.per_transaction?.native;
   const daily = p?.rules?.limits?.daily?.native;
   if (
@@ -39,7 +48,7 @@ export function assertPolicy(value: unknown, escrow: string): void {
     !one(p.rules?.transaction_types, "call") ||
     !one(p.rules?.allowed_tokens, "native") ||
     p.rules?.addresses?.mode !== "whitelist" ||
-    !one(p.rules.addresses.list, escrow) ||
+    !onlyEscrowAndBoard ||
     !cap ||
     !/^\d+$/.test(cap) ||
     BigInt(cap) <= 0n ||
@@ -51,7 +60,7 @@ export function assertPolicy(value: unknown, escrow: string): void {
     CAPABILITIES.some((name) => p.capabilities?.[name]?.allowed !== false)
   ) {
     throw new PublicError(
-      "Custody wallet must have the stored escrow-only native-call policy and disabled signing capabilities.",
+      "Custody wallet must have the stored native-call policy limited to the escrow and the board, with signing capabilities disabled.",
     );
   }
 }
@@ -153,8 +162,11 @@ export async function custodyCall(
   escrow: string,
   plan: CallPlan,
 ): Promise<string> {
-  if (plan.receiver_id !== escrow || BigInt(plan.deposit) > 10n ** 23n)
-    throw new PublicError("Call exceeds the escrow-only signing boundary.");
+  if (
+    (plan.receiver_id !== escrow && plan.receiver_id !== BOARD) ||
+    BigInt(plan.deposit) > 10n ** 23n
+  )
+    throw new PublicError("Call exceeds the signing boundary.");
   const address = (await custodyRead(
     api,
     key,

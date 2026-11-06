@@ -65,6 +65,16 @@ pub struct Claim {
     pub job_id: Option<JobId>,
 }
 
+/// A job that was linked to a claim on this bid and has finished with the bid.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct PastJob {
+    pub agent: AccountId,
+    pub job_id: JobId,
+    pub funded: bool,
+    pub bid_state_after: BidState,
+}
+
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug)]
 pub struct Bid {
@@ -80,6 +90,7 @@ pub struct Bid {
     pub claim: Option<Claim>,
     pub claims_made: u32,
     pub funded_attempts: u32,
+    pub past_jobs: Vec<PastJob>,
 }
 
 #[near(serializers = [json, borsh])]
@@ -251,6 +262,7 @@ impl Board {
                 claim: None,
                 claims_made: 0,
                 funded_attempts: 0,
+                past_jobs: Vec::new(),
             },
         );
         self.bids.flush();
@@ -652,6 +664,7 @@ impl Board {
             },
         );
         let bid = self.bid_mut(bid_id);
+        Self::record_past_job(bid, agent, false, BidState::Open);
         bid.claim = None;
         bid.state = BidState::Open;
         env::log_str(&format!("claim_lapsed {bid_id} {agent}"));
@@ -662,12 +675,24 @@ impl Board {
             self.attempts.insert((bid_id, agent.clone()), Attempt::Used);
         }
         let bid = self.bid_mut(bid_id);
+        Self::record_past_job(bid, agent, funded, state);
         bid.claim = None;
         bid.state = state;
         if funded {
             bid.funded_attempts += 1;
         }
         env::log_str(&format!("claim_ended {bid_id} {agent} {state:?}"));
+    }
+
+    fn record_past_job(bid: &mut Bid, agent: &AccountId, funded: bool, after: BidState) {
+        if let Some(job_id) = bid.claim.as_ref().and_then(|claim| claim.job_id) {
+            bid.past_jobs.push(PastJob {
+                agent: agent.clone(),
+                job_id,
+                funded,
+                bid_state_after: after,
+            });
+        }
     }
 
     fn cancel_bid(&mut self, bid_id: BidId) {

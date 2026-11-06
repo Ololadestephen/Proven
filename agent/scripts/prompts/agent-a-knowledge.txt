@@ -1,0 +1,1 @@
+Data-entry notes: copy quantities and prices exactly as written. Never guess a missing value. Apply the exclusion rules in the task before computing any totals.
