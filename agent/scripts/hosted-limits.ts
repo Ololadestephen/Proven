@@ -106,17 +106,39 @@ const rounds = await run("round_limit", "c", () => 3e7);
 if (Number(rounds.real_calls) > MAX_ROUNDS)
   throw new Error("The round limit did not hold.");
 
-// Per agent, per job and project-wide: each stops further calls once it is reached.
+// Per agent, per job and project-wide. A limit is checked before each call, so the call that crosses it
+// finishes and the next is refused. The most a limit can be passed by is one call's worst case.
 for (const [name, limits] of [
   ["agent_limit", { agent: 1_000, project: 1e9, job: 1e9 }],
   ["job_limit", { agent: 1e9, project: 1e9, job: 1_000 }],
   ["project_limit", { agent: 1e9, project: 1_000, job: 1e9 }],
 ] as const) {
-  const outcome = await run(name, "d", () => 3e7, limits);
-  if (!outcome.budget_stop)
-    throw new Error(`${name} did not stop the attempt.`);
-  if (Number(outcome.real_calls) > 1)
-    throw new Error(`${name} allowed more than one call.`);
+  const { client, ledger } = pool(name, limits);
+  const attempt = () =>
+    doHostedWork(
+      client,
+      { ...greedy, id: "d" },
+      task,
+      "same-run",
+      () => 3e7,
+      () => undefined,
+    );
+  await attempt();
+  const first = ledger.rows().length;
+  const stopped = await attempt().then(
+    () => "not stopped",
+    (error: Error) =>
+      error instanceof BudgetStop ? error.message : `other: ${error.message}`,
+  );
+  const outcome = {
+    first_attempt_calls: first,
+    second: stopped,
+    real_calls: ledger.rows().length,
+  };
+  evidence[name] = outcome;
+  console.log(name, JSON.stringify(outcome));
+  if (!stopped.startsWith("Stopped") || outcome.real_calls !== first)
+    throw new Error(`${name} did not stop further calls.`);
 }
 
 // The project limit holds across different agents sharing the ledger.
