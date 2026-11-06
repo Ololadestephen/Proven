@@ -155,7 +155,8 @@ async function marketRoute(
     req.headers["sec-fetch-site"] !== "same-origin"
   )
     throw new ReadError("A same-origin request is required.", 403);
-  if (!allWrites.allow("all") || !writes.allow(clientOf(req, origin)))
+  // Per client first, so one client's refused requests never use up everyone's budget.
+  if (!writes.allow(clientOf(req, origin)) || !allWrites.allow("all"))
     throw new ReadError("Too many requests. Wait a minute and try again.", 429);
   const body = await readBody(req);
   if (path === "/api/market/relay") return relayRoute(body);

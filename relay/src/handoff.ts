@@ -360,13 +360,19 @@ export async function createHandoffHandler(
   await privateDirectory(pins);
   const pinPath = (jobId: number, kind: RunKind) =>
     join(pins, `${jobId}.${kind}.json`);
-  const signings = new Map<number, { since: number; count: number }>();
-  function allowSigning(jobId: number, now = Date.now()): boolean {
-    let entry = signings.get(jobId);
+  // Counted per job and per signing key, so one party can never use up the other's allowance.
+  const signings = new Map<string, { since: number; count: number }>();
+  function allowSigning(
+    jobId: number,
+    auth: RelayAuth | undefined,
+    now = Date.now(),
+  ): boolean {
+    const key = `${jobId}:${auth?.public_key}`;
+    let entry = signings.get(key);
     if (!entry || now - entry.since > 86_400_000) {
       if (signings.size > 10_000) signings.clear();
       entry = { since: now, count: 0 };
-      signings.set(jobId, entry);
+      signings.set(key, entry);
     }
     entry.count += 1;
     return entry.count <= MAX_SIGNINGS_PER_JOB_PER_DAY;
@@ -375,10 +381,14 @@ export async function createHandoffHandler(
     let count = 0;
     for (const name of await readdir(pins)) {
       if (!name.endsWith(".json")) continue;
-      const record = JSON.parse(await readPrivate(join(pins, name))) as {
-        buyer?: string;
-      };
-      if (record.buyer === buyer) count += 1;
+      try {
+        const record = JSON.parse(await readPrivate(join(pins, name))) as {
+          buyer?: string;
+        };
+        if (record.buyer === buyer) count += 1;
+      } catch {
+        /* An unreadable record must not block other buyers. */
+      }
     }
     return count;
   }
@@ -476,7 +486,7 @@ export async function createHandoffHandler(
       );
       if (request.kind === "Verify") requireSafe(isHash(job.deliverable_hash));
       if (!internal && deps.requireSignatures)
-        requireSafe(allowSigning(request.job_id));
+        requireSafe(allowSigning(request.job_id, auth));
       const name = profile(job, request.job_id, request.kind);
       const transactionHash = await wallet(async () => {
         const fresh = await deps.getJob(request.job_id);
@@ -534,20 +544,41 @@ export async function createHandoffHandler(
             (await openPins(job.buyer)) < MAX_OPEN_PINS_PER_BUYER,
         );
       }
-      requireSafe(allowSigning(request.job_id));
     }
     // A check file is kept only once its secret is stored, but a bad path is refused before signing.
     if (challenge) await safeExistingFile(path(request.job_id, "check"));
     const name = profile(job, request.job_id, kind);
+    const reply = (transactionHash: string, ciphertextBytes: number) => ({
+      profile: name,
+      transaction_hash: transactionHash,
+      ciphertext_bytes: ciphertextBytes,
+      check_hash: job.spec_hash,
+      [challenge ? "reference_hash" : "deliverable_hash"]: sha256Hex(other),
+    });
+    const hadPin = await safeExistingFile(pinFile);
+    if (!internal && deps.requireSignatures) {
+      // The same texts are already pinned under this name: nothing to sign, and nothing to count.
+      if (hadPin) {
+        const earlier = JSON.parse(await readPrivate(pinFile)) as {
+          stored?: boolean;
+        };
+        if (earlier.stored === true) {
+          pinned.add(`${request.job_id}:${kind}`);
+          return reply("already-pinned", 0);
+        }
+      }
+      requireSafe(allowSigning(request.job_id, auth));
+    }
+    const pinRecord = {
+      verifier_hash: job.verifier_hash,
+      profile: name,
+      buyer: job.buyer,
+      at: Date.now(),
+    };
     // Written first, so a deposit can always be found and returned, even if the job is later cancelled.
     await writePrivate(
       pinFile,
-      JSON.stringify({
-        verifier_hash: job.verifier_hash,
-        profile: name,
-        buyer: job.buyer,
-        at: Date.now(),
-      }),
+      JSON.stringify({ ...pinRecord, stored: false }),
     );
     let stored: { transactionHash: string; ciphertextBytes: number };
     try {
@@ -567,19 +598,29 @@ export async function createHandoffHandler(
       });
     } catch (error) {
       // Refused for certain, so no deposit was locked. Anything else stays listed for the sweep.
-      if (error instanceof Refused || isDefiniteRefusal(error))
+      // A record from an earlier store stays, because that secret and its deposit are still there.
+      if (!hadPin && (error instanceof Refused || isDefiniteRefusal(error)))
         await unlink(pinFile).catch(() => undefined);
       throw error;
     }
+    await writePrivate(pinFile, JSON.stringify({ ...pinRecord, stored: true }));
     if (challenge) await writePrivate(path(request.job_id, "check"), check);
     pinned.add(`${request.job_id}:${kind}`);
-    return {
-      profile: name,
-      transaction_hash: stored.transactionHash,
-      ciphertext_bytes: stored.ciphertextBytes,
-      check_hash: job.spec_hash,
-      [challenge ? "reference_hash" : "deliverable_hash"]: sha256Hex(other),
-    };
+    return reply(stored.transactionHash, stored.ciphertextBytes);
+  }
+
+  /** One action at a time per job, including the sweep's. */
+  function inJobQueue<T>(jobId: number, action: () => Promise<T>): Promise<T> {
+    const pending = (queues.get(jobId) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(action);
+    queues.set(jobId, pending);
+    void pending
+      .catch(() => undefined)
+      .finally(() => {
+        if (queues.get(jobId) === pending) queues.delete(jobId);
+      });
+    return pending;
   }
 
   /** Returns the deposit of every pin whose run is over, whose job is gone, or that nobody ran in time.
@@ -591,35 +632,42 @@ export async function createHandoffHandler(
       const jobId = Number(parts[1]);
       const kind = parts[2] as RunKind;
       try {
-        const file = join(pins, name);
-        const record = JSON.parse(await readPrivate(file)) as {
-          verifier_hash: string;
-          profile: string;
-          at: number;
-        };
-        const job = await deps.getJob(jobId);
-        const running =
-          job &&
-          (["Challenging", "Verifying"].includes(job.state) ||
-            job.run_started_at != null);
-        if (running) continue;
-        const stale = now - record.at > PIN_MAX_AGE_MS;
-        const ended =
-          !job ||
-          ["Released", "Refunded", "Expired"].includes(job.state) ||
-          (kind === "Challenge"
-            ? job.challenge_request_id
-            : job.verdict_request_id) != null;
-        if (!stale && !ended) continue;
-        await wallet(() =>
-          deleteOnce(() =>
-            deps.deleteSecret(record.verifier_hash, record.profile),
-          ),
-        );
-        await unlink(file);
-        pinned.delete(`${jobId}:${kind}`);
-        if (!job || (stale && job.state === "Draft"))
-          await unlink(path(jobId, "check")).catch(() => undefined);
+        await inJobQueue(jobId, async () => {
+          const file = join(pins, name);
+          const record = JSON.parse(await readPrivate(file)) as {
+            verifier_hash: string;
+            profile: string;
+            at: number;
+          };
+          const shouldExpire = (job: HandoffJob | null) => {
+            if (!job) return true;
+            if (
+              ["Challenging", "Verifying"].includes(job.state) ||
+              job.run_started_at != null
+            )
+              return false;
+            if (["Released", "Refunded", "Expired"].includes(job.state))
+              return true;
+            if (now - record.at > PIN_MAX_AGE_MS) return true;
+            // A result is on chain and the job has moved on, so this run can never need the pin.
+            return kind === "Challenge"
+              ? job.challenge_request_id != null && job.state !== "Draft"
+              : job.verdict_request_id != null && job.state !== "Delivered";
+          };
+          const job = await deps.getJob(jobId);
+          if (!shouldExpire(job)) return;
+          await wallet(async () => {
+            // Read again: the wait for the signer can outlast what was read above.
+            requireSafe(shouldExpire(await deps.getJob(jobId)));
+            return deleteOnce(() =>
+              deps.deleteSecret(record.verifier_hash, record.profile),
+            );
+          });
+          await unlink(file);
+          pinned.delete(`${jobId}:${kind}`);
+          if (!job || job.state === "Draft")
+            await unlink(path(jobId, "check")).catch(() => undefined);
+        });
       } catch {
         /* Try again on the next sweep. */
       }
@@ -667,28 +715,24 @@ export async function createHandoffHandler(
     } catch {
       return refused();
     }
-    const previous = queues.get(request.job_id) ?? Promise.resolve();
-    const pending = previous
-      .catch(() => undefined)
-      .then(() =>
-        perform(
-          request,
-          session,
-          (value as { auth?: RelayAuth }).auth,
-          internal,
-        ),
-      );
-    queues.set(request.job_id, pending);
     try {
-      return { ok: true, result: await pending };
+      return {
+        ok: true,
+        result: await inJobQueue(request.job_id, () =>
+          perform(
+            request,
+            session,
+            (value as { auth?: RelayAuth }).auth,
+            internal,
+          ),
+        ),
+      };
     } catch (error) {
       // The reason stays on the operator's terminal. No private text is in these errors.
       console.error(
         `relay refused ${request.action} on job ${request.job_id}: ${String(error).slice(0, 200)}`,
       );
       return refused();
-    } finally {
-      if (queues.get(request.job_id) === pending) queues.delete(request.job_id);
     }
   };
 }
@@ -859,13 +903,18 @@ async function main(): Promise<void> {
   // Kept on disk, so a restart cannot forget a transaction whose outcome is still unknown.
   const suspendedFile = join(dirname(DEFAULT_SOCKET), "signing-suspended.json");
   await privateDirectory(dirname(DEFAULT_SOCKET));
-  let unknownTransaction: { hash: string; at: number } | null =
-    (await safeExistingFile(suspendedFile))
-      ? (JSON.parse(await readPrivate(suspendedFile)) as {
-          hash: string;
-          at: number;
-        })
-      : null;
+  let unknownTransaction: { hash: string; at: number } | null = null;
+  if (await safeExistingFile(suspendedFile)) {
+    try {
+      unknownTransaction = JSON.parse(await readPrivate(suspendedFile)) as {
+        hash: string;
+        at: number;
+      };
+    } catch {
+      // Unreadable: stay paused for the full lifetime of any transaction it could have named.
+      unknownTransaction = { hash: "", at: Date.now() };
+    }
+  }
   let signingSuspended = unknownTransaction !== null;
   async function signing<T>(call: () => Promise<T>): Promise<T> {
     inFlight = null;
@@ -894,7 +943,8 @@ async function main(): Promise<void> {
       });
       settled = ["EXECUTED", "FINAL"].includes(outcome.final_execution_status);
     } catch {
-      settled = Date.now() - unknownTransaction.at > 2 * 86_400_000;
+      // A signed transaction is valid for about a day after its block, so by now it can never land.
+      settled = Date.now() - unknownTransaction.at > 25 * 3_600_000;
     }
     if (!settled) return;
     await unlink(suspendedFile);

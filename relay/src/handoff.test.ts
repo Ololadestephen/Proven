@@ -900,3 +900,138 @@ test("leaves no check file or pin behind when the chain refuses the store", asyn
   assert.equal(f.deletions.length, 0);
   await f.cleanup();
 });
+
+function signer() {
+  const pair = generateKeyPairSync("ed25519");
+  const bytes = pair.publicKey
+    .export({ format: "der", type: "spki" })
+    .subarray(-32);
+  let value = BigInt(`0x${bytes.toString("hex")}`);
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let encoded = "";
+  while (value > 0n) {
+    encoded = alphabet[Number(value % 58n)] + encoded;
+    value /= 58n;
+  }
+  return {
+    account: bytes.toString("hex"),
+    sign(request: Record<string, unknown>) {
+      const nonce = randomBytes(32);
+      const message = relayMessage(
+        String(request.action),
+        Number(request.job_id),
+        relayPayload(request),
+        Date.now(),
+      );
+      return {
+        ...request,
+        auth: {
+          public_key: `ed25519:${encoded}`,
+          message,
+          nonce_base64: nonce.toString("base64"),
+          signature_base64: sign(
+            null,
+            nep413Digest(message, nonce, RELAY_RECIPIENT),
+            pair.privateKey,
+          ).toString("base64"),
+        },
+      };
+    },
+  };
+}
+
+test("a repeat pin signs nothing, and a refused repin keeps the record of the good one", async () => {
+  const f = await fixture();
+  const buyer = signer();
+  Object.assign(f.job, { buyer: buyer.account });
+  const handle = await createHandoffHandler(
+    { ...f.deps, requireSignatures: true },
+    f.directory,
+  );
+  assert.equal((await handle(buyer.sign(challenge()))).ok, true);
+  assert.equal((await handle(buyer.sign(challenge()))).ok, true);
+  assert.equal(f.stores.length, 1);
+  await f.cleanup();
+});
+
+test("one party using up its signings cannot stop the other from pinning", async () => {
+  const f = await fixture();
+  const buyer = signer();
+  const worker = signer();
+  Object.assign(f.job, {
+    buyer: buyer.account,
+    worker: worker.account,
+    state: "Draft",
+  });
+  let refuse = false;
+  const deps = {
+    ...f.deps,
+    requireSignatures: true,
+    storeSecret: async (
+      hash: string,
+      profile: string,
+      variables: Record<string, string>,
+    ) => {
+      if (refuse) throw new Error("Secret transaction failed: abc");
+      return f.deps.storeSecret(hash, profile, variables);
+    },
+  };
+  const handle = await createHandoffHandler(deps, f.directory);
+  assert.equal((await handle(buyer.sign(challenge()))).ok, true);
+  await writeFile(
+    join(f.records, "1.deliverable.json"),
+    JSON.stringify({ text: deliverable }),
+    { mode: 0o600 },
+  );
+  Object.assign(f.job, { state: "Delivered" });
+  refuse = true;
+  const attempts = [];
+  for (let i = 0; i < 10; i++)
+    attempts.push((await handle(worker.sign(pin()))).ok);
+  assert.ok(attempts.every((ok) => ok === false));
+  refuse = false;
+  const before = f.stores.length;
+  assert.equal((await handle(worker.sign(pin()))).ok, false);
+  assert.equal(f.stores.length, before, "the worker's allowance is used up");
+  assert.equal((await handle(buyer.sign(pin()))).ok, true);
+  assert.equal(f.stores.length, before + 1);
+  await f.cleanup();
+});
+
+test("a refused repin keeps the record of the earlier good pin", async () => {
+  const f = await fixture();
+  const handle = await createHandoffHandler(f.deps, f.directory);
+  assert.equal((await handle(challenge())).ok, true);
+  const pins = (await readdir(f.directory)).find((n) => n.startsWith("pins-"))!;
+  f.deps.storeSecret = async () => {
+    throw new Error("Secret transaction failed: abc");
+  };
+  const refusing = await createHandoffHandler(f.deps, f.directory);
+  assert.equal((await refusing(challenge())).ok, false);
+  assert.deepEqual(await readdir(join(f.directory, pins)), [
+    "1.Challenge.json",
+  ]);
+  await f.cleanup();
+});
+
+test("the sweep leaves a pin alone when the job moved back to running before signing", async () => {
+  const f = await fixture();
+  const handle = await createHandoffHandler(f.deps, f.directory);
+  assert.equal((await handle(challenge())).ok, true);
+  let reads = 0;
+  f.deps.getJob = async () =>
+    reads++ === 0 ? null : ({ ...f.job, state: "Challenging" } as typeof f.job);
+  await handle({ action: "expire_pins" }, true);
+  assert.equal(f.deletions.length, 0);
+  await f.cleanup();
+});
+
+test("a new pin stays while its job can still use it, even with an older result recorded", async () => {
+  const f = await fixture();
+  const handle = await createHandoffHandler(f.deps, f.directory);
+  assert.equal((await handle(challenge())).ok, true);
+  (f.job as { challenge_request_id: string | null }).challenge_request_id = "9";
+  await handle({ action: "expire_pins" }, true);
+  assert.equal(f.deletions.length, 0);
+  await f.cleanup();
+});
