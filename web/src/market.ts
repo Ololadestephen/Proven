@@ -7,6 +7,11 @@ import { readFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { parseEnv } from "node:util";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
+import {
+  relayPayload,
+  RelayVerifier,
+  type RelayAuth,
+} from "../../relay/src/buyer-auth.ts";
 import { ReadError } from "./model.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
@@ -85,6 +90,42 @@ export function candidateJob(
       job.state === "Draft",
   );
   return match ? match[0] : null;
+}
+
+const MARKET_CACHE_MS = 4_000;
+let cached: { at: number; value: Promise<unknown> } | null = null;
+/** Many people reading the board share one set of chain reads. */
+export function readMarketCached(now = Date.now()): Promise<unknown> {
+  if (!cached || now - cached.at > MARKET_CACHE_MS) {
+    const value = readMarket();
+    value.catch(() => {
+      cached = null;
+    });
+    cached = { at: now, value };
+  }
+  return cached.value;
+}
+
+/** A fixed number of writes per client per minute. Reads are shared through the cache above. */
+export class RateLimiter {
+  private readonly hits = new Map<string, number[]>();
+  private readonly limit: number;
+  constructor(limit: number) {
+    this.limit = limit;
+  }
+  allow(client: string, now = Date.now()): boolean {
+    const recent = (this.hits.get(client) ?? []).filter(
+      (at) => now - at < 60_000,
+    );
+    if (recent.length >= this.limit) {
+      this.hits.set(client, recent);
+      return false;
+    }
+    recent.push(now);
+    this.hits.set(client, recent);
+    if (this.hits.size > 10_000) this.hits.clear();
+    return true;
+  }
 }
 
 export async function readMarket() {
@@ -188,14 +229,44 @@ export async function relayRoute(body: unknown) {
     !HANDOFF_ACTIONS.has(request.action)
   )
     throw new ReadError("That relay action is not available.", 400);
+  if (!request.auth)
+    throw new ReadError("Sign this request with your wallet.", 401);
   return relay(request);
 }
 
+const verifier = new RelayVerifier(async (accountId, publicKey) => {
+  try {
+    await provider.viewAccessKey({
+      accountId,
+      publicKey,
+      finalityQuery: { finality: "final" },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 let reviewing = false;
-/** Runs the bid review, which can only keep a bid off the board. Fixed command, one at a time. */
-export function reviewRoute(bidId: number): Promise<unknown> {
+/** Runs the bid review, which can only keep a bid off the board. Fixed command, one at a time. Only the
+ * bid's own buyer can ask, because each review spends the operator's model credit. */
+export async function reviewRoute(
+  bidId: number,
+  auth?: RelayAuth,
+): Promise<unknown> {
   if (!Number.isSafeInteger(bidId) || bidId < 0)
     throw new ReadError("Invalid bid.", 400);
+  const bid = await view<Bid | null>(BOARD, "get_bid", { bid_id: bidId });
+  if (!bid) throw new ReadError("No such bid.", 404);
+  const allowed = await verifier.verify(
+    auth,
+    [bid.buyer],
+    "review",
+    bidId,
+    relayPayload({ action: "review" }),
+  );
+  if (!allowed)
+    throw new ReadError("Only the bid's buyer can ask for a review.", 403);
   if (reviewing) throw new ReadError("A review is already running.", 429);
   reviewing = true;
   return new Promise((resolve, reject) => {

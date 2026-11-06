@@ -2,7 +2,8 @@ import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import type { Config } from "./config.ts";
 import { PublicError } from "./errors.ts";
 import { custodyCall, custodySignForRelay } from "./custody.ts";
-import { handoff } from "./handoff.ts";
+import { handoff, handoffOverWeb } from "./handoff.ts";
+import { relayMessage, signWithKey } from "./relay-auth.ts";
 import type { CallPlan, CallResult, Runtime } from "./types.ts";
 
 const WORKER_METHODS = new Set([
@@ -158,10 +159,30 @@ export function createRuntime(
       ? (message) =>
           custodySignForRelay(config.custodyApi, config.custodyKey!, message)
       : undefined,
-    handoff: (request) =>
-      handoff(config.socket, {
+    async handoff(request) {
+      const body: Record<string, unknown> = {
         ...request,
         ...(config.demoSession ? { session_id: config.demoSession } : {}),
-      }),
+      };
+      // A hosted relay needs a signature for everything. The local one asks only for collecting.
+      if (config.relayUrl || request.action === "collect") {
+        const message = relayMessage(request);
+        const signed = config.custodyKey
+          ? await custodySignForRelay(
+              config.custodyApi,
+              config.custodyKey,
+              message,
+            )
+          : config.key
+            ? signWithKey(config.key, message)
+            : null;
+        if (!signed)
+          throw new PublicError("This account has no key to sign with.");
+        body.auth = { ...signed, message };
+      }
+      return config.relayUrl
+        ? handoffOverWeb(config.relayUrl, body)
+        : handoff(config.socket, body);
+    },
   };
 }

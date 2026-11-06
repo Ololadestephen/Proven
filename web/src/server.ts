@@ -11,7 +11,8 @@ import { demoRoute } from "./demo-routes.ts";
 import { loadJob } from "./evidence.ts";
 import {
   createDevWallet,
-  readMarket,
+  RateLimiter,
+  readMarketCached,
   relayRoute,
   reviewRoute,
   sample,
@@ -116,13 +117,23 @@ async function readBody(
   }
 }
 
+const writes = new RateLimiter(30);
+/** Behind a reverse proxy on a known origin, the proxy's last entry is the visitor. */
+function clientOf(req: IncomingMessage, origin?: string): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (origin && typeof forwarded === "string")
+    return forwarded.split(",").at(-1)?.trim() ?? "unknown";
+  return req.socket.remoteAddress ?? "unknown";
+}
+
 async function marketRoute(
   req: IncomingMessage,
   path: string,
   devWallet?: ReturnType<typeof createDevWallet>,
+  origin?: string,
 ): Promise<unknown> {
   if (req.method === "GET") {
-    if (path === "/api/market") return readMarket();
+    if (path === "/api/market") return readMarketCached();
     if (path === "/api/market/sample") return sample();
     if (path === "/api/market/dev") return devWallet ? devWallet.list() : {};
     throw new ReadError("Route not found.", 404);
@@ -135,9 +146,11 @@ async function marketRoute(
   )
     throw new ReadError("A same-origin request is required.", 403);
   const body = await readBody(req);
+  if (!writes.allow(clientOf(req, origin)))
+    throw new ReadError("Too many requests. Wait a minute and try again.", 429);
   if (path === "/api/market/relay") return relayRoute(body);
   const review = /^\/api\/market\/review\/([0-9]+)$/.exec(path);
-  if (review) return reviewRoute(Number(review[1]));
+  if (review) return reviewRoute(Number(review[1]), body.auth as never);
   if (devWallet && path === "/api/market/dev/call")
     return devWallet.call(body as never);
   if (devWallet && path === "/api/market/dev/sign")
@@ -203,7 +216,7 @@ export function createApp(
       if (url.pathname === "/app" || url.pathname === "/app/")
         res.setHeader("Content-Security-Policy", MARKET_CSP);
       if (url.pathname.startsWith("/api/market")) {
-        json(res, 200, await marketRoute(req, url.pathname, devWallet));
+        json(res, 200, await marketRoute(req, url.pathname, devWallet, origin));
         return;
       }
       if (url.pathname === "/api/demo" || url.pathname === "/api/demo/start") {

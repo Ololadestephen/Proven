@@ -226,6 +226,26 @@ async function reviewerKey() {
   });
 }
 
+/** Testnet agent wallets may sign for the relay and nothing else, so they can reach a hosted relay. */
+async function agentsSignForRelay() {
+  for (const letter of ["A", "B", "C"]) {
+    const prefix = `PROVEN_AGENT_${letter}`;
+    await once(`agent_${letter}_relay_signing`, () =>
+      storePolicy(
+        env[`${prefix}_WALLET_ID`]!,
+        env[`${prefix}_CUSTODY_KEY`]!,
+        env[`${prefix}_ACCOUNT_ID`]!,
+        {
+          sign_message: {
+            allowed: true,
+            allowed_recipients: [RELAY_RECIPIENT],
+          },
+        },
+      ),
+    );
+  }
+}
+
 /** The owner's decision for the gate runs: testnet buyer only, with the per-call limit unchanged. */
 async function raiseTestnetBuyerDaily() {
   await once("testnet_buyer_daily_3_near", () =>
@@ -305,6 +325,8 @@ async function main() {
     throw new PublicError("The owner-approved testnet setup flag is required.");
   if (process.argv[3] === "--move-to-new-contracts")
     return moveToNewContracts();
+  if (process.argv[3] === "--agents-sign-for-relay")
+    return agentsSignForRelay();
   if (process.argv[3] === "--raise-testnet-buyer-daily")
     return raiseTestnetBuyerDaily();
   await once("buyer_policy", () =>

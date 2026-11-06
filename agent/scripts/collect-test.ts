@@ -14,6 +14,7 @@ import { JsonRpcProvider } from "near-api-js";
 import { loadConfig, ROOT } from "../src/config.ts";
 import { custodySignForRelay, RELAY_RECIPIENT } from "../src/custody.ts";
 import { handoff } from "../src/handoff.ts";
+import { relayMessage } from "../src/relay-auth.ts";
 import { executeTool } from "../src/service.ts";
 import type { Job } from "../src/types.ts";
 
@@ -37,7 +38,7 @@ const outcome = async (run: () => Promise<unknown>) => {
   }
 };
 const buyerAuth = async (id: number) => {
-  const message = `proven-collect:${id}:${Date.now()}`;
+  const message = relayMessage({ action: "collect", job_id: id });
   const signed = await custodySignForRelay(
     config.custodyApi,
     config.custodyKey!,
@@ -89,7 +90,7 @@ while (value > 0n) {
   value /= 58n;
 }
 const nonce = randomBytes(32);
-const message = `proven-collect:${releasedId}:${Date.now()}`;
+const message = relayMessage({ action: "collect", job_id: releasedId });
 const borsh = (text: string) => {
   const bytes = Buffer.from(text);
   const length = Buffer.alloc(4);
@@ -125,7 +126,7 @@ results.agent_wallet_signing = await outcome(() =>
   custodySignForRelay(
     config.custodyApi,
     env.PROVEN_AGENT_B_CUSTODY_KEY!,
-    `proven-collect:${releasedId}:${Date.now()}`,
+    relayMessage({ action: "collect", job_id: releasedId }),
   ),
 );
 

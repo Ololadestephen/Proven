@@ -18,6 +18,8 @@ export interface Config {
   key?: string;
   demoSession?: string;
   allowedWorkers: string[];
+  /** A hosted relay's https address. Without it, the local socket is used. */
+  relayUrl?: string;
 }
 export function loadConfig(selected?: Actor): Config {
   let file: Record<string, string | undefined> = {};
@@ -89,6 +91,7 @@ export function loadConfig(selected?: Actor): Config {
         ? undefined
         : get(`${prefix}_PRIVATE_KEY`),
     demoSession: process.env.PROVEN_DEMO_SESSION,
+    relayUrl: get("PROVEN_RELAY_URL"),
     allowedWorkers: (
       (mainnet ? undefined : get("PROVEN_BUYER_WORKERS")) ??
       (mainnet

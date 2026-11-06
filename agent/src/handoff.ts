@@ -50,3 +50,26 @@ export async function handoff(
     });
   });
 }
+
+/** The same request to a hosted relay. A refusal never says why, as with the local socket. */
+export async function handoffOverWeb(
+  url: string,
+  request: Record<string, unknown>,
+): Promise<unknown> {
+  if (!/^https:\/\/|^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(url))
+    throw new PublicError("A hosted relay must use https.");
+  const response = await fetch(`${url.replace(/\/$/, "")}/api/market/relay`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+    signal: AbortSignal.timeout(120_000),
+    redirect: "error",
+  }).catch(() => {
+    throw new PublicError("The hosted relay could not be reached.");
+  });
+  if (!response.ok)
+    throw new PublicError(
+      "Private relay refused the handoff. Check job hashes and your signature.",
+    );
+  return response.json();
+}

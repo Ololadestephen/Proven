@@ -280,16 +280,10 @@ export function createService(runtime: Runtime) {
         throw new PublicError(
           "A delivery can be collected only once the job is Released.",
         );
-      if (current.buyer !== runtime.identity || !runtime.signForRelay)
+      if (current.buyer !== runtime.identity)
         throw new PublicError("Only the job's custody buyer can collect.");
       if (dry) return { dry_run: true, would_collect: jobId };
-      const message = `proven-collect:${jobId}:${Date.now()}`;
-      const signed = await runtime.signForRelay(message);
-      return runtime.handoff({
-        action: "collect",
-        job_id: jobId,
-        auth: { ...signed, message },
-      });
+      return runtime.handoff({ action: "collect", job_id: jobId });
     }
     if (name === "fund_job") {
       payable(dry);

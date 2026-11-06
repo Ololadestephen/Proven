@@ -85,6 +85,28 @@ const recall = (hash: string) => {
   }
 };
 
+/** Matches the relay's check: a signature covers the action, the job and the exact texts. */
+async function relayPayload(request: Record<string, unknown>) {
+  const text =
+    request.action === "challenge"
+      ? `${String(request.check)}\0${String(request.reference)}`
+      : request.action === "deliver"
+        ? String(request.deliverable)
+        : "";
+  return sha256(text);
+}
+async function signed(
+  wallet: Wallet,
+  request: Record<string, unknown>,
+  id: number,
+) {
+  const message = `proven-relay:${String(request.action)}:${id}:${await relayPayload(request)}:${Date.now()}`;
+  return {
+    ...request,
+    auth: { ...(await wallet.signForRelay(message)), message },
+  };
+}
+
 function devWallet(role: string, accountId: string, onOut: () => void): Wallet {
   return {
     accountId,
@@ -394,7 +416,11 @@ function BidCard({
   const act = (current: Step) =>
     run(current.label, async () => {
       if (current.id === "review") {
-        await api(`/api/market/review/${bid.id}`, {});
+        if (!wallet) throw new Error("Connect a wallet first.");
+        await api(
+          `/api/market/review/${bid.id}`,
+          await signed(wallet, { action: "review" }, bid.id),
+        );
         return;
       }
       if (!wallet) throw new Error("Connect a wallet first.");
@@ -463,12 +489,19 @@ function BidCard({
           const referenceText = savedReference ?? reference;
           if (!checkText || !referenceText)
             throw new Error("Paste the check and reference used for this bid.");
-          await api("/api/market/relay", {
-            action: "challenge",
-            job_id: current.jobId,
-            check: checkText,
-            reference: referenceText,
-          });
+          await api(
+            "/api/market/relay",
+            await signed(
+              wallet,
+              {
+                action: "challenge",
+                job_id: current.jobId,
+                check: checkText,
+                reference: referenceText,
+              },
+              current.jobId,
+            ),
+          );
           await escrow(
             "request_challenge",
             { job_id: current.jobId },
@@ -488,18 +521,29 @@ function BidCard({
             0n,
             15n * TGAS,
           );
-          await api("/api/market/relay", {
-            action: "deliver",
-            job_id: current.jobId,
-            deliverable: delivery,
-          });
+          await api(
+            "/api/market/relay",
+            await signed(
+              wallet,
+              {
+                action: "deliver",
+                job_id: current.jobId,
+                deliverable: delivery,
+              },
+              current.jobId,
+            ),
+          );
           return;
         }
         case "verify":
-          await api("/api/market/relay", {
-            action: "pin_verification",
-            job_id: current.jobId,
-          });
+          await api(
+            "/api/market/relay",
+            await signed(
+              wallet,
+              { action: "pin_verification", job_id: current.jobId },
+              current.jobId,
+            ),
+          );
           await escrow(
             "request_verification",
             { job_id: current.jobId },
@@ -511,15 +555,13 @@ function BidCard({
           await escrow(current.method, { job_id: current.jobId });
           return;
         case "collect": {
-          const message = `proven-collect:${current.jobId}:${Date.now()}`;
-          const signed = await wallet.signForRelay(message);
           const reply = await api<{ deliverable: string }>(
             "/api/market/relay",
-            {
-              action: "collect",
-              job_id: current.jobId,
-              auth: { ...signed, message },
-            },
+            await signed(
+              wallet,
+              { action: "collect", job_id: current.jobId },
+              current.jobId,
+            ),
           );
           setCollected(reply.deliverable);
           return;
@@ -528,40 +570,6 @@ function BidCard({
           return;
       }
     });
-
-  // Once a run has recorded its result, its private texts are deleted from OutLayer, whoever is viewing.
-  const cleanJobId = bid.claim?.job_id ?? bid.last_job?.id ?? null;
-  const challengeDone = job?.challenge_request_id ?? null;
-  const verdictDone = job?.verdict_request_id ?? null;
-  useEffect(() => {
-    if (cleanJobId === null) return;
-    if (viewer === null || (viewer !== bid.buyer && viewer !== job?.worker))
-      return;
-    const clean = (kind: "Challenge" | "Verify") => {
-      const mark = `proven-cleaned-${market.escrow}-${cleanJobId}-${kind}`;
-      try {
-        if (localStorage.getItem(mark)) return;
-        localStorage.setItem(mark, "1");
-      } catch {
-        return;
-      }
-      void api("/api/market/relay", {
-        action: "cleanup",
-        job_id: cleanJobId,
-        kind,
-      }).catch(() => undefined);
-    };
-    if (challengeDone) clean("Challenge");
-    if (verdictDone) clean("Verify");
-  }, [
-    cleanJobId,
-    challengeDone,
-    verdictDone,
-    market.escrow,
-    viewer,
-    bid.buyer,
-    job?.worker,
-  ]);
 
   const needsPrivate =
     step?.id === "challenge" && (!savedCheck || !savedReference);
