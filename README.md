@@ -132,7 +132,7 @@ Old evidence: `board.proven.testnet` with `escrow-v2.proven.testnet` holds earli
 
 **Unaudited, owner-funded mainnet deployment.** `proven-escrow.near` runs the same build, with caps of 0.1 NEAR per job and 1 NEAR held. It has no outside users, and its only funds are the owner's. Read it on chain: job 0, real model work, passed and was paid 0.01 NEAR, verdict at `https://api.outlayer.ai/attestations/by-request/2850`. Job 1, a scripted wrong delivery, labelled as scripted, failed and was refunded, verdict at `https://api.outlayer.ai/attestations/by-request/2852`. The contract account's key is still a single key, so its holder could redeploy it. No security audit has been done.
 
-Check those verdicts yourself, with [`outlayer-verify`](https://github.com/out-layer/outlayer-verify) if you have it installed:
+Check those verdicts yourself with `outlayer-verify`, the same tool as in the trust section above:
 
 ```bash
 outlayer-verify tx 4QPa7UJybwXH3dbV1yL12f72xcAQeNrvGkFw5ECB96BQ --network mainnet
