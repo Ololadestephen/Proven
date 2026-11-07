@@ -1,4 +1,4 @@
-import { COIN, NETWORK } from "./network.ts";
+import { canPost, COIN, NETWORK } from "./network.ts";
 import { useRef, useState } from "react";
 import type { Market, Wallet } from "./market-types.ts";
 import { api, remember, sha256 } from "./market-client.ts";
@@ -237,6 +237,13 @@ export function PostJob({
           {error}
         </p>
       )}
+      {canPost(wallet?.accountId) ? null : (
+        <p role="alert" className="market-error">
+          This market is closed for now, so only listed buyers can post. Posting
+          from another account would cost a deposit for a job that cannot run,
+          so it is turned off here.
+        </p>
+      )}
       <fieldset disabled={locked}>
         <legend className="sr-only">{STAGES[stage]}</legend>
         {stage === 0 && (
@@ -449,7 +456,13 @@ export function PostJob({
           <button
             type="button"
             className="button button-primary"
-            disabled={locked || !wallet || !prepared || market.paused}
+            disabled={
+              locked ||
+              !wallet ||
+              !prepared ||
+              market.paused ||
+              !canPost(wallet.accountId)
+            }
             onClick={post}
           >
             {busy ? "Posting…" : "Post job · 0.08 NEAR deposit"}

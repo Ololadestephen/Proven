@@ -4,6 +4,7 @@ const config = (await fetch("/api/market/config")
   .catch(() => ({ network: "testnet", open: true }))) as {
   network?: string;
   open?: boolean;
+  buyers?: string[];
 };
 
 export const NETWORK: "mainnet" | "testnet" =
@@ -11,6 +12,8 @@ export const NETWORK: "mainnet" | "testnet" =
 export const IS_MAINNET = NETWORK === "mainnet";
 /** Off for everyone except listed buyers until the owner opens the market. */
 export const MARKET_OPEN = config.open !== false;
+export const canPost = (account: string | undefined) =>
+  MARKET_OPEN || (!!account && (config.buyers ?? []).includes(account));
 /** Shown wherever the network is named. Mainnet is never shown without its caps. */
 export const NETWORK_LABEL = IS_MAINNET
   ? "Mainnet · unaudited · at most 0.1 NEAR per job, 0.2 per buyer, 1 held in total"

@@ -256,12 +256,23 @@ export function marketOpenTo(
     .includes(buyer);
 }
 
-export const marketConfig = () => ({
-  network: NETWORK,
-  open:
-    process.env.PROVEN_MARKET_ACCESS === "open" ||
-    (process.env.PROVEN_MARKET_ACCESS === undefined && NETWORK !== "mainnet"),
-});
+export function marketConfig(setting = process.env.PROVEN_MARKET_ACCESS) {
+  const open =
+    setting === "open" || (setting === undefined && NETWORK !== "mainnet");
+  return {
+    network: NETWORK,
+    open,
+    // A closed market names its buyers, so nobody else pays a posting deposit for a job that cannot run.
+    ...(open
+      ? {}
+      : {
+          buyers: (setting ?? "")
+            .split(",")
+            .map((name) => name.trim())
+            .filter(Boolean),
+        }),
+  };
+}
 
 /** Publishes a bid's check once its bid has ended. The relay checks the rule against the chain. */
 export function revealRoute(bidId: number) {
