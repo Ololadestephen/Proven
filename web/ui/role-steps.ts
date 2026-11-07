@@ -53,7 +53,10 @@ export function stepForViewer(
     }
     case "settle":
       return step.method === "release"
-        ? { ...step, label: `Get paid ${showNear(bid.amount)}` }
+        ? {
+            ...step,
+            label: `Nothing happened: get paid ${showNear(bid.amount)} now`,
+          }
         : wait(
             `Not paid: the work failed the rule “${job?.failed_rule ?? "unknown"}”.`,
           );

@@ -95,16 +95,36 @@ test("each job state gives the right step", () => {
   assert.equal(id(at("Funded"), "w"), "deliver");
   assert.equal(id(at("Funded"), "b"), "wait");
   assert.equal(id(at("Delivered"), "x"), "verify");
-  assert.deepEqual(nextStep(at("Passed"), "x", true, NOW), {
-    id: "settle",
-    label: "Pay the worker",
-    jobId: 7,
-    method: "release",
-  });
+  // The relay pays out and closes attempts itself, so nobody is asked to, unless it stalls.
   assert.equal(
-    (nextStep(at("Failed"), "x", true, NOW) as { method?: string }).method,
+    id(at("Passed", { delivered_at: (NS - 1n).toString() }), "b"),
+    "wait",
+  );
+  assert.equal(
+    id(at("Failed", { delivered_at: (NS - 1n).toString() }), "x"),
+    "wait",
+  );
+  const longAgo = (NS - 21n * 60n * 1_000_000_000n).toString();
+  assert.deepEqual(
+    nextStep(at("Passed", { delivered_at: longAgo }), "x", true, NOW),
+    {
+      id: "settle",
+      label: "Nothing happened: send the payment now",
+      jobId: 7,
+      method: "release",
+    },
+  );
+  assert.equal(
+    (
+      nextStep(at("Failed", { delivered_at: longAgo }), "x", true, NOW) as {
+        method?: string;
+      }
+    ).method,
     "refund",
   );
+  // Paid: the buyer collects at once, even before the bid's record catches up.
+  assert.equal(id(at("Released"), "b"), "collect");
+  assert.equal(id(at("Released"), "x"), "wait");
   assert.equal(id(at("Verifying"), "b"), "wait");
   assert.equal(id(bid({ state: "Claimed", job: job("Open") }), "x"), "sync");
 });

@@ -73,6 +73,9 @@ const near = (yocto: string) =>
   `${Number(BigInt(yocto) / 10n ** 18n) / 1e6} NEAR`;
 export const showNear = near;
 const wait = (label: string): Step => ({ id: "wait", label });
+/** The relay moves a job on within minutes. A button appears only if it has not, so nobody is asked to
+ * do a step the relay is about to do. */
+const STALLED_NANOS = 20n * 60n * 1_000_000_000n;
 
 export function nextStep(
   bid: MarketBid,
@@ -89,10 +92,14 @@ export function nextStep(
 
   if (bid.state === "Pending")
     return wait("Creating the job and holding the payment");
-  if (bid.state === "Done")
-    return isBuyer && job?.state === "Released" && jobId !== null
+  // Paid: the buyer collects the work straight away, whether or not the bid's record has caught up.
+  if (job?.state === "Released")
+    return isBuyer && jobId !== null
       ? { id: "collect", label: "Collect the work", jobId }
-      : null;
+      : bid.state === "Done"
+        ? null
+        : wait("Paid. Finishing the record");
+  if (bid.state === "Done") return null;
   if (["Closed", "Cancelled"].includes(bid.state)) {
     // Fees not yet returned are moved on by anyone.
     return viewer && bid.fees?.includes("Held") && job
@@ -188,24 +195,34 @@ export function nextStep(
       return wait("Checking the work");
     }
     case "Passed":
-      return {
-        id: "settle",
-        label: "Pay the worker",
-        jobId,
-        method: "release",
-      };
+      return stalled(job, now)
+        ? {
+            id: "settle",
+            label: "Nothing happened: send the payment now",
+            jobId,
+            method: "release",
+          }
+        : wait("Passed. The payment is on its way to the worker");
     case "Failed":
     case "RefundDue":
-      return {
-        id: "settle",
-        label: "Close this failed attempt",
-        jobId,
-        method: "refund",
-      };
-    case "Released":
+      return stalled(job, now)
+        ? {
+            id: "settle",
+            label: "Nothing happened: close this attempt now",
+            jobId,
+            method: "refund",
+          }
+        : wait("Did not pass. Closing this attempt");
     case "Refunded":
-      return { id: "sync", label: "Update the bid" };
+      return stalled(job, now)
+        ? { id: "sync", label: "Nothing happened: finish the record now" }
+        : wait("Refunded to the buyer. Finishing the record");
     default:
       return wait("A payout is in progress");
   }
+}
+
+/** True once the relay has had well over its usual time after the delivery. */
+function stalled(job: MarketJob, now: bigint): boolean {
+  return !!job.delivered_at && now > BigInt(job.delivered_at) + STALLED_NANOS;
 }

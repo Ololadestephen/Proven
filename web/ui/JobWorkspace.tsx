@@ -191,6 +191,7 @@ export function JobWorkspace({
           ),
         )}
       </ol>
+      <JobResult bid={bid} />
       {actionCard}
       <div className="workspace-tabs" aria-label="Job sections">
         {["brief", "delivery", "evidence"].map((value) => (
@@ -363,4 +364,68 @@ export function JobWorkspace({
       ) : null}
     </article>
   );
+}
+
+/** The outcome in plain words, read from the escrow's own record. A refund is never shown as success. */
+function JobResult({ bid }: { bid: MarketBid }) {
+  const job = bid.job ?? bid.last_job;
+  if (!job) return null;
+  const last = job.history?.at(-1);
+  const proof = (request: string | null | undefined) =>
+    request ? (
+      <a
+        href={`${OUTLAYER_API}/attestations/by-request/${request}`}
+        target="_blank"
+        rel="noreferrer"
+      >
+        attested run {request}
+      </a>
+    ) : null;
+  if (job.state === "Released")
+    return (
+      <div className="job-result job-result-pass" role="status">
+        <strong>Passed and paid.</strong> {showNear(job.amount)} went to{" "}
+        {last?.worker ?? job.worker}. Checked by{" "}
+        {proof(job.verdict_request_id ?? last?.verdict_request_id)}. The unused
+        checking budget and attempt fees go back to the buyer.
+      </div>
+    );
+  if (job.state === "Passed")
+    return (
+      <div className="job-result job-result-pass" role="status">
+        <strong>Passed.</strong> Checked by {proof(job.verdict_request_id)}. The
+        payment is being sent.
+      </div>
+    );
+  if (job.state === "Refunded")
+    return (
+      <div className="job-result job-result-fail" role="status">
+        <strong>Not paid. Refunded to the buyer.</strong>{" "}
+        {last?.outcome === "Failed"
+          ? `The last work failed the rule “${last.failed_rule ?? "unknown"}”.`
+          : "No work passed before the job ended."}
+      </div>
+    );
+  if (job.state === "CheckRejected")
+    return (
+      <div className="job-result job-result-fail" role="status">
+        <strong>The buyer’s check failed its own test</strong> (
+        {job.fakes_caught} of {job.fakes_total} fakes caught), so this job
+        cannot run. The buyer is refunded.
+      </div>
+    );
+  if (last && last.outcome !== "Paid")
+    return (
+      <div className="job-result" role="status">
+        <strong>The last attempt did not pass</strong>
+        {last.outcome === "Failed"
+          ? `: it failed the rule “${last.failed_rule ?? "unknown"}”, checked by `
+          : last.outcome === "NoDelivery"
+            ? ": nothing was delivered in time"
+            : ": no verdict was recorded in time"}
+        {last.outcome === "Failed" ? proof(last.verdict_request_id) : null}. The
+        job is open for the next worker.
+      </div>
+    );
+  return null;
 }
