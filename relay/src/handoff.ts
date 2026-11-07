@@ -1,4 +1,10 @@
 // Private local transport only. The relay pins texts; it cannot decide a verdict.
+import {
+  boardBehind,
+  nextNudge,
+  type KeptBid,
+  type KeptJob,
+} from "./keeper.ts";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -43,9 +49,13 @@ type HandoffJob = Pick<
 > & {
   run_started_at?: string | null;
   buyer?: string;
-  worker?: string;
+  worker?: string | null;
   token?: string | null;
   amount?: string;
+  compute_budget?: string;
+  deadline?: string;
+  delivered_at?: string | null;
+  verdict_window_secs?: number;
 };
 
 export interface HandoffDependencies {
@@ -71,6 +81,10 @@ export interface HandoffDependencies {
   isSigningSuspended?: () => boolean;
   /** Checks a signed transaction whose outcome was unknown, and resumes signing once it is settled. */
   reconcile?: () => Promise<void>;
+  /** Starts a run the escrow pays for from the job's budget. Set where the relay drives jobs itself. */
+  trigger?(jobId: number, kind: RunKind): Promise<string>;
+  /** Moves a job on once the chain allows it: pays out, expires, returns budget, syncs the board. */
+  keep?(jobId: number, job: HandoffJob): Promise<void>;
 }
 
 /** What the reveal rule reads about a bid. */
@@ -315,6 +329,34 @@ export async function sweepDeliveries(
   return deleted;
 }
 
+/** Moves on every job this relay holds texts for, where the chain allows it. Never decides anything:
+ * each step is one anyone could take, and the escrow refuses it if it is not due. */
+export async function keepJobs(
+  deps: Pick<HandoffDependencies, "getJob" | "escrow" | "keep">,
+  directory: string,
+): Promise<number[]> {
+  if (!deps.keep) return [];
+  const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
+  const ids = new Set<number>();
+  for (const name of await readdir(records).catch(() => [] as string[])) {
+    const parts = /^(\d+)\.(deliverable|check)\.json$/.exec(name);
+    if (parts) ids.add(Number(parts[1]));
+  }
+  const kept: number[] = [];
+  for (const jobId of ids) {
+    try {
+      const job = await deps.getJob(jobId);
+      if (job) {
+        await deps.keep(jobId, job);
+        kept.push(jobId);
+      }
+    } catch {
+      /* Try again on the next sweep. */
+    }
+  }
+  return kept;
+}
+
 /** Who may ask for each action: the job's own parties, read from the chain. */
 function signersFor(action: string, job: HandoffJob): string[] {
   const buyer = typeof job.buyer === "string" ? [job.buyer] : [];
@@ -465,7 +507,12 @@ export async function createHandoffHandler(
         isHash(job.fakes_hash) &&
         isHash(job.verifier_hash),
     );
-    if (!internal && (deps.requireSignatures || request.action === "collect")) {
+    // The challenge's texts are proven by the job's hashes on chain, so they need no signature.
+    if (
+      !internal &&
+      request.action !== "challenge" &&
+      (deps.requireSignatures || request.action === "collect")
+    ) {
       const signers = signersFor(request.action, job);
       requireSafe(
         signers.length > 0 &&
@@ -500,7 +547,19 @@ export async function createHandoffHandler(
         path(request.job_id, "deliverable"),
         request.deliverable,
       );
-      return { deliverable_hash: job.deliverable_hash };
+      // The relay starts verification itself, so neither side has to.
+      const started = deps.trigger
+        ? await perform(
+            { action: "pin_verification", job_id: request.job_id },
+            undefined,
+            undefined,
+            true,
+          )
+            .then(() => wallet(() => deps.trigger!(request.job_id, "Verify")))
+            .then((hash) => ({ verification: hash }))
+            .catch(() => ({ verification: null }))
+        : {};
+      return { deliverable_hash: job.deliverable_hash, ...started };
     }
     if (request.action === "cleanup") {
       requireSafe(
@@ -645,7 +704,17 @@ export async function createHandoffHandler(
     await writePrivate(pinFile, JSON.stringify({ ...pinRecord, stored: true }));
     if (challenge) await writePrivate(path(request.job_id, "check"), check);
     pinned.add(`${request.job_id}:${kind}`);
-    return reply(stored.transactionHash, stored.ciphertextBytes);
+    // The relay starts the challenge itself. A failed start is retried by the keeper's sweep.
+    const run =
+      challenge && deps.trigger
+        ? await wallet(() => deps.trigger!(request.job_id, "Challenge")).catch(
+            () => null,
+          )
+        : undefined;
+    return {
+      ...reply(stored.transactionHash, stored.ciphertextBytes),
+      ...(run === undefined ? {} : { challenge_run: run }),
+    };
   }
 
   /** One action at a time per job, including the sweep's. */
@@ -894,6 +963,7 @@ export async function startHandoffServer(
   const cleaned = new Set<string>();
   const sweep = async () => {
     await deps.reconcile?.().catch(() => undefined);
+    await keepJobs(deps, directory);
     await sweepSecrets(deps, directory, handle, cleaned);
     await handle({ action: "expire_pins" }, true);
     await sweepDeliveries(deps, directory);
@@ -1022,6 +1092,67 @@ async function main(): Promise<void> {
     }
   }
   let signingSuspended = unknownTransaction !== null;
+  // The board's bids, by the job they hold, filled in as the keeper finds them.
+  const board = process.env.PROVEN_BOARD;
+  const bidForJob = new Map<number, number>();
+  let scannedBids = 0;
+  async function findBid(jobId: number): Promise<number | undefined> {
+    if (!board) return undefined;
+    if (!bidForJob.has(jobId)) {
+      for (;;) {
+        const page = (await account.provider.callFunction({
+          contractId: board,
+          method: "get_bids",
+          args: { from_id: scannedBids, limit: 50 },
+        })) as Array<[number, { job_id: number | null }]>;
+        for (const [id, bid] of page)
+          if (bid.job_id !== null) bidForJob.set(bid.job_id, id);
+        if (page.length < 50) {
+          scannedBids = page.length ? page[page.length - 1]![0] : scannedBids;
+          break;
+        }
+        scannedBids = page[page.length - 1]![0] + 1;
+      }
+    }
+    return bidForJob.get(jobId);
+  }
+  async function keepOne(jobId: number, job: KeptJob | null) {
+    if (!job) return;
+    const records = join(
+      dataDirectory ?? dirname(socketPath),
+      `jobs-${sha256Hex(config.escrowContract)}`,
+    );
+    const has = (kind: string) =>
+      lstat(join(records, `${jobId}.${kind}.json`)).then(
+        () => true,
+        () => false,
+      );
+    const step = nextNudge(job, BigInt(Date.now()) * 1_000_000n, {
+      check: await has("check"),
+      deliverable: await has("deliverable"),
+    });
+    if (step && "run" in step)
+      await near
+        .triggerRun(account, config, jobId, step.run)
+        .catch(() => undefined);
+    else if (step)
+      await near
+        .nudge(account, config.escrowContract, step.method, { job_id: jobId })
+        .catch(() => undefined);
+    const bidId = await findBid(jobId).catch(() => undefined);
+    if (bidId === undefined || !board) return;
+    const bid = (await account.provider.callFunction({
+      contractId: board,
+      method: "get_bid",
+      args: { bid_id: bidId },
+    })) as KeptBid | null;
+    const fresh = await near.readJob(account, config, jobId);
+    if (bid && fresh && boardBehind(bid, fresh))
+      await near
+        .nudge(account, board, "sync", { bid_id: bidId })
+        .catch(() => undefined);
+  }
+
   async function signing<T>(call: () => Promise<T>): Promise<T> {
     inFlight = null;
     try {
@@ -1138,6 +1269,8 @@ async function main(): Promise<void> {
           ),
         ),
       demoCompute,
+      trigger: (jobId, kind) => near.triggerRun(account, config, jobId, kind),
+      keep: (jobId, job) => keepOne(jobId, job),
       allowedBuyers: marketAccess(process.env.PROVEN_MARKET_ACCESS),
       isSigningSuspended: () => signingSuspended,
       reconcile,

@@ -5,7 +5,7 @@ export interface SponsorJob {
   state: string;
   secrets_owner: string;
   buyer?: string;
-  worker?: string;
+  worker?: string | null;
   token?: string | null;
   amount?: string;
   spec_hash: string;

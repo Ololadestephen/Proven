@@ -27,7 +27,8 @@ export interface SubmissionMetadata {
 
 export interface Job {
   buyer: string;
-  worker: string;
+  /** Null while the job waits for a worker. */
+  worker: string | null;
   state: string;
   spec_hash: string;
   fakes_hash: string;
@@ -44,6 +45,13 @@ export interface Job {
   report_hash: string | null;
   verdict_request_id: string | null;
   failed_rule: string | null;
+  /** What is left to pay for runs. */
+  compute_budget?: string;
+  deadline?: string;
+  delivered_at?: string | null;
+  verdict_window_secs?: number;
+  run_started_at?: string | null;
+  history?: Array<{ worker: string; outcome: string }>;
 }
 
 function withFallback(config: Config) {
@@ -121,7 +129,8 @@ export function secretsProfile(job: Job, jobId: number, kind: RunKind): string {
     : `v${jobId}-${(job.deliverable_hash ?? "").slice(0, 12)}`;
 }
 
-/** Asks the escrow to run the verifier. Returns the transaction hash once it has settled. */
+/** Asks the escrow to run the verifier, which pays for the run from the job's budget. Returns the
+ * transaction hash once it has settled. */
 export async function triggerRun(
   account: Account,
   config: Config,
@@ -133,8 +142,7 @@ export async function triggerRun(
     methodName:
       kind === "Challenge" ? "request_challenge" : "request_verification",
     args: { job_id: jobId },
-    deposit: parseNearAmount("0.1") ?? "0",
-    gas: 150n * TGAS,
+    gas: 200n * TGAS,
   });
   const status = response.status as {
     SuccessValue?: string;
@@ -196,4 +204,29 @@ export async function submitDemoRun(
   );
   if (!outcome) onUncertain();
   return hash;
+}
+
+/** A call anyone may make once the chain allows it: a payout, an expiry, a budget return, a board sync.
+ * Nothing it does decides an outcome. */
+export async function nudge(
+  account: Account,
+  contractId: string,
+  method: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const response = await account.callFunctionRaw({
+    contractId,
+    methodName: method,
+    args,
+    gas: 150n * TGAS,
+  });
+  const status = response.status as {
+    SuccessValue?: string;
+    Failure?: unknown;
+  };
+  if (status.SuccessValue === undefined)
+    throw new Error(
+      `${method} was refused: ${JSON.stringify(status.Failure ?? status)}`,
+    );
+  return response.transaction.hash;
 }

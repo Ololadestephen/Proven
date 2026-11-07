@@ -812,20 +812,14 @@ test("with signatures required, only the job's own parties can act", async () =>
     (f.job as { buyer: string }).buyer = raw(buyer).toString("hex");
     (f.job as { worker?: string }).worker = raw(worker).toString("hex");
 
-    assert.equal((await handle(challenge())).ok, false, "unsigned");
-    assert.equal(
-      (await handle(signed(challenge(), worker))).ok,
-      false,
-      "worker",
-    );
-    assert.equal((await handle(signed(challenge(), buyer))).ok, true, "buyer");
-    // A signature for one text cannot carry another.
-    const swapped = signed(challenge(), buyer);
+    // A challenge needs no signature: only the buyer can have texts that match the job's hashes.
+    const swapped = challenge();
     assert.equal(
       (await handle({ ...swapped, reference: "{}" })).ok,
       false,
       "changed text",
     );
+    assert.equal((await handle(challenge())).ok, true, "unsigned, matching");
     f.job.state = "Delivered";
     assert.equal((await handle(delivery())).ok, false, "unsigned delivery");
     assert.equal(
@@ -1126,4 +1120,33 @@ test("mainnet stays closed unless the one setting says otherwise", () => {
   );
   assert.equal(marketAccess("open", "mainnet"), undefined);
   assert.equal(marketAccess(undefined, "testnet"), undefined);
+});
+
+test("the relay starts the challenge and the verification itself", async () => {
+  const f = await fixture();
+  try {
+    const runs: string[] = [];
+    const handle = await createHandoffHandler(
+      {
+        ...f.deps,
+        trigger: async (jobId: number, kind: string) => {
+          runs.push(`${jobId}:${kind}`);
+          return "hash";
+        },
+      },
+      f.directory,
+    );
+    const pinned = await handle(challenge());
+    assert.equal(pinned.ok, true);
+    assert.equal(
+      (pinned as { result: { challenge_run?: string } }).result.challenge_run,
+      "hash",
+    );
+    f.job.state = "Delivered";
+    const delivered = await handle(delivery());
+    assert.equal(delivered.ok, true);
+    assert.deepEqual(runs, ["1:Challenge", "1:Verify"]);
+  } finally {
+    await f.cleanup();
+  }
 });
