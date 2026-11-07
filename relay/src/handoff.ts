@@ -708,7 +708,12 @@ export async function createHandoffHandler(
     const run =
       challenge && deps.trigger
         ? await wallet(() => deps.trigger!(request.job_id, "Challenge")).catch(
-            () => null,
+            (error: Error) => {
+              console.error(
+                `relay: challenge for job ${request.job_id} did not start: ${String(error.message).slice(0, 200)}`,
+              );
+              return null;
+            },
           )
         : undefined;
     return {
@@ -1131,14 +1136,19 @@ async function main(): Promise<void> {
       check: await has("check"),
       deliverable: await has("deliverable"),
     });
+    // A failed step is retried next sweep, and logged so a cause like a low balance is seen.
+    const failed = (what: string) => (error: Error) =>
+      console.error(
+        `keeper: job ${jobId} ${what} failed: ${String(error.message).slice(0, 200)}`,
+      );
     if (step && "run" in step)
       await near
         .triggerRun(account, config, jobId, step.run)
-        .catch(() => undefined);
+        .catch(failed(step.run));
     else if (step)
       await near
         .nudge(account, config.escrowContract, step.method, { job_id: jobId })
-        .catch(() => undefined);
+        .catch(failed(step.method));
     const bidId = await findBid(jobId).catch(() => undefined);
     if (bidId === undefined || !board) return;
     const bid = (await account.provider.callFunction({
