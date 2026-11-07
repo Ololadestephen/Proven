@@ -109,7 +109,6 @@ interface Bid {
   [key: string]: unknown;
 }
 
-
 const MARKET_CACHE_MS = 4_000;
 let cached: { at: number; value: Promise<unknown> } | null = null;
 /** Many people reading the board share one set of chain reads. */
@@ -158,11 +157,7 @@ export async function readMarket() {
       verifier_hash: string;
       paused: boolean;
       run_deposit: string;
-    }>(
-      MARKET_ESCROW,
-      "get_config",
-      {},
-    ),
+    }>(MARKET_ESCROW, "get_config", {}),
     view<{ escrow: string; reviewer: string }>(BOARD, "get_config", {}),
   ]);
   const bids: Array<[number, Bid]> = [];
