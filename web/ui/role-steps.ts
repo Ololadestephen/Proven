@@ -29,7 +29,11 @@ export function stepForViewer(
   role: Role,
   nowMs: number,
 ): Step | null {
-  if (!step || role === "buyer") return step;
+  if (!step) return step;
+  // Only the relay or the worker can start verification; the relay does it as soon as the work arrives.
+  if (step.id === "verify" && role !== "worker")
+    return wait("The work arrived and is being checked.");
+  if (role === "buyer") return step;
   const job = bid.job ?? bid.last_job;
   if (role === "visitor") {
     if (["register", "claim", "wait", "close", "review"].includes(step.id))

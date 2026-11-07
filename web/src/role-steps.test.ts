@@ -27,7 +27,11 @@ test("each account sees its own role", () => {
   assert.equal(roleOf(value, null), "visitor");
 });
 
-test("the buyer sees every step unchanged", () => {
+test("only the worker is offered verification", () => {
+  assert.equal(stepForViewer(verify, bid(null), "buyer", NOW)?.id, "wait");
+});
+
+test("the buyer sees every other step unchanged", () => {
   const step: Step = { id: "sync", label: "Update the bid" };
   assert.equal(stepForViewer(step, bid(null), "buyer", NOW), step);
 });
