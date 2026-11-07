@@ -10,11 +10,10 @@ const VERIFIER_URL: &str = "https://example.test/verifier.wasm";
 const VERIFIER: &str = "5555555555555555555555555555555555555555555555555555555555555555";
 const SEC: u64 = 1_000_000_000;
 const START: u64 = 1_000 * SEC;
-const DEADLINE: u64 = START + 3_600 * SEC;
+const DEADLINE: u64 = START + 3_600 * SEC; // assigned at START with DELIVER_SECS
 const WINDOW_SECS: u32 = 1_800;
 const DELIVERED_AT: u64 = START + 60 * SEC;
 const WINDOW_END: u64 = DELIVERED_AT + WINDOW_SECS as u64 * SEC;
-const RUN_DEPOSIT: NearToken = NearToken::from_millinear(100);
 
 const FORMAT: &str = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 
@@ -35,9 +34,6 @@ fn stranger() -> AccountId {
 }
 fn this_contract() -> AccountId {
     accounts(5)
-}
-fn token() -> AccountId {
-    "usd.token.near".parse().unwrap()
 }
 fn outlayer() -> AccountId {
     "outlayer.testnet".parse().unwrap()
@@ -77,35 +73,96 @@ fn one_near() -> NearToken {
     NearToken::from_near(1)
 }
 
+const EXPIRES: u64 = START + 2 * 24 * 3_600 * SEC;
+const DELIVER_SECS: u32 = 3_600;
+const RUN: NearToken = NearToken::from_millinear(10);
+
+fn board() -> AccountId {
+    "board.near".parse().unwrap()
+}
+
 fn escrow() -> Escrow {
     call(owner(), zero(), START);
-    let mut escrow = Escrow::new(
+    Escrow::new(
         owner(),
         outlayer(),
+        Some(board()),
         VERIFIER_URL.into(),
         VERIFIER.into(),
         relay(),
+        U128(RUN.as_yoctonear()),
         U128(1_000 * NearToken::from_near(1).as_yoctonear()),
         U128(10_000 * NearToken::from_near(1).as_yoctonear()),
         U128(10_000 * NearToken::from_near(1).as_yoctonear()),
-    );
-    escrow.add_token(token(), U128(u128::MAX / 2), U128(u128::MAX / 2), U128(u128::MAX / 2));
-    escrow
+    )
 }
 
-fn create(escrow: &mut Escrow, token: Option<AccountId>) -> JobId {
-    call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(
-        worker(),
+/// What the board attaches for a one-NEAR job with `attempts` attempts: generous on storage.
+fn posting(attempts: u32) -> NearToken {
+    one_near()
+        .saturating_add(budget_for(attempts, RUN))
+        .saturating_add(NearToken::from_millinear(50))
+}
+
+fn create_with(escrow: &mut Escrow, attempts: u32) -> JobId {
+    call(board(), posting(attempts), START);
+    escrow.create_open_job(
+        buyer(),
         SPEC.into(),
         FAKES.into(),
         FORMAT.into(),
         U128(one_near().as_yoctonear()),
-        token,
-        U64(DEADLINE),
-        WINDOW_SECS,
         VERIFIER.into(),
+        U64(EXPIRES),
+        DELIVER_SECS,
+        WINDOW_SECS,
+        attempts,
     )
+}
+
+fn create(escrow: &mut Escrow) -> JobId {
+    create_with(escrow, 1)
+}
+
+fn challenging(escrow: &mut Escrow, id: JobId) {
+    call(stranger(), zero(), START);
+    let _ = escrow.request_challenge(id);
+}
+
+fn challenge(
+    escrow: &mut Escrow,
+    id: JobId,
+    reference_passed: bool,
+    total: u32,
+    caught: u32,
+) -> bool {
+    challenging(escrow, id);
+    let attempt = escrow.get_job(id).unwrap().attempt;
+    returned_json(
+        escrow,
+        id,
+        attempt,
+        RunKind::Challenge,
+        &challenge_output(id, reference_passed, total, caught),
+        START,
+    )
+}
+
+fn assign(escrow: &mut Escrow, id: JobId, at: u64) {
+    call(board(), zero(), at);
+    escrow.assign(id, worker());
+}
+
+fn funded_with(attempts: u32) -> (Escrow, JobId) {
+    let mut escrow = escrow();
+    let id = create_with(&mut escrow, attempts);
+    assert!(challenge(&mut escrow, id, true, 6, 6));
+    assign(&mut escrow, id, START);
+    (escrow, id)
+}
+
+fn funded() -> (Escrow, JobId) {
+    funded_with(1)
 }
 
 fn challenge_output(
@@ -159,39 +216,6 @@ fn returned_json(
     )
 }
 
-fn challenging(escrow: &mut Escrow, id: JobId) {
-    call(stranger(), RUN_DEPOSIT, START);
-    let _ = escrow.request_challenge(id);
-}
-
-fn challenge(
-    escrow: &mut Escrow,
-    id: JobId,
-    reference_passed: bool,
-    total: u32,
-    caught: u32,
-) -> bool {
-    challenging(escrow, id);
-    let attempt = escrow.get_job(id).unwrap().attempt;
-    returned_json(
-        escrow,
-        id,
-        attempt,
-        RunKind::Challenge,
-        &challenge_output(id, reference_passed, total, caught),
-        START,
-    )
-}
-
-fn funded() -> (Escrow, JobId) {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    assert!(challenge(&mut escrow, id, true, 6, 6));
-    call(buyer(), one_near(), START);
-    escrow.fund(id);
-    (escrow, id)
-}
-
 fn delivered() -> (Escrow, JobId) {
     let (mut escrow, id) = funded();
     call(worker(), zero(), DELIVERED_AT);
@@ -203,7 +227,7 @@ const TRIGGERED_AT: u64 = START + 120 * SEC;
 
 fn verifying() -> (Escrow, JobId, u32) {
     let (mut escrow, id) = delivered();
-    call(stranger(), RUN_DEPOSIT, TRIGGERED_AT);
+    call(stranger(), zero(), TRIGGERED_AT);
     let _ = escrow.request_verification(id);
     let attempt = escrow.get_job(id).unwrap().attempt;
     (escrow, id, attempt)
@@ -271,26 +295,6 @@ fn a_pass_is_recorded_with_its_request_id_and_report_hash_and_pays_the_worker() 
     assert_eq!(state(&escrow, id), JobState::Releasing);
 }
 
-#[test]
-fn a_fail_is_recorded_with_its_rule_and_refunds_the_buyer() {
-    let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(
-        &mut escrow,
-        id,
-        attempt,
-        RunKind::Verify,
-        &verify_output(id, false),
-        TRIGGERED_AT
-    ));
-    let job = escrow.get_job(id).unwrap();
-    assert_eq!(job.state, JobState::Failed);
-    assert_eq!(job.failed_rule.as_deref(), Some("grand_total"));
-    call(stranger(), zero(), TRIGGERED_AT);
-    let _ = escrow.refund(id);
-    assert_eq!(state(&escrow, id), JobState::Refunding);
-}
-
-/// Every way a run can fail to give a result: no verdict, retriable, and never a pass or a fail.
 fn assert_no_verdict(result: PromiseResult) {
     let (mut escrow, id, attempt) = verifying();
     assert!(!returned(
@@ -309,7 +313,7 @@ fn assert_no_verdict(result: PromiseResult) {
     );
     assert_eq!(job.run_started_at, None);
     // And it can be tried again.
-    call(stranger(), RUN_DEPOSIT, TRIGGERED_AT + SEC);
+    call(stranger(), zero(), TRIGGERED_AT + SEC);
     let _ = escrow.request_verification(id);
     assert_eq!(state(&escrow, id), JobState::Verifying);
 }
@@ -440,7 +444,7 @@ fn extra_output_fields_change_nothing_and_large_request_ids_are_kept_exactly() {
 #[test]
 fn a_challenge_records_counts_and_ignores_the_outputs_own_accepted_field() {
     let mut escrow = escrow();
-    let id = create(&mut escrow, None);
+    let id = create(&mut escrow);
     challenging(&mut escrow, id);
     let mut output = challenge_output(id, true, 13, 4);
     output["accepted"] = json!(true);
@@ -468,7 +472,7 @@ fn an_oversized_failed_rule_is_no_verdict() {
 #[should_panic(expected = "job is not awaiting verification")]
 fn a_second_trigger_while_a_run_is_in_flight_is_refused() {
     let (mut escrow, id, _) = verifying();
-    call(stranger(), RUN_DEPOSIT, TRIGGERED_AT + SEC);
+    call(stranger(), zero(), TRIGGERED_AT + SEC);
     let _ = escrow.request_verification(id);
 }
 
@@ -506,7 +510,7 @@ fn a_trigger_after_a_verdict_is_refused() {
         &verify_output(id, true),
         TRIGGERED_AT
     ));
-    call(stranger(), RUN_DEPOSIT, TRIGGERED_AT + SEC);
+    call(stranger(), zero(), TRIGGERED_AT + SEC);
     let _ = escrow.request_verification(id);
 }
 
@@ -515,7 +519,7 @@ fn a_run_whose_callback_never_came_can_be_triggered_again_and_the_late_callback_
     let (mut escrow, id, first) = verifying();
     // The first callback ran out of gas, say: it never recorded anything.
     let stale = TRIGGERED_AT + RUN_TIMEOUT_NANOS + 1;
-    call(stranger(), RUN_DEPOSIT, stale);
+    call(stranger(), zero(), stale);
     let _ = escrow.request_verification(id);
     let second = escrow.get_job(id).unwrap().attempt;
     assert_eq!(second, first + 1);
@@ -544,7 +548,7 @@ fn a_run_whose_callback_never_came_can_be_triggered_again_and_the_late_callback_
 #[should_panic(expected = "job is not awaiting verification")]
 fn a_run_cannot_be_retriggered_before_it_is_stale() {
     let (mut escrow, id, _) = verifying();
-    call(stranger(), RUN_DEPOSIT, TRIGGERED_AT + RUN_TIMEOUT_NANOS);
+    call(stranger(), zero(), TRIGGERED_AT + RUN_TIMEOUT_NANOS);
     let _ = escrow.request_verification(id);
 }
 
@@ -554,7 +558,7 @@ fn a_run_cannot_be_retriggered_before_it_is_stale() {
 #[should_panic(expected = "the verdict window has closed")]
 fn a_trigger_after_the_window_is_refused() {
     let (mut escrow, id) = delivered();
-    call(stranger(), RUN_DEPOSIT, WINDOW_END + 1);
+    call(stranger(), zero(), WINDOW_END + 1);
     let _ = escrow.request_verification(id);
 }
 
@@ -562,14 +566,14 @@ fn a_trigger_after_the_window_is_refused() {
 #[should_panic(expected = "the verdict window has closed")]
 fn a_stale_run_cannot_be_retriggered_after_the_window() {
     let (mut escrow, id, _) = verifying();
-    call(stranger(), RUN_DEPOSIT, WINDOW_END + RUN_TIMEOUT_NANOS + 1);
+    call(stranger(), zero(), WINDOW_END + RUN_TIMEOUT_NANOS + 1);
     let _ = escrow.request_verification(id);
 }
 
 #[test]
 fn a_result_for_a_run_started_in_the_window_counts_even_if_it_lands_after_it() {
     let (mut escrow, id) = delivered();
-    call(stranger(), RUN_DEPOSIT, WINDOW_END);
+    call(stranger(), zero(), WINDOW_END);
     let _ = escrow.request_verification(id);
     let attempt = escrow.get_job(id).unwrap().attempt;
     assert!(returned_json(
@@ -587,47 +591,10 @@ fn a_result_for_a_run_started_in_the_window_counts_even_if_it_lands_after_it() {
 #[should_panic(expected = "job has not expired")]
 fn a_run_in_flight_blocks_expiry_until_it_is_stale() {
     let (mut escrow, id) = delivered();
-    call(stranger(), RUN_DEPOSIT, WINDOW_END);
+    call(stranger(), zero(), WINDOW_END);
     let _ = escrow.request_verification(id);
     call(stranger(), zero(), WINDOW_END + RUN_TIMEOUT_NANOS);
     let _ = escrow.expire(id);
-}
-
-#[test]
-fn a_stale_run_after_the_window_expires_to_the_buyer_and_its_late_callback_is_ignored() {
-    let (mut escrow, id, attempt) = verifying();
-    let late = WINDOW_END + RUN_TIMEOUT_NANOS + 1;
-    call(stranger(), zero(), late);
-    let _ = escrow.expire(id);
-    assert_eq!(state(&escrow, id), JobState::Expiring);
-    assert!(!returned_json(
-        &mut escrow,
-        id,
-        attempt,
-        RunKind::Verify,
-        &verify_output(id, true),
-        late
-    ));
-    assert_eq!(state(&escrow, id), JobState::Expiring);
-    callback_context(PromiseResult::Successful(vec![]), late);
-    assert!(escrow.on_payout(id, JobState::Expired, JobState::Verifying));
-    assert!(!returned_json(
-        &mut escrow,
-        id,
-        attempt,
-        RunKind::Verify,
-        &verify_output(id, true),
-        late
-    ));
-    assert_eq!(state(&escrow, id), JobState::Expired);
-}
-
-#[test]
-fn a_delivered_job_with_no_verdict_expires_after_the_window() {
-    let (mut escrow, id) = delivered();
-    call(stranger(), zero(), WINDOW_END + 1);
-    let _ = escrow.expire(id);
-    assert_eq!(state(&escrow, id), JobState::Expiring);
 }
 
 #[test]
@@ -647,14 +614,6 @@ fn funded_job_cannot_expire_before_deadline() {
 }
 
 #[test]
-fn funded_job_expires_after_deadline() {
-    let (mut escrow, id) = funded();
-    call(stranger(), zero(), DEADLINE + 1);
-    let _ = escrow.expire(id);
-    assert_eq!(state(&escrow, id), JobState::Expiring);
-}
-
-#[test]
 #[should_panic(expected = "job has not expired")]
 fn passed_job_cannot_expire() {
     let (mut escrow, id, attempt) = verifying();
@@ -668,51 +627,6 @@ fn passed_job_cannot_expire() {
     ));
     call(stranger(), zero(), DEADLINE + 10_000 * SEC);
     let _ = escrow.expire(id);
-}
-
-#[test]
-fn a_failed_expiry_transfer_leaves_the_job_expirable() {
-    let (mut escrow, id, _) = verifying();
-    let late = WINDOW_END + RUN_TIMEOUT_NANOS + 1;
-    call(stranger(), zero(), late);
-    let _ = escrow.expire(id);
-    callback_context(PromiseResult::Failed, late);
-    assert!(!escrow.on_payout(id, JobState::Expired, JobState::Verifying));
-    assert_eq!(state(&escrow, id), JobState::Verifying);
-    call(stranger(), zero(), late + SEC);
-    let _ = escrow.expire(id);
-    assert_eq!(state(&escrow, id), JobState::Expiring);
-}
-
-#[test]
-fn a_stale_verdict_after_a_failed_expiry_is_no_verdict() {
-    let (mut escrow, id, attempt) = verifying();
-    let late = WINDOW_END + RUN_TIMEOUT_NANOS + 1;
-    call(stranger(), zero(), late);
-    let _ = escrow.expire(id);
-    callback_context(PromiseResult::Failed, late);
-    assert!(!escrow.on_payout(id, JobState::Expired, JobState::Verifying));
-    assert!(!returned_json(
-        &mut escrow,
-        id,
-        attempt,
-        RunKind::Verify,
-        &verify_output(id, true),
-        late
-    ));
-    assert_eq!(state(&escrow, id), JobState::Delivered);
-    assert!(!returned_json(
-        &mut escrow,
-        id,
-        attempt,
-        RunKind::Verify,
-        &verify_output(id, false),
-        late
-    ));
-    assert_eq!(state(&escrow, id), JobState::Delivered);
-    call(stranger(), zero(), late);
-    let _ = escrow.expire(id);
-    assert_eq!(state(&escrow, id), JobState::Expiring);
 }
 
 #[test]
@@ -744,7 +658,7 @@ fn a_callback_is_accepted_at_the_timeout_boundary_but_not_after_it() {
 #[test]
 fn a_stale_challenge_callback_cannot_accept_or_reject_the_check() {
     let mut escrow = escrow();
-    let id = create(&mut escrow, None);
+    let id = create(&mut escrow);
     challenging(&mut escrow, id);
     assert!(!returned_json(
         &mut escrow,
@@ -762,32 +676,16 @@ fn a_stale_challenge_callback_cannot_accept_or_reject_the_check() {
 #[test]
 fn anyone_can_trigger_a_run() {
     let (mut escrow, id) = delivered();
-    call(worker(), RUN_DEPOSIT, TRIGGERED_AT);
+    call(worker(), zero(), TRIGGERED_AT);
     let _ = escrow.request_verification(id);
     assert_eq!(state(&escrow, id), JobState::Verifying);
-}
-
-#[test]
-#[should_panic(expected = "attach between 0.1 and 1 NEAR")]
-fn a_run_needs_the_minimum_deposit() {
-    let (mut escrow, id) = delivered();
-    call(stranger(), NearToken::from_millinear(99), TRIGGERED_AT);
-    let _ = escrow.request_verification(id);
-}
-
-#[test]
-#[should_panic(expected = "attach between 0.1 and 1 NEAR")]
-fn a_run_refuses_more_than_the_maximum_deposit() {
-    let (mut escrow, id) = delivered();
-    call(stranger(), NearToken::from_millinear(1_001), TRIGGERED_AT);
-    let _ = escrow.request_verification(id);
 }
 
 #[test]
 #[should_panic(expected = "attach at least 150 Tgas")]
 fn a_run_needs_enough_gas_to_guarantee_its_callback() {
     let (mut escrow, id) = delivered();
-    testing_env!(context(stranger(), RUN_DEPOSIT, TRIGGERED_AT)
+    testing_env!(context(stranger(), zero(), TRIGGERED_AT)
         .prepaid_gas(Gas::from_tgas(149))
         .build());
     let _ = escrow.request_verification(id);
@@ -797,7 +695,7 @@ fn a_run_needs_enough_gas_to_guarantee_its_callback() {
 #[should_panic(expected = "job is not awaiting verification")]
 fn a_job_with_no_delivery_cannot_be_verified() {
     let (mut escrow, id) = funded();
-    call(stranger(), RUN_DEPOSIT, TRIGGERED_AT);
+    call(stranger(), zero(), TRIGGERED_AT);
     let _ = escrow.request_verification(id);
 }
 
@@ -886,12 +784,12 @@ fn a_non_https_verifier_url_is_refused() {
 #[test]
 fn a_strong_check_is_challenged_with_its_request_id() {
     let mut escrow = escrow();
-    let id = create(&mut escrow, None);
+    let id = create(&mut escrow);
     assert!(challenge(&mut escrow, id, true, 13, 13));
     let job = escrow.get_job(id).unwrap();
     assert_eq!(
         (job.state, job.fakes_total, job.fakes_caught),
-        (JobState::Challenged, 13, 13)
+        (JobState::Open, 13, 13)
     );
     assert_eq!(job.challenge_request_id, Some(U64(700)));
     assert!(job.challenge_report_hash.is_some());
@@ -900,7 +798,7 @@ fn a_strong_check_is_challenged_with_its_request_id() {
 #[test]
 fn a_check_that_misses_a_fake_is_rejected_and_records_the_counts() {
     let mut escrow = escrow();
-    let id = create(&mut escrow, None);
+    let id = create(&mut escrow);
     assert!(challenge(&mut escrow, id, true, 13, 4));
     let job = escrow.get_job(id).unwrap();
     assert_eq!((job.state, job.fakes_caught), (JobState::CheckRejected, 4));
@@ -909,7 +807,7 @@ fn a_check_that_misses_a_fake_is_rejected_and_records_the_counts() {
 #[test]
 fn a_check_that_fails_the_reference_is_rejected() {
     let mut escrow = escrow();
-    let id = create(&mut escrow, None);
+    let id = create(&mut escrow);
     assert!(challenge(&mut escrow, id, false, 6, 6));
     assert_eq!(state(&escrow, id), JobState::CheckRejected);
 }
@@ -917,7 +815,7 @@ fn a_check_that_fails_the_reference_is_rejected() {
 #[test]
 fn a_check_that_faced_too_few_fakes_is_rejected() {
     let mut escrow = escrow();
-    let id = create(&mut escrow, None);
+    let id = create(&mut escrow);
     assert!(challenge(
         &mut escrow,
         id,
@@ -931,7 +829,7 @@ fn a_check_that_faced_too_few_fakes_is_rejected() {
 #[test]
 fn a_challenge_failure_is_no_result_and_can_be_retried() {
     let mut escrow = escrow();
-    let id = create(&mut escrow, None);
+    let id = create(&mut escrow);
     challenging(&mut escrow, id);
     assert!(!returned(
         &mut escrow,
@@ -966,7 +864,7 @@ fn a_challenge_output_that_does_not_match_the_job_is_no_result() {
     ];
     for (field, value) in cases {
         let mut escrow = escrow();
-        let id = create(&mut escrow, None);
+        let id = create(&mut escrow);
         challenging(&mut escrow, id);
         let mut output = challenge_output(id, true, 6, 6);
         output[field] = value;
@@ -982,7 +880,7 @@ fn a_challenge_output_that_does_not_match_the_job_is_no_result() {
 #[should_panic(expected = "job is not awaiting a challenge")]
 fn a_second_challenge_after_a_result_is_refused() {
     let mut escrow = escrow();
-    let id = create(&mut escrow, None);
+    let id = create(&mut escrow);
     assert!(challenge(&mut escrow, id, true, 13, 4));
     challenging(&mut escrow, id);
 }
@@ -991,209 +889,12 @@ fn a_second_challenge_after_a_result_is_refused() {
 #[should_panic(expected = "job is not awaiting a challenge")]
 fn a_second_challenge_trigger_in_flight_is_refused() {
     let mut escrow = escrow();
-    let id = create(&mut escrow, None);
+    let id = create(&mut escrow);
     challenging(&mut escrow, id);
     challenging(&mut escrow, id);
-}
-
-#[test]
-#[should_panic(expected = "the check must pass its challenge first")]
-fn a_rejected_check_cannot_be_funded() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    assert!(challenge(&mut escrow, id, true, 6, 5));
-    call(buyer(), one_near(), START);
-    escrow.fund(id);
-}
-
-#[test]
-#[should_panic(expected = "the check must pass its challenge first")]
-fn an_unchallenged_job_cannot_be_funded() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    call(buyer(), one_near(), START);
-    escrow.fund(id);
-}
-
-#[test]
-#[should_panic(expected = "the check must pass its challenge first")]
-fn a_job_cannot_be_funded_while_its_challenge_is_in_flight() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    challenging(&mut escrow, id);
-    call(buyer(), one_near(), START);
-    escrow.fund(id);
-}
-
-#[test]
-#[should_panic(expected = "only an unfunded job can be cancelled")]
-fn a_job_cannot_be_cancelled_while_its_challenge_is_in_flight() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    challenging(&mut escrow, id);
-    call(buyer(), zero(), START + SEC);
-    let _ = escrow.cancel(id);
-}
-
-#[test]
-fn a_stale_challenge_can_be_cancelled_and_its_late_callback_is_ignored() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    challenging(&mut escrow, id);
-    let late = START + RUN_TIMEOUT_NANOS + 1;
-    call(buyer(), zero(), late);
-    let _ = escrow.cancel(id);
-    assert!(!returned_json(
-        &mut escrow,
-        id,
-        1,
-        RunKind::Challenge,
-        &challenge_output(id, true, 6, 6),
-        late
-    ));
-    assert!(escrow.get_job(id).is_none());
 }
 
 // ---- Creating, funding, delivering, paying ----
-
-#[test]
-fn create_job_charges_storage_and_records_it() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    let job = escrow.get_job(id).unwrap();
-    assert!(!job.storage_deposit.is_zero());
-    assert_eq!(job.state, JobState::Draft);
-}
-
-#[test]
-#[should_panic(expected = "attach at least")]
-fn create_job_without_storage_deposit_is_refused() {
-    let mut escrow = escrow();
-    call(buyer(), zero(), START);
-    escrow.create_job(
-        worker(),
-        SPEC.into(),
-        FAKES.into(),
-        FORMAT.into(),
-        U128(1),
-        None,
-        U64(DEADLINE),
-        WINDOW_SECS,
-        VERIFIER.into(),
-    );
-}
-
-#[test]
-#[should_panic(expected = "the worker cannot be the buyer")]
-fn buyer_cannot_name_itself_as_worker() {
-    let mut escrow = escrow();
-    call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(
-        buyer(),
-        SPEC.into(),
-        FAKES.into(),
-        FORMAT.into(),
-        U128(1),
-        None,
-        U64(DEADLINE),
-        WINDOW_SECS,
-        VERIFIER.into(),
-    );
-}
-
-#[test]
-#[should_panic(expected = "token is not accepted")]
-fn unknown_token_is_refused() {
-    let mut escrow = escrow();
-    create(&mut escrow, Some(stranger()));
-}
-
-#[test]
-#[should_panic(expected = "deadline must be in the future")]
-fn past_deadline_is_refused() {
-    let mut escrow = escrow();
-    call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(
-        worker(),
-        SPEC.into(),
-        FAKES.into(),
-        FORMAT.into(),
-        U128(1),
-        None,
-        U64(START),
-        WINDOW_SECS,
-        VERIFIER.into(),
-    );
-}
-
-#[test]
-#[should_panic(expected = "verdict_window_secs must be")]
-fn a_verdict_window_too_short_for_a_retry_is_refused() {
-    let mut escrow = escrow();
-    call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(
-        worker(),
-        SPEC.into(),
-        FAKES.into(),
-        FORMAT.into(),
-        U128(1),
-        None,
-        U64(DEADLINE),
-        1_799,
-        VERIFIER.into(),
-    );
-}
-
-#[test]
-#[should_panic(expected = "pay exactly the job amount")]
-fn underfunding_is_refused() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    assert!(challenge(&mut escrow, id, true, 6, 6));
-    call(buyer(), NearToken::from_millinear(999), START);
-    escrow.fund(id);
-}
-
-#[test]
-#[should_panic(expected = "only the buyer can fund")]
-fn stranger_cannot_fund() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    assert!(challenge(&mut escrow, id, true, 6, 6));
-    call(stranger(), one_near(), START);
-    escrow.fund(id);
-}
-
-#[test]
-#[should_panic(expected = "pay in the job's token")]
-fn token_job_cannot_be_funded_in_near() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, Some(token()));
-    assert!(challenge(&mut escrow, id, true, 6, 6));
-    call(buyer(), one_near(), START);
-    escrow.fund(id);
-}
-
-#[test]
-fn token_job_is_funded_through_ft_on_transfer() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, Some(token()));
-    assert!(challenge(&mut escrow, id, true, 6, 6));
-    call(token(), zero(), START);
-    let unused = escrow.ft_on_transfer(buyer(), U128(one_near().as_yoctonear()), id.to_string());
-    assert!(matches!(unused, PromiseOrValue::Value(U128(0))));
-    assert_eq!(state(&escrow, id), JobState::Funded);
-}
-
-#[test]
-#[should_panic(expected = "token is not accepted")]
-fn ft_on_transfer_from_unknown_token_is_refused() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, Some(token()));
-    assert!(challenge(&mut escrow, id, true, 6, 6));
-    call(stranger(), zero(), START);
-    let _ = escrow.ft_on_transfer(buyer(), U128(one_near().as_yoctonear()), id.to_string());
-}
 
 #[test]
 #[should_panic(expected = "only the job's worker can deliver")]
@@ -1233,17 +934,18 @@ fn a_payout_needs_enough_gas_to_guarantee_its_callback() {
 #[should_panic(expected = "verifier_hash is not the build this contract runs")]
 fn a_buyer_who_expects_another_verifier_build_is_refused() {
     let mut escrow = escrow();
-    call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(
-        worker(),
+    call(board(), posting(1), START);
+    escrow.create_open_job(
+        buyer(),
         SPEC.into(),
         FAKES.into(),
         FORMAT.into(),
         U128(1),
-        None,
-        U64(DEADLINE),
-        WINDOW_SECS,
         OTHER_HASH.into(),
+        U64(EXPIRES),
+        DELIVER_SECS,
+        WINDOW_SECS,
+        1,
     );
 }
 
@@ -1278,87 +980,10 @@ fn second_release_while_paying_is_refused() {
     let _ = escrow.release(id);
 }
 
-#[test]
-fn successful_payout_settles_the_job() {
-    let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(
-        &mut escrow,
-        id,
-        attempt,
-        RunKind::Verify,
-        &verify_output(id, true),
-        TRIGGERED_AT
-    ));
-    call(stranger(), zero(), TRIGGERED_AT);
-    let _ = escrow.release(id);
-    callback_context(PromiseResult::Successful(vec![]), TRIGGERED_AT);
-    assert!(escrow.on_payout(id, JobState::Released, JobState::Passed));
-    assert_eq!(state(&escrow, id), JobState::Released);
-}
-
-#[test]
-fn failed_payout_returns_the_job_for_a_retry() {
-    let (mut escrow, id, attempt) = verifying();
-    assert!(returned_json(
-        &mut escrow,
-        id,
-        attempt,
-        RunKind::Verify,
-        &verify_output(id, true),
-        TRIGGERED_AT
-    ));
-    call(stranger(), zero(), TRIGGERED_AT);
-    let _ = escrow.release(id);
-    callback_context(PromiseResult::Failed, TRIGGERED_AT);
-    assert!(!escrow.on_payout(id, JobState::Released, JobState::Passed));
-    assert_eq!(state(&escrow, id), JobState::Passed);
-    call(stranger(), zero(), TRIGGERED_AT);
-    let _ = escrow.release(id);
-    assert_eq!(state(&escrow, id), JobState::Releasing);
-}
-
-#[test]
-fn unfunded_job_can_be_cancelled() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    call(buyer(), zero(), START);
-    let _ = escrow.cancel(id);
-    assert!(escrow.get_job(id).is_none());
-}
-
-#[test]
-#[should_panic(expected = "only an unfunded job can be cancelled")]
-fn funded_job_cannot_be_cancelled() {
-    let (mut escrow, id) = funded();
-    call(buyer(), zero(), START);
-    let _ = escrow.cancel(id);
-}
-
-#[test]
-#[should_panic(expected = "only the buyer can cancel")]
-fn stranger_cannot_cancel() {
-    let mut escrow = escrow();
-    let id = create(&mut escrow, None);
-    call(stranger(), zero(), START);
-    let _ = escrow.cancel(id);
-}
-
-#[test]
-fn get_jobs_pages_and_skips_cancelled() {
-    let mut escrow = escrow();
-    let first = create(&mut escrow, None);
-    let second = create(&mut escrow, None);
-    call(buyer(), zero(), START);
-    let _ = escrow.cancel(first);
-    let jobs = escrow.get_jobs(0, 10);
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].0, second);
-}
-
 // ---- Public format, per-buyer cap and shorter deadlines ----
 
 fn challenged_job(escrow: &mut Escrow) -> JobId {
-    let id = create(escrow, None);
+    let id = create(escrow);
     assert!(challenge(escrow, id, true, 6, 6));
     id
 }
@@ -1368,78 +993,515 @@ fn a_verdict_for_a_different_format_is_no_verdict() {
     let (mut escrow, id, attempt) = verifying();
     let mut output = verify_output(id, false);
     output["format_hash"] = json!("0".repeat(64));
-    assert!(!returned_json(&mut escrow, id, attempt, RunKind::Verify, &output, TRIGGERED_AT));
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &output,
+        TRIGGERED_AT
+    ));
     assert_eq!(state(&escrow, id), JobState::Delivered);
 }
 
+// ---- One-signature jobs: creating, assigning, paying for runs, reopening, closing ----
+
+fn verify_returns(escrow: &mut Escrow, id: JobId, pass: bool, at: u64) {
+    call(stranger(), zero(), at);
+    let _ = escrow.request_verification(id);
+    let attempt = escrow.get_job(id).unwrap().attempt;
+    assert!(returned_json(
+        escrow,
+        id,
+        attempt,
+        RunKind::Verify,
+        &verify_output(id, pass),
+        at
+    ));
+}
+
+fn deliver(escrow: &mut Escrow, id: JobId, at: u64) {
+    call(worker(), zero(), at);
+    escrow.deliver(id, DELIVERABLE.into());
+}
+
+fn paid(result: PromiseResult, escrow: &mut Escrow, id: JobId, to_worker: bool) -> bool {
+    callback_context(result, START + 300 * SEC);
+    escrow.on_payout(id, to_worker)
+}
+
+fn ok() -> PromiseResult {
+    PromiseResult::Successful(vec![])
+}
+
+/// The NEAR sent by transfers this call scheduled, by receiver.
+fn transfers() -> Vec<(String, u128)> {
+    near_sdk::test_utils::get_created_receipts()
+        .into_iter()
+        .flat_map(|receipt| {
+            let to = receipt.receiver_id.to_string();
+            receipt
+                .actions
+                .into_iter()
+                .filter_map(move |action| match action {
+                    near_sdk::mock::MockAction::Transfer { deposit, .. } => {
+                        Some((to.clone(), deposit.as_yoctonear()))
+                    }
+                    _ => None,
+                })
+        })
+        .collect()
+}
+
+fn held(escrow: &Escrow) -> u128 {
+    escrow.get_config().caps[0].held.0
+}
+
 #[test]
-#[should_panic(expected = "at most 24 hours away")]
-fn a_job_deadline_cannot_be_more_than_a_day_away() {
+#[should_panic(expected = "only the board can do this")]
+fn only_the_board_creates_jobs() {
     let mut escrow = escrow();
-    call(buyer(), NearToken::from_millinear(50), START);
-    escrow.create_job(
-        worker(),
+    call(buyer(), posting(1), START);
+    escrow.create_open_job(
+        buyer(),
         SPEC.into(),
         FAKES.into(),
         FORMAT.into(),
-        U128(1),
-        None,
-        U64(START + 24 * 3_600 * SEC + 1),
-        WINDOW_SECS,
+        U128(one_near().as_yoctonear()),
         VERIFIER.into(),
+        U64(EXPIRES),
+        DELIVER_SECS,
+        WINDOW_SECS,
+        1,
     );
 }
 
 #[test]
-#[should_panic(expected = "this buyer's cap on money held")]
-fn one_buyer_cannot_fill_the_held_cap() {
+fn a_new_job_holds_the_payment_and_the_budget_and_returns_the_excess() {
     let mut escrow = escrow();
-    let one = one_near().as_yoctonear();
+    let id = create_with(&mut escrow, 3);
+    let job = escrow.get_job(id).unwrap();
+    assert_eq!(job.state, JobState::Draft);
+    assert_eq!(job.worker, None);
+    assert_eq!(job.compute_budget.0, budget_for(3, RUN).as_yoctonear());
+    assert_eq!(job.release, Release::Verdict);
+    assert_eq!(held(&escrow), one_near().as_yoctonear());
+    let back: u128 = transfers()
+        .into_iter()
+        .filter(|(to, _)| *to == buyer().to_string())
+        .map(|(_, amount)| amount)
+        .sum();
+    let kept = one_near()
+        .saturating_add(budget_for(3, RUN))
+        .saturating_add(job.storage_deposit);
+    assert_eq!(back, posting(3).as_yoctonear() - kept.as_yoctonear());
+}
+
+#[test]
+#[should_panic(expected = "attach at least")]
+fn a_job_without_its_budget_is_refused() {
+    let mut escrow = escrow();
+    call(board(), one_near(), START);
+    escrow.create_open_job(
+        buyer(),
+        SPEC.into(),
+        FAKES.into(),
+        FORMAT.into(),
+        U128(one_near().as_yoctonear()),
+        VERIFIER.into(),
+        U64(EXPIRES),
+        DELIVER_SECS,
+        WINDOW_SECS,
+        1,
+    );
+}
+
+#[test]
+#[should_panic(expected = "max_attempts must be 1 to 3")]
+fn more_than_three_attempts_is_refused() {
+    let mut escrow = escrow();
+    create_with(&mut escrow, 4);
+}
+
+#[test]
+#[should_panic(expected = "expires_at must be from 30 minutes to 7 days away")]
+fn a_job_cannot_stay_open_more_than_seven_days() {
+    let mut escrow = escrow();
+    call(board(), posting(1), START);
+    escrow.create_open_job(
+        buyer(),
+        SPEC.into(),
+        FAKES.into(),
+        FORMAT.into(),
+        U128(one_near().as_yoctonear()),
+        VERIFIER.into(),
+        U64(START + 8 * 24 * 3_600 * SEC),
+        DELIVER_SECS,
+        WINDOW_SECS,
+        1,
+    );
+}
+
+#[test]
+#[should_panic(expected = "this would pass this buyer's cap on money held")]
+fn one_buyer_cannot_hold_more_than_its_cap() {
+    let mut escrow = escrow();
     call(owner(), zero(), START);
-    escrow.set_caps(None, U128(one), U128(10 * one), U128(one + one / 2));
-    let first = challenged_job(&mut escrow);
-    call(buyer(), one_near(), START);
-    escrow.fund(first);
-    let second = challenged_job(&mut escrow);
-    call(buyer(), one_near(), START);
-    escrow.fund(second);
+    escrow.set_caps(
+        U128(one_near().as_yoctonear()),
+        U128(10 * one_near().as_yoctonear()),
+        U128(one_near().as_yoctonear()),
+    );
+    create(&mut escrow);
+    create(&mut escrow);
 }
 
 #[test]
-fn another_buyer_is_not_held_back_and_a_finished_job_frees_the_allowance() {
+#[should_panic(expected = "new jobs are paused")]
+fn the_pause_stops_new_jobs() {
     let mut escrow = escrow();
-    let one = one_near().as_yoctonear();
     call(owner(), zero(), START);
-    escrow.set_caps(None, U128(one), U128(10 * one), U128(one));
-    let first = challenged_job(&mut escrow);
-    call(buyer(), one_near(), START);
-    escrow.fund(first);
-    assert_eq!(escrow.held_by_buyer.get(&(buyer(), None)).copied(), Some(one));
-    callback_context(PromiseResult::Successful(vec![]), START);
-    assert!(escrow.on_payout(first, JobState::Refunded, JobState::Failed));
-    assert_eq!(escrow.held_by_buyer.get(&(buyer(), None)), None);
-    let again = challenged_job(&mut escrow);
-    call(buyer(), one_near(), START);
-    escrow.fund(again);
+    escrow.set_paused(true);
+    create(&mut escrow);
 }
 
 #[test]
-fn a_failed_payout_keeps_the_buyer_allowance_counted() {
+fn a_run_is_paid_from_the_budget_and_names_the_buyer_as_payer() {
     let mut escrow = escrow();
-    let one = one_near().as_yoctonear();
-    let first = challenged_job(&mut escrow);
-    call(buyer(), one_near(), START);
-    escrow.fund(first);
-    callback_context(PromiseResult::Failed, START);
-    assert!(!escrow.on_payout(first, JobState::Refunded, JobState::Failed));
-    assert_eq!(escrow.held_by_buyer.get(&(buyer(), None)).copied(), Some(one));
+    let id = create(&mut escrow);
+    let before = escrow.get_job(id).unwrap().compute_budget.0;
+    challenging(&mut escrow, id);
+    assert_eq!(
+        escrow.get_job(id).unwrap().compute_budget.0,
+        before - RUN.as_yoctonear()
+    );
+    let call = near_sdk::test_utils::get_created_receipts()
+        .into_iter()
+        .find(|r| r.receiver_id == outlayer())
+        .unwrap();
+    let args = call
+        .actions
+        .iter()
+        .find_map(|a| match a {
+            near_sdk::mock::MockAction::FunctionCallWeight { args, .. } => Some(args.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let args: serde_json::Value = serde_json::from_slice(&args).unwrap();
+    assert_eq!(args["payer_account_id"], json!(buyer()));
+    let deposit = call
+        .actions
+        .iter()
+        .find_map(|a| match a {
+            near_sdk::mock::MockAction::FunctionCallWeight {
+                attached_deposit, ..
+            } => Some(*attached_deposit),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(deposit, RUN);
 }
 
 #[test]
-#[should_panic(expected = "at least 30 minutes after funding")]
-fn funding_at_the_last_moment_cannot_use_up_a_workers_attempt() {
+#[should_panic(expected = "the compute budget is used up")]
+fn a_used_up_budget_stops_runs_until_topped_up() {
     let mut escrow = escrow();
-    let id = challenged_job(&mut escrow);
-    call(buyer(), one_near(), DEADLINE - 60 * SEC);
-    escrow.fund(id);
+    let id = create(&mut escrow);
+    escrow.jobs.get_mut(&id).unwrap().compute_budget = U128(0);
+    challenging(&mut escrow, id);
+}
+
+#[test]
+fn a_top_up_lets_runs_continue() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    escrow.jobs.get_mut(&id).unwrap().compute_budget = U128(0);
+    call(buyer(), RUN, START);
+    escrow.top_up(id);
+    challenging(&mut escrow, id);
+    assert_eq!(state(&escrow, id), JobState::Challenging);
+}
+
+#[test]
+#[should_panic(expected = "only the board can do this")]
+fn only_the_board_assigns() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    assert!(challenge(&mut escrow, id, true, 6, 6));
+    call(worker(), zero(), START);
+    escrow.assign(id, worker());
+}
+
+#[test]
+#[should_panic(expected = "job is not open")]
+fn a_job_whose_check_was_not_accepted_cannot_be_assigned() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    assert!(challenge(&mut escrow, id, true, 6, 5));
+    assign(&mut escrow, id, START);
+}
+
+#[test]
+#[should_panic(expected = "the worker cannot be the buyer")]
+fn the_buyer_cannot_be_assigned() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    assert!(challenge(&mut escrow, id, true, 6, 6));
+    call(board(), zero(), START);
+    escrow.assign(id, buyer());
+}
+
+#[test]
+#[should_panic(expected = "this job has ended")]
+fn no_worker_can_be_assigned_after_the_job_ends() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    assert!(challenge(&mut escrow, id, true, 6, 6));
+    assign(&mut escrow, id, EXPIRES);
+}
+
+#[test]
+fn an_assignment_starts_the_workers_deadline() {
+    let (escrow, id) = funded();
+    let job = escrow.get_job(id).unwrap();
+    assert_eq!(job.state, JobState::Funded);
+    assert_eq!(job.worker, Some(worker()));
+    assert_eq!(job.deadline, U64(START + u64::from(DELIVER_SECS) * SEC));
+}
+
+#[test]
+fn a_pass_pays_the_worker_and_the_budget_goes_back_once() {
+    let (mut escrow, id) = funded();
+    deliver(&mut escrow, id, DELIVERED_AT);
+    verify_returns(&mut escrow, id, true, TRIGGERED_AT);
+    call(stranger(), zero(), TRIGGERED_AT);
+    let _ = escrow.release(id);
+    assert_eq!(
+        transfers(),
+        vec![(worker().to_string(), one_near().as_yoctonear())]
+    );
+    assert!(paid(ok(), &mut escrow, id, true));
+    let job = escrow.get_job(id).unwrap();
+    assert_eq!(job.state, JobState::Released);
+    assert_eq!(job.history.last().unwrap().outcome, Outcome::Paid);
+    assert_eq!(held(&escrow), 0);
+    let left = job.compute_budget.0;
+    assert!(left > 0);
+    call(stranger(), zero(), TRIGGERED_AT);
+    let _ = escrow.return_budget(id);
+    assert_eq!(transfers(), vec![(buyer().to_string(), left)]);
+    assert_eq!(escrow.get_job(id).unwrap().compute_budget.0, 0);
+}
+
+#[test]
+#[should_panic(expected = "nothing is left to return")]
+fn the_budget_cannot_be_returned_twice() {
+    let (mut escrow, id) = funded();
+    deliver(&mut escrow, id, DELIVERED_AT);
+    verify_returns(&mut escrow, id, true, TRIGGERED_AT);
+    call(stranger(), zero(), TRIGGERED_AT);
+    let _ = escrow.release(id);
+    assert!(paid(ok(), &mut escrow, id, true));
+    let _ = escrow.return_budget(id);
+    let _ = escrow.return_budget(id);
+}
+
+#[test]
+fn a_failed_budget_return_can_be_retried() {
+    let (mut escrow, id) = funded();
+    deliver(&mut escrow, id, DELIVERED_AT);
+    verify_returns(&mut escrow, id, true, TRIGGERED_AT);
+    call(stranger(), zero(), TRIGGERED_AT);
+    let _ = escrow.release(id);
+    assert!(paid(ok(), &mut escrow, id, true));
+    let left = escrow.get_job(id).unwrap().compute_budget;
+    call(stranger(), zero(), TRIGGERED_AT);
+    let _ = escrow.return_budget(id);
+    callback_context(PromiseResult::Failed, TRIGGERED_AT);
+    assert!(!escrow.on_budget_returned(id, left));
+    assert_eq!(escrow.get_job(id).unwrap().compute_budget, left);
+}
+
+#[test]
+fn a_failed_release_transfer_keeps_the_job_payable() {
+    let (mut escrow, id) = funded();
+    deliver(&mut escrow, id, DELIVERED_AT);
+    verify_returns(&mut escrow, id, true, TRIGGERED_AT);
+    call(stranger(), zero(), TRIGGERED_AT);
+    let _ = escrow.release(id);
+    assert!(!paid(PromiseResult::Failed, &mut escrow, id, true));
+    assert_eq!(state(&escrow, id), JobState::Passed);
+    assert_eq!(held(&escrow), one_near().as_yoctonear());
+}
+
+#[test]
+fn a_fail_with_attempts_left_reopens_the_job_for_the_next_worker() {
+    let (mut escrow, id) = funded_with(2);
+    deliver(&mut escrow, id, DELIVERED_AT);
+    verify_returns(&mut escrow, id, false, TRIGGERED_AT);
+    call(stranger(), zero(), TRIGGERED_AT);
+    assert!(escrow.refund(id).is_none());
+    let job = escrow.get_job(id).unwrap();
+    assert_eq!(job.state, JobState::Open);
+    assert_eq!(job.worker, None);
+    assert_eq!(job.deliverable_hash, None);
+    let record = &job.history[0];
+    assert_eq!(record.outcome, Outcome::Failed);
+    assert_eq!(record.worker, worker());
+    assert_eq!(record.failed_rule.as_deref(), Some("grand_total"));
+    assert_eq!(record.verdict_request_id, Some(U64(701)));
+    assert_eq!(record.deliverable_hash.as_deref(), Some(DELIVERABLE));
+    // The money stays held for the next worker.
+    assert_eq!(held(&escrow), one_near().as_yoctonear());
+    assert!(transfers().is_empty());
+}
+
+#[test]
+fn the_last_failed_attempt_refunds_the_payment_and_the_budget() {
+    let (mut escrow, id) = funded();
+    deliver(&mut escrow, id, DELIVERED_AT);
+    verify_returns(&mut escrow, id, false, TRIGGERED_AT);
+    let budget = escrow.get_job(id).unwrap().compute_budget.0;
+    call(stranger(), zero(), TRIGGERED_AT);
+    assert!(escrow.refund(id).is_some());
+    assert_eq!(
+        transfers(),
+        vec![(buyer().to_string(), one_near().as_yoctonear() + budget)]
+    );
+    assert!(paid(ok(), &mut escrow, id, false));
+    let job = escrow.get_job(id).unwrap();
+    assert_eq!(job.state, JobState::Refunded);
+    assert_eq!(job.compute_budget.0, 0);
+    assert_eq!(held(&escrow), 0);
+}
+
+#[test]
+fn a_failed_refund_transfer_is_retried_without_recording_the_attempt_twice() {
+    let (mut escrow, id) = funded();
+    deliver(&mut escrow, id, DELIVERED_AT);
+    verify_returns(&mut escrow, id, false, TRIGGERED_AT);
+    call(stranger(), zero(), TRIGGERED_AT);
+    let _ = escrow.refund(id);
+    assert!(!paid(PromiseResult::Failed, &mut escrow, id, false));
+    assert_eq!(state(&escrow, id), JobState::RefundDue);
+    call(stranger(), zero(), TRIGGERED_AT);
+    let _ = escrow.refund(id);
+    assert!(paid(ok(), &mut escrow, id, false));
+    let job = escrow.get_job(id).unwrap();
+    assert_eq!(job.state, JobState::Refunded);
+    assert_eq!(job.history.len(), 1);
+}
+
+#[test]
+fn no_delivery_reopens_the_job_and_records_it() {
+    let (mut escrow, id) = funded_with(2);
+    call(stranger(), zero(), DEADLINE + 1);
+    assert!(escrow.expire(id).is_none());
+    let job = escrow.get_job(id).unwrap();
+    assert_eq!(job.state, JobState::Open);
+    assert_eq!(job.history[0].outcome, Outcome::NoDelivery);
+}
+
+#[test]
+fn no_verdict_in_the_window_is_recorded_and_the_last_attempt_refunds() {
+    let (mut escrow, id) = funded();
+    deliver(&mut escrow, id, DELIVERED_AT);
+    call(stranger(), zero(), WINDOW_END + 1);
+    assert!(escrow.expire(id).is_some());
+    let job = escrow.get_job(id).unwrap();
+    assert_eq!(job.state, JobState::Refunding);
+    assert_eq!(job.history[0].outcome, Outcome::NoVerdict);
+}
+
+#[test]
+fn a_failed_attempt_after_the_job_ended_refunds_instead_of_reopening() {
+    let (mut escrow, id) = funded_with(3);
+    call(stranger(), zero(), EXPIRES);
+    assert!(escrow.expire(id).is_some());
+    assert_eq!(state(&escrow, id), JobState::Refunding);
+}
+
+#[test]
+fn a_late_verdict_from_an_earlier_worker_is_ignored_after_the_job_reopens() {
+    let (mut escrow, id) = funded_with(2);
+    deliver(&mut escrow, id, DELIVERED_AT);
+    call(stranger(), zero(), TRIGGERED_AT);
+    let _ = escrow.request_verification(id);
+    let old_run = escrow.get_job(id).unwrap().attempt;
+    // The run is lost; the window passes and the attempt expires.
+    call(stranger(), zero(), WINDOW_END + RUN_TIMEOUT_NANOS + 1);
+    let _ = escrow.expire(id);
+    assert_eq!(state(&escrow, id), JobState::Open);
+    assert!(!returned_json(
+        &mut escrow,
+        id,
+        old_run,
+        RunKind::Verify,
+        &verify_output(id, true),
+        WINDOW_END + RUN_TIMEOUT_NANOS + 2
+    ));
+    assert_eq!(state(&escrow, id), JobState::Open);
+}
+
+#[test]
+fn the_buyer_can_close_an_open_job_and_get_everything_back() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    assert!(challenge(&mut escrow, id, true, 6, 6));
+    let budget = escrow.get_job(id).unwrap().compute_budget.0;
+    call(buyer(), zero(), START);
+    let _ = escrow.close(id);
+    assert_eq!(
+        transfers(),
+        vec![(buyer().to_string(), one_near().as_yoctonear() + budget)]
+    );
+    assert!(paid(ok(), &mut escrow, id, false));
+    assert_eq!(state(&escrow, id), JobState::Refunded);
+    assert_eq!(held(&escrow), 0);
+}
+
+#[test]
+#[should_panic(expected = "only the buyer can close this job before it ends")]
+fn a_stranger_cannot_close_a_job_before_it_ends() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    call(stranger(), zero(), START);
+    let _ = escrow.close(id);
+}
+
+#[test]
+fn anyone_can_close_an_idle_job_after_it_ends() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    assert!(challenge(&mut escrow, id, true, 6, 4));
+    call(stranger(), zero(), EXPIRES);
+    let _ = escrow.close(id);
+    assert_eq!(state(&escrow, id), JobState::Refunding);
+}
+
+#[test]
+#[should_panic(expected = "only a job with no worker on it can be closed")]
+fn a_job_with_a_worker_on_it_cannot_be_closed() {
+    let (mut escrow, id) = funded();
+    call(buyer(), zero(), START);
+    let _ = escrow.close(id);
+}
+
+#[test]
+#[should_panic(expected = "only a job with no worker on it can be closed")]
+fn a_job_cannot_be_closed_while_its_challenge_is_in_flight() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    challenging(&mut escrow, id);
+    call(buyer(), zero(), START);
+    let _ = escrow.close(id);
+}
+
+#[test]
+#[should_panic(expected = "only the job's worker can deliver")]
+fn a_worker_from_an_earlier_attempt_cannot_deliver_again() {
+    let (mut escrow, id) = funded_with(2);
+    call(stranger(), zero(), DEADLINE + 1);
+    let _ = escrow.expire(id);
+    deliver(&mut escrow, id, DEADLINE + 2);
 }

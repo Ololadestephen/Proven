@@ -1,28 +1,33 @@
 //! Proven escrow.
 //!
-//! A buyer creates a job for a named worker, fixed by the hash of its acceptance check and the
-//! hash of its reference. The escrow itself asks OutLayer to run the verifier build pinned to the
-//! job, and records the result only in the private callback of that request. No account can set a
-//! result: not the owner, not a relay, not the worker. Anyone may trigger a run and pays OutLayer's
-//! deposit for it; OutLayer returns what it does not use directly to that caller.
+//! A buyer pays once, through the board, for a job fixed by the hash of its acceptance check, its
+//! reference and its public format. The payment and a compute budget are held here from then on.
+//! The escrow itself asks OutLayer to run the verifier build pinned to the job, pays each run from
+//! the job's compute budget, and records the result only in the private callback of that request.
+//! No account can set a result: not the owner, not the board, not a relay, not the worker.
 //!
-//! Lifecycle:
-//! - `Draft` -> `request_challenge` -> `Challenging` -> `Challenged`, or `CheckRejected` if any fake
-//!   got through or the check failed the reference
-//! - `Challenged` -> `fund` / `ft_transfer_call` -> `Funded` -> `deliver` -> `Delivered`
-//! - `Delivered` -> `request_verification` -> `Verifying` -> `Passed` or `Failed`
-//! - `Passed` -> `release` -> `Released`; `Failed` -> `refund` -> `Refunded`
-//! - `Funded` after the deadline, or `Delivered` after the verdict window -> `expire` -> `Expired`
-//! - `Draft`, `CheckRejected` or `Challenged` -> `cancel`: the job is removed and its storage
-//!   deposit returned
+//! Lifecycle of a job:
+//! - `Draft` -> `request_challenge` -> `Challenging` -> `Open`, or `CheckRejected` if any fake got
+//!   through or the check failed the reference
+//! - `Open` -> `assign` (only from the board, for the worker it chose) -> `Funded`
+//! - `Funded` -> `deliver` -> `Delivered` -> `request_verification` -> `Verifying` -> `Passed` or
+//!   `Failed`
+//! - `Passed` -> `release` -> `Released`, final
+//! - `Failed` -> `refund`, `Funded` after its deadline or `Delivered` after its verdict window ->
+//!   `expire`: the attempt is recorded. If attempts are left and the job has not ended, it goes
+//!   back to `Open` for the next worker; otherwise the buyer is refunded: `Refunding` -> `Refunded`
+//! - `Draft`, `Open` or `CheckRejected` -> `close`, by the buyer or the board at any time, or by
+//!   anyone after the job's end -> refunded
 //!
 //! Any OutLayer failure means "no verdict", never a pass or a fail: a failed promise, a timed-out
 //! run, malformed output, output too large, or output naming another job, check or deliverable. The
-//! job goes back to `Draft` or `Delivered`, so a run can be tried again. If a callback never arrives
-//! (for example it ran out of gas), a run counts as stale after `RUN_TIMEOUT_NANOS`: it can be
-//! triggered again, and a `Verifying` job can expire once its window has also closed. Each run has
-//! an attempt number, so a late callback from an earlier run is ignored and a result is recorded
-//! exactly once.
+//! job goes back to `Draft` or `Delivered`, so a run can be tried again while budget lasts. If a
+//! callback never arrives, a run counts as stale after `RUN_TIMEOUT_NANOS`. Each run has a number,
+//! so a late callback from an earlier run is ignored and a result is recorded exactly once.
+//!
+//! Each run's deposit comes from the job's compute budget, and OutLayer returns its unused part
+//! straight to the buyer. A run in flight blocks the next one until it finishes or goes stale, so
+//! nobody can drain the budget by triggering runs.
 //!
 //! What this contract cannot check: it asks for the WASM by URL and hash, and OutLayer's worker is
 //! what refuses other bytes. The callback sees only the output, so the contract trusts the OutLayer
@@ -30,34 +35,36 @@
 //! TDX quote of each run is not verified on chain. The stored request id lets anyone check it off
 //! chain.
 //!
-//! Payouts pass through `Releasing`, `Refunding` or `Expiring` until the transfer's callback
-//! confirms it. A failed transfer returns the job to the state it came from, so the payout can be
-//! retried; nothing is marked paid until the money has moved.
+//! Payouts pass through `Releasing` or `Refunding` until the transfer's callback confirms it. A
+//! failed transfer returns the job to the state it came from, so the payout can be retried; nothing
+//! is marked paid until the money has moved.
 
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::Deserialize;
 use near_sdk::serde_json::{self, json};
 use near_sdk::store::LookupMap;
 use near_sdk::{
-    env, ext_contract, near, require, AccountId, BorshStorageKey, Gas, GasWeight, NearToken,
-    PanicOnDefault, Promise, PromiseError, PromiseOrValue,
+    env, near, require, AccountId, BorshStorageKey, Gas, GasWeight, NearToken, PanicOnDefault,
+    Promise, PromiseError,
 };
 
 pub type JobId = u64;
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
-const MAX_DEADLINE_NANOS: u64 = 24 * 60 * 60 * NANOS_PER_SEC;
+/// The longest a job can wait for workers.
+const MAX_OPEN_NANOS: u64 = 7 * 24 * 60 * 60 * NANOS_PER_SEC;
 /// Long enough for a stale run and one retry: see `RUN_TIMEOUT_NANOS`.
-const MIN_TIME_AFTER_FUNDING_NANOS: u64 = 30 * 60 * NANOS_PER_SEC;
-/// Charged with a job, for the per-buyer record funding may create. Funding must attach the exact amount,
-/// so it cannot pay for this itself.
-const FUNDING_RECORD_BYTES: u128 = 200;
-const MIN_VERDICT_WINDOW_SECS: u32 = 30 * 60;
-const MAX_VERDICT_WINDOW_SECS: u32 = 24 * 60 * 60;
+const MIN_WINDOW_SECS: u32 = 30 * 60;
+const MAX_WINDOW_SECS: u32 = 24 * 60 * 60;
+pub const MAX_ATTEMPTS: u32 = 3;
+/// A challenge may need one retry, and so may each attempt's verification.
+pub const RUNS_PER_JOB_BASE: u32 = 2;
+pub const RUNS_PER_ATTEMPT: u32 = 2;
+/// Charged with a job, for the per-buyer record it may create.
+const BUYER_RECORD_BYTES: u128 = 200;
 /// After this long with no callback, a run is stale. A real run resolves within NEAR's yield timeout
 /// (200 blocks), which delivers `null`; this is reached only if the callback itself is lost.
 const RUN_TIMEOUT_NANOS: u64 = 15 * 60 * NANOS_PER_SEC;
-const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
 const GAS_FOR_PAYOUT_CALLBACK: Gas = Gas::from_tgas(20);
 /// A payout's callback must always run: a lost one would leave the job in a pending state.
 const MIN_PREPAID_GAS_FOR_PAYOUT: Gas = Gas::from_tgas(50);
@@ -66,9 +73,8 @@ const MIN_PREPAID_GAS_FOR_PAYOUT: Gas = Gas::from_tgas(50);
 const GAS_FOR_OUTLAYER: Gas = Gas::from_tgas(100);
 const GAS_FOR_RUN_CALLBACK: Gas = Gas::from_tgas(30);
 const MIN_PREPAID_GAS_FOR_RUN: Gas = Gas::from_tgas(150);
-/// OutLayer's deposit for one run, paid by whoever triggers it. Unused NEAR comes back to them
-/// from OutLayer. Protocol-level admission refunds also go to that caller.
-const MIN_RUN_DEPOSIT: NearToken = NearToken::from_millinear(100);
+/// Bounds on the owner's setting for one run's deposit.
+const MIN_RUN_DEPOSIT: NearToken = NearToken::from_millinear(1);
 const MAX_RUN_DEPOSIT: NearToken = NearToken::from_near(1);
 const RUN_MAX_INSTRUCTIONS: u64 = 50_000_000_000;
 const RUN_MAX_MEMORY_MB: u32 = 128;
@@ -79,11 +85,12 @@ const MAX_RESULT_BYTES: usize = 900;
 const MAX_URL_LEN: usize = 256;
 const MAX_FAILED_RULE_LEN: usize = 32;
 const VERIFIER_OUTPUT_VERSION: u32 = 2;
-const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 /// Fewest confirmed fakes a check must face before it can be accepted (the verifier uses the same).
 pub const MIN_FAKES: u32 = 5;
 /// A 64-character placeholder used to size a job's storage at its largest.
 const FULL_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+/// The longest valid account id, used to size records at their largest.
+const LONGEST_ACCOUNT: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,7 +98,8 @@ pub enum JobState {
     Draft,
     Challenging,
     CheckRejected,
-    Challenged,
+    /// The check passed its challenge and the job waits for a worker.
+    Open,
     Funded,
     Delivered,
     Verifying,
@@ -99,9 +107,13 @@ pub enum JobState {
     Failed,
     Releasing,
     Refunding,
-    Expiring,
     Released,
     Refunded,
+    /// A refund decided but not yet paid, because its transfer failed. `refund` retries it.
+    RefundDue,
+    /// Kept only for jobs made before this version. A new job never enters these.
+    Challenged,
+    Expiring,
     Expired,
 }
 
@@ -112,12 +124,46 @@ pub enum RunKind {
     Verify,
 }
 
+/// What releases the payment. Only a recorded verdict does today; another kind would need its own
+/// decision and review.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Release {
+    Verdict,
+}
+
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Paid,
+    /// A recorded failing verdict.
+    Failed,
+    /// No delivery before the deadline.
+    NoDelivery,
+    /// Delivered, but no verdict was recorded in the verdict window.
+    NoVerdict,
+}
+
+/// One worker's turn at a job. Kept so the board can settle that attempt's fee, and so anyone can
+/// find its evidence after the job reopens.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttemptRecord {
+    pub worker: AccountId,
+    pub outcome: Outcome,
+    pub failed_rule: Option<String>,
+    pub deliverable_hash: Option<String>,
+    pub report_hash: Option<String>,
+    pub verdict_request_id: Option<U64>,
+}
+
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Job {
     pub buyer: AccountId,
-    pub worker: AccountId,
-    /// `None` means the job is paid in NEAR.
+    /// The current worker. `None` while the job waits for one.
+    pub worker: Option<AccountId>,
+    /// Always `None` for jobs made by this version: they are paid in NEAR.
     pub token: Option<AccountId>,
     pub amount: U128,
     /// SHA-256 of the acceptance check, 64 lowercase hex characters.
@@ -133,12 +179,21 @@ pub struct Job {
     /// created. It can withhold them, which leaves no verdict; it cannot change them unnoticed,
     /// because the verifier refuses texts that do not match the job's hashes.
     pub secrets_owner: AccountId,
-    /// Delivery deadline, in nanoseconds since the Unix epoch.
+    pub release: Release,
+    /// NEAR held to pay for runs. OutLayer returns each run's unused part to the buyer.
+    pub compute_budget: U128,
+    /// After this, no new worker can be assigned, and anyone can close the job if no one is on it.
+    pub expires_at: U64,
+    /// How long each worker has to deliver after being assigned.
+    pub deliver_secs: u32,
+    /// The current worker's delivery deadline, in nanoseconds since the Unix epoch.
     pub deadline: U64,
     /// How long verification can be triggered after delivery.
     pub verdict_window_secs: u32,
+    pub max_attempts: u32,
+    pub history: Vec<AttemptRecord>,
     pub state: JobState,
-    /// NEAR the buyer paid for this job's storage, returned if the job is cancelled.
+    /// NEAR the board paid for this job's storage.
     pub storage_deposit: NearToken,
     /// Number of the latest OutLayer run; only that run's callback can record a result.
     pub attempt: u32,
@@ -162,7 +217,18 @@ impl Job {
     /// The same job with every optional field filled, used to charge storage at its largest.
     fn at_full_size(&self) -> Self {
         let full = Some(FULL_HASH.to_string());
+        let longest: AccountId = LONGEST_ACCOUNT.parse().unwrap_or_else(|_| env::abort());
+        let record = AttemptRecord {
+            worker: longest.clone(),
+            outcome: Outcome::Failed,
+            failed_rule: Some("x".repeat(MAX_FAILED_RULE_LEN)),
+            deliverable_hash: full.clone(),
+            report_hash: full.clone(),
+            verdict_request_id: Some(U64(u64::MAX)),
+        };
         Self {
+            worker: Some(longest),
+            history: vec![record; self.max_attempts as usize],
             run_started_at: Some(U64(u64::MAX)),
             challenge_report_hash: full.clone(),
             challenge_request_id: Some(U64(u64::MAX)),
@@ -238,7 +304,7 @@ impl Job {
             && output.fakes_total >= MIN_FAKES
             && output.fakes_caught == output.fakes_total;
         self.state = if accepted {
-            JobState::Challenged
+            JobState::Open
         } else {
             JobState::CheckRejected
         };
@@ -279,6 +345,26 @@ impl Job {
             output.failed_rule
         };
         true
+    }
+
+    /// Ends the current worker's turn, keeping its evidence in the history.
+    fn record_attempt(&mut self, outcome: Outcome) {
+        let worker = self.worker.take().unwrap_or_else(|| env::abort());
+        self.history.push(AttemptRecord {
+            worker,
+            outcome,
+            failed_rule: self.failed_rule.take(),
+            deliverable_hash: self.deliverable_hash.take(),
+            report_hash: self.report_hash.take(),
+            verdict_request_id: self.verdict_request_id.take(),
+        });
+        self.delivered_at = None;
+        self.deadline = U64(0);
+    }
+
+    /// True if another worker can still take the job.
+    fn can_reopen(&self, now: u64) -> bool {
+        (self.history.len() as u32) < self.max_attempts && now < self.expires_at.0
     }
 }
 
@@ -321,18 +407,19 @@ struct VerifyOutput {
 pub struct Config {
     pub owner: AccountId,
     pub outlayer: AccountId,
+    pub board: Option<AccountId>,
     pub verifier_url: String,
     pub verifier_hash: String,
     pub secrets_owner: AccountId,
-    pub tokens: Vec<AccountId>,
     pub next_job_id: JobId,
     pub paused: bool,
+    pub run_deposit: U128,
     pub caps: Vec<AssetCap>,
 }
 
-/// Limits on one asset, enforced here. `token: None` means NEAR. `held` is what this contract is
-/// holding for funded jobs right now. Caps only ever refuse money coming in: nothing here can stop
-/// a refund, expiry or payout, and lowering a cap below `held` traps nothing.
+/// Limits on NEAR, enforced here. `held` is what this contract is holding for jobs right now.
+/// Caps only ever refuse money coming in: nothing here can stop a refund or payout, and lowering a
+/// cap below `held` traps nothing.
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug)]
 pub struct AssetCap {
@@ -342,13 +429,6 @@ pub struct AssetCap {
     pub held: U128,
     /// The most one buyer can have held at once, so one account cannot fill `max_held`.
     pub max_held_per_buyer: U128,
-}
-
-// The macro generates `ext_ft` from this trait; the trait itself is never called directly.
-#[ext_contract(ext_ft)]
-#[allow(dead_code)]
-trait FungibleToken {
-    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }
 
 #[near]
@@ -364,16 +444,20 @@ pub struct Escrow {
     owner: AccountId,
     /// The OutLayer contract, fixed at initialisation: no method can point results elsewhere.
     outlayer: AccountId,
+    /// The only account that can create jobs and assign workers.
+    board: Option<AccountId>,
     verifier_url: String,
     verifier_hash: String,
     secrets_owner: AccountId,
-    tokens: Vec<AccountId>,
     jobs: LookupMap<JobId, Job>,
     next_id: JobId,
-    /// Stops new jobs and new funding only. Everything already funded can still finish.
+    /// Stops new jobs and new assignments only. Everything under way can still finish.
     paused: bool,
+    /// What each run attaches for OutLayer, paid from the job's compute budget.
+    run_deposit: NearToken,
+    /// Only NEAR, the first entry.
     caps: Vec<AssetCap>,
-    /// What each buyer has held now, per asset. An entry goes when it reaches zero, so this stays small.
+    /// What each buyer has held now. An entry goes when it reaches zero, so this stays small.
     held_by_buyer: LookupMap<(AccountId, Option<AccountId>), u128>,
 }
 
@@ -399,6 +483,13 @@ fn require_verifier(url: &str, hash: &str) {
     );
 }
 
+fn require_run_deposit(deposit: NearToken) {
+    require!(
+        deposit >= MIN_RUN_DEPOSIT && deposit <= MAX_RUN_DEPOSIT,
+        "run_deposit must be between 0.001 and 1 NEAR"
+    );
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     env::sha256(bytes)
         .iter()
@@ -409,37 +500,50 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn emit(event: &str, job_id: JobId) {
     let log = json!({
         "standard": "proven",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "event": event,
         "data": [{ "job_id": job_id }],
     });
     env::log_str(&format!("EVENT_JSON:{log}"));
 }
 
+/// The compute budget a job with this many attempts must bring.
+pub fn budget_for(max_attempts: u32, run_deposit: NearToken) -> NearToken {
+    run_deposit.saturating_mul(u128::from(
+        RUNS_PER_JOB_BASE + RUNS_PER_ATTEMPT * max_attempts,
+    ))
+}
+
 #[near]
 impl Escrow {
     #[init]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         owner: AccountId,
         outlayer: AccountId,
+        board: Option<AccountId>,
         verifier_url: String,
         verifier_hash: String,
         secrets_owner: AccountId,
+        run_deposit: U128,
         max_job_amount: U128,
         max_held: U128,
         max_held_per_buyer: U128,
     ) -> Self {
         require_verifier(&verifier_url, &verifier_hash);
+        let run_deposit = NearToken::from_yoctonear(run_deposit.0);
+        require_run_deposit(run_deposit);
         Self {
             owner,
             outlayer,
+            board,
             verifier_url,
             verifier_hash,
             secrets_owner,
-            tokens: Vec::new(),
             jobs: LookupMap::new(StorageKey::Jobs),
             next_id: 0,
             paused: false,
+            run_deposit,
             caps: vec![AssetCap {
                 token: None,
                 max_job: max_job_amount,
@@ -451,14 +555,19 @@ impl Escrow {
         }
     }
 
-    /// One-time upgrade from the version without public formats and per-buyer limits. Only this
-    /// contract's own account can call it, as part of deploying the new code. Earlier jobs are
-    /// finished, and are kept readable with an empty format hash.
+    /// One-time upgrade from the version that funded jobs per worker. Only this contract's own
+    /// account can call it, as part of deploying the new code, and only while no money is held.
+    /// Earlier jobs are finished, and are kept readable as they were.
     #[init(ignore_state)]
     #[private]
-    pub fn migrate(max_held_per_buyer: U128) -> Self {
+    pub fn migrate(board: AccountId, run_deposit: U128) -> Self {
         let old: migration::OldEscrow =
             env::state_read().unwrap_or_else(|| env::panic_str("no earlier state"));
+        let run_deposit = NearToken::from_yoctonear(run_deposit.0);
+        require_run_deposit(run_deposit);
+        for cap in &old.caps {
+            require!(cap.held.0 == 0, "no money may be held during this upgrade");
+        }
         for id in 0..old.next_id {
             let key = migration::job_key(id);
             let Some(bytes) = env::storage_read(&key) else {
@@ -471,31 +580,22 @@ impl Escrow {
                 .unwrap_or_else(|_| env::panic_str("could not write an upgraded job"));
             env::storage_write(&key, &bytes);
         }
-        let caps = old
-            .caps
-            .into_iter()
-            .map(|cap| {
-                require!(cap.held.0 == 0, "no money may be held during this upgrade");
-                AssetCap {
-                    token: cap.token,
-                    max_job: cap.max_job,
-                    max_held: cap.max_held,
-                    held: cap.held,
-                    max_held_per_buyer,
-                }
-            })
-            .collect();
         Self {
             owner: old.owner,
             outlayer: old.outlayer,
+            board: Some(board),
             verifier_url: old.verifier_url,
             verifier_hash: old.verifier_hash,
             secrets_owner: old.secrets_owner,
-            tokens: old.tokens,
             jobs: LookupMap::new(StorageKey::Jobs),
             next_id: old.next_id,
             paused: old.paused,
-            caps,
+            run_deposit,
+            caps: old
+                .caps
+                .into_iter()
+                .filter(|cap| cap.token.is_none())
+                .collect(),
             held_by_buyer: LookupMap::new(StorageKey::HeldByBuyer),
         }
     }
@@ -514,87 +614,59 @@ impl Escrow {
         self.secrets_owner = secrets_owner;
     }
 
-    /// Stops new jobs and new funding, or lets them start again. It never blocks a delivery, a
-    /// verification, a refund, an expiry, a payout or a cancellation.
+    /// The board is trusted to assign only the worker whose claim it accepted.
+    pub fn set_board(&mut self, board: AccountId) {
+        self.require_owner();
+        self.board = Some(board);
+    }
+
+    /// Applies to jobs created after it; a job's budget was fixed when it was created.
+    pub fn set_run_deposit(&mut self, run_deposit: U128) {
+        self.require_owner();
+        let deposit = NearToken::from_yoctonear(run_deposit.0);
+        require_run_deposit(deposit);
+        self.run_deposit = deposit;
+    }
+
+    /// Stops new jobs and new assignments, or lets them start again. It never blocks a delivery,
+    /// a verification, a refund, a payout or a close.
     pub fn set_paused(&mut self, paused: bool) {
         self.require_owner();
         self.paused = paused;
         env::log_str(&format!("paused {paused}"));
     }
 
-    /// Sets the limits on an asset already accepted. `token: null` means NEAR.
-    pub fn set_caps(
-        &mut self,
-        token: Option<AccountId>,
-        max_job: U128,
-        max_held: U128,
-        max_held_per_buyer: U128,
-    ) {
+    /// Sets the limits on NEAR.
+    pub fn set_caps(&mut self, max_job: U128, max_held: U128, max_held_per_buyer: U128) {
         self.require_owner();
-        let cap = self.cap_mut(token.as_ref());
+        let cap = self.near_cap();
         cap.max_job = max_job;
         cap.max_held = max_held;
         cap.max_held_per_buyer = max_held_per_buyer;
     }
 
-    pub fn add_token(
-        &mut self,
-        token: AccountId,
-        max_job: U128,
-        max_held: U128,
-        max_held_per_buyer: U128,
-    ) {
-        self.require_owner();
-        if !self.tokens.contains(&token) {
-            self.tokens.push(token.clone());
-        }
-        // A token removed earlier may still have funded jobs, so its count is kept.
-        match self
-            .caps
-            .iter_mut()
-            .find(|cap| cap.token.as_ref() == Some(&token))
-        {
-            Some(cap) => {
-                cap.max_job = max_job;
-                cap.max_held = max_held;
-                cap.max_held_per_buyer = max_held_per_buyer;
-            }
-            None => self.caps.push(AssetCap {
-                token: Some(token),
-                max_job,
-                max_held,
-                held: U128(0),
-                max_held_per_buyer,
-            }),
-        }
-    }
+    // ---- Board: create jobs and assign workers ----
 
-    pub fn remove_token(&mut self, token: AccountId) {
-        self.require_owner();
-        self.tokens.retain(|t| *t != token);
-    }
-
-    // ---- Buyer ----
-
-    /// Records a job. The caller attaches enough NEAR to pay for the job's storage at its
-    /// largest; any excess is returned. `verifier_hash` is the build the buyer expects: if the
-    /// contract's setting differs (it may have just changed), the job is refused.
+    /// Records a job and holds its payment and compute budget, for `buyer`. Only the board can
+    /// call it, attaching exactly what the buyer paid for this: the amount, the compute budget for
+    /// `max_attempts`, and storage at its largest. Any excess goes back to the buyer.
     #[payable]
     #[allow(clippy::too_many_arguments)]
-    pub fn create_job(
+    pub fn create_open_job(
         &mut self,
-        worker: AccountId,
+        buyer: AccountId,
         spec_hash: String,
         fakes_hash: String,
         format_hash: String,
         amount: U128,
-        token: Option<AccountId>,
-        deadline: U64,
-        verdict_window_secs: u32,
         verifier_hash: String,
+        expires_at: U64,
+        deliver_secs: u32,
+        verdict_window_secs: u32,
+        max_attempts: u32,
     ) -> JobId {
+        self.require_board();
         require!(!self.paused, "new jobs are paused");
-        let buyer = env::predecessor_account_id();
         let now = env::block_timestamp();
         require_hash(&spec_hash, "spec_hash");
         require_hash(&fakes_hash, "fakes_hash");
@@ -603,30 +675,33 @@ impl Escrow {
             verifier_hash == self.verifier_hash,
             "verifier_hash is not the build this contract runs"
         );
-        require!(worker != buyer, "the worker cannot be the buyer");
         require!(amount.0 > 0, "amount must be greater than zero");
-        if let Some(token) = &token {
-            require!(self.tokens.contains(token), "token is not accepted");
+        require!(
+            (1..=MAX_ATTEMPTS).contains(&max_attempts),
+            "max_attempts must be 1 to 3"
+        );
+        require!(
+            expires_at.0 > now.saturating_add(u64::from(MIN_WINDOW_SECS) * NANOS_PER_SEC)
+                && expires_at.0 - now <= MAX_OPEN_NANOS,
+            "expires_at must be from 30 minutes to 7 days away"
+        );
+        for (secs, name) in [
+            (deliver_secs, "deliver_secs"),
+            (verdict_window_secs, "verdict_window_secs"),
+        ] {
+            require!(
+                (MIN_WINDOW_SECS..=MAX_WINDOW_SECS).contains(&secs),
+                format!("{name} must be between 1800 and 86400")
+            );
         }
-        require!(
-            amount.0 <= self.cap_mut(token.as_ref()).max_job.0,
-            "amount is over the per-job cap"
-        );
-        require!(
-            deadline.0 > now && deadline.0 - now <= MAX_DEADLINE_NANOS,
-            "deadline must be in the future and at most 24 hours away"
-        );
-        require!(
-            (MIN_VERDICT_WINDOW_SECS..=MAX_VERDICT_WINDOW_SECS).contains(&verdict_window_secs),
-            "verdict_window_secs must be between 1800 and 86400"
-        );
+        let budget = budget_for(max_attempts, self.run_deposit);
 
         let id = self.next_id;
         self.next_id += 1;
         let mut job = Job {
             buyer: buyer.clone(),
-            worker,
-            token,
+            worker: None,
+            token: None,
             amount,
             spec_hash,
             fakes_hash,
@@ -634,8 +709,14 @@ impl Escrow {
             verifier_url: self.verifier_url.clone(),
             verifier_hash,
             secrets_owner: self.secrets_owner.clone(),
-            deadline,
+            release: Release::Verdict,
+            compute_budget: U128(budget.as_yoctonear()),
+            expires_at,
+            deliver_secs,
+            deadline: U64(0),
             verdict_window_secs,
+            max_attempts,
+            history: Vec::new(),
             state: JobState::Draft,
             storage_deposit: NearToken::from_yoctonear(0),
             attempt: 0,
@@ -655,18 +736,21 @@ impl Escrow {
         let storage_before = env::storage_usage();
         self.jobs.insert(id, job.at_full_size());
         self.jobs.flush();
-        let storage_cost = env::storage_byte_cost().saturating_mul(
-            u128::from(env::storage_usage() - storage_before) + FUNDING_RECORD_BYTES,
-        );
+        let storage_cost = env::storage_byte_cost()
+            .saturating_mul(u128::from(env::storage_usage() - storage_before) + BUYER_RECORD_BYTES);
+        let needed = NearToken::from_yoctonear(amount.0)
+            .saturating_add(budget)
+            .saturating_add(storage_cost);
         let attached = env::attached_deposit();
         require!(
-            attached >= storage_cost,
-            format!("attach at least {storage_cost} for storage")
+            attached >= needed,
+            format!("attach at least {needed}: the amount, the compute budget and storage")
         );
         job.storage_deposit = storage_cost;
         self.jobs.insert(id, job);
+        self.hold(&buyer, amount.0);
 
-        let excess = attached.saturating_sub(storage_cost);
+        let excess = attached.saturating_sub(needed);
         if !excess.is_zero() {
             Promise::new(buyer).transfer(excess).detach();
         }
@@ -674,49 +758,24 @@ impl Escrow {
         id
     }
 
-    /// Removes a job that was never funded and returns its storage deposit to the buyer. A
-    /// challenge in flight must finish or go stale first.
-    pub fn cancel(&mut self, job_id: JobId) -> Promise {
-        let job = self.job(job_id).clone();
+    /// Gives an open job to the worker whose claim the board accepted. The money is already held,
+    /// so the worker can start at once.
+    pub fn assign(&mut self, job_id: JobId, worker: AccountId) {
+        self.require_board();
+        require!(!self.paused, "new assignments are paused");
         let now = env::block_timestamp();
+        let job = self.job_mut(job_id);
+        require!(job.state == JobState::Open, "job is not open");
+        require!(now < job.expires_at.0, "this job has ended");
+        require!(worker != job.buyer, "the worker cannot be the buyer");
         require!(
-            env::predecessor_account_id() == job.buyer,
-            "only the buyer can cancel"
+            (job.history.len() as u32) < job.max_attempts,
+            "no attempts are left"
         );
-        let cancellable = match job.state {
-            JobState::Draft | JobState::CheckRejected | JobState::Challenged => true,
-            JobState::Challenging => job.run_is_stale(now),
-            _ => false,
-        };
-        require!(cancellable, "only an unfunded job can be cancelled");
-        self.jobs.remove(&job_id);
-        emit("job_cancelled", job_id);
-        Promise::new(job.buyer).transfer(job.storage_deposit)
-    }
-
-    /// Locks the job's payment in NEAR. Only the buyer, with exactly the job amount attached.
-    #[payable]
-    pub fn fund(&mut self, job_id: JobId) {
-        let amount = env::attached_deposit().as_yoctonear();
-        self.lock_payment(job_id, &env::predecessor_account_id(), None, amount);
-    }
-
-    /// NEP-141 receiver: funds a token job. `msg` is the job id.
-    /// A panic here makes the token contract return the tokens to the sender.
-    pub fn ft_on_transfer(
-        &mut self,
-        sender_id: AccountId,
-        amount: U128,
-        msg: String,
-    ) -> PromiseOrValue<U128> {
-        let token = env::predecessor_account_id();
-        require!(self.tokens.contains(&token), "token is not accepted");
-        let job_id: JobId = msg
-            .trim()
-            .parse()
-            .unwrap_or_else(|_| env::panic_str("msg must be the job id"));
-        self.lock_payment(job_id, &sender_id, Some(&token), amount.0);
-        PromiseOrValue::Value(U128(0))
+        job.worker = Some(worker);
+        job.deadline = U64(now.saturating_add(u64::from(job.deliver_secs) * NANOS_PER_SEC));
+        job.state = JobState::Funded;
+        emit("job_assigned", job_id);
     }
 
     // ---- Worker ----
@@ -727,7 +786,10 @@ impl Escrow {
         let now = env::block_timestamp();
         let caller = env::predecessor_account_id();
         let job = self.job_mut(job_id);
-        require!(caller == job.worker, "only the job's worker can deliver");
+        require!(
+            job.worker.as_ref() == Some(&caller),
+            "only the job's worker can deliver"
+        );
         require!(
             job.state == JobState::Funded,
             "job is not awaiting delivery"
@@ -739,11 +801,8 @@ impl Escrow {
         emit("job_delivered", job_id);
     }
 
-    // ---- Anyone: run the verifier ----
+    // ---- Anyone: run the verifier, paid from the job's compute budget ----
 
-    /// Asks OutLayer to run the check challenge. The caller attaches OutLayer's deposit and gets
-    /// the unused part back from OutLayer.
-    #[payable]
     pub fn request_challenge(&mut self, job_id: JobId) -> Promise {
         let now = env::block_timestamp();
         let job = self.job(job_id);
@@ -753,22 +812,11 @@ impl Escrow {
             _ => false,
         };
         require!(ready, "job is not awaiting a challenge");
-        // Funding at the last moment would use up the worker's one attempt with no time to do the work.
-        require!(
-            job.deadline.0 >= now.saturating_add(MIN_TIME_AFTER_FUNDING_NANOS),
-            "the job must leave at least 30 minutes after funding"
-        );
-        // A job from before public formats can never get a verdict, so it must not take money.
-        require!(
-            job.format_hash.len() == 64,
-            "this job has no public format"
-        );
+        require!(now < job.expires_at.0, "this job has ended");
         self.start_run(job_id, RunKind::Challenge, JobState::Challenging)
     }
 
-    /// Asks OutLayer to run the check on the delivery. The caller attaches OutLayer's deposit and
-    /// gets the unused part back from OutLayer. Refused once the verdict window has closed.
-    #[payable]
+    /// Refused once the verdict window has closed.
     pub fn request_verification(&mut self, job_id: JobId) -> Promise {
         let now = env::block_timestamp();
         let job = self.job(job_id);
@@ -783,6 +831,22 @@ impl Escrow {
             "the verdict window has closed"
         );
         self.start_run(job_id, RunKind::Verify, JobState::Verifying)
+    }
+
+    /// Lets the buyer pay for more runs, if failed runs used up the budget.
+    #[payable]
+    pub fn top_up(&mut self, job_id: JobId) {
+        let added = env::attached_deposit().as_yoctonear();
+        let job = self.job_mut(job_id);
+        require!(
+            !matches!(
+                job.state,
+                JobState::Released | JobState::Refunded | JobState::Releasing | JobState::Refunding
+            ),
+            "this job has finished"
+        );
+        job.compute_budget = U128(job.compute_budget.0.saturating_add(added));
+        emit("budget_topped_up", job_id);
     }
 
     /// Records a run's result, if it is still the latest run of a job waiting for it. Anything
@@ -818,7 +882,7 @@ impl Escrow {
         }
         let event = match (recorded, job.state) {
             (false, _) => "run_no_result",
-            (true, JobState::Challenged) => "check_accepted",
+            (true, JobState::Open) => "check_accepted",
             (true, JobState::CheckRejected) => "check_rejected",
             (true, JobState::Passed) => "verdict_passed",
             (true, _) => "verdict_failed",
@@ -830,7 +894,7 @@ impl Escrow {
     /// Recovers unused compute deposits when OutLayer's own settlement callback failed. The
     /// request id is public in OutLayer's execution_requested event. OutLayer checks that this
     /// contract requested it, that it is stale, and that it has not already settled; its refund
-    /// goes to the original payer. This never reimburses anyone from job funds.
+    /// goes to the payer it was given, the job's buyer.
     pub fn cancel_stale_outlayer_execution(&self, request_id: U64) -> Promise {
         require!(
             env::prepaid_gas() >= Gas::from_tgas(70),
@@ -850,71 +914,134 @@ impl Escrow {
 
     /// Pays the worker after a passing verdict.
     pub fn release(&mut self, job_id: JobId) -> Promise {
-        self.start_payout(
-            job_id,
-            JobState::Passed,
-            JobState::Releasing,
-            JobState::Released,
-            true,
+        Self::require_payout_gas();
+        let job = self.job_mut(job_id);
+        require!(job.state == JobState::Passed, "job has not passed");
+        job.state = JobState::Releasing;
+        let worker = job.worker.clone().unwrap_or_else(|| env::abort());
+        let amount = NearToken::from_yoctonear(job.amount.0);
+        emit("payout_started", job_id);
+        Promise::new(worker).transfer(amount).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_PAYOUT_CALLBACK)
+                .on_payout(job_id, true),
         )
     }
 
-    /// Refunds the buyer after a failing verdict.
-    pub fn refund(&mut self, job_id: JobId) -> Promise {
-        self.start_payout(
-            job_id,
-            JobState::Failed,
-            JobState::Refunding,
-            JobState::Refunded,
-            false,
-        )
-    }
-
-    /// Refunds the buyer when the worker missed the deadline, or no verdict was recorded in the
-    /// verdict window. A run in flight gets `RUN_TIMEOUT_NANOS` to finish first; its late callback
-    /// is ignored once the job has expired.
-    pub fn expire(&mut self, job_id: JobId) -> Promise {
+    /// After a failing verdict: the next worker gets the job if attempts and time are left;
+    /// otherwise the buyer is refunded. Also retries a refund whose transfer failed.
+    pub fn refund(&mut self, job_id: JobId) -> Option<Promise> {
         let now = env::block_timestamp();
-        let job = self.job(job_id);
-        let from = job.state;
-        let expired = match from {
-            JobState::Funded => now > job.deadline.0,
-            JobState::Delivered => now > job.verdict_deadline(),
-            JobState::Verifying => now > job.verdict_deadline() && job.run_is_stale(now),
+        let job = self.job_mut(job_id);
+        match job.state {
+            JobState::Failed => {
+                job.record_attempt(Outcome::Failed);
+                self.reopen_or_refund(job_id, now)
+            }
+            JobState::RefundDue => Some(self.start_refund(job_id)),
+            _ => env::panic_str("job has not failed"),
+        }
+    }
+
+    /// When a worker missed the deadline, or no verdict was recorded in the verdict window. A run
+    /// in flight gets `RUN_TIMEOUT_NANOS` to finish first; its late callback is then ignored.
+    pub fn expire(&mut self, job_id: JobId) -> Option<Promise> {
+        let now = env::block_timestamp();
+        let job = self.job_mut(job_id);
+        let outcome = match job.state {
+            JobState::Funded if now > job.deadline.0 => Outcome::NoDelivery,
+            JobState::Delivered if now > job.verdict_deadline() => Outcome::NoVerdict,
+            JobState::Verifying if now > job.verdict_deadline() && job.run_is_stale(now) => {
+                Outcome::NoVerdict
+            }
+            _ => env::panic_str("job has not expired"),
+        };
+        job.run_started_at = None;
+        job.record_attempt(outcome);
+        self.reopen_or_refund(job_id, now)
+    }
+
+    /// Ends a job no worker is on, and refunds the buyer. The buyer or the board can do this at
+    /// any time; anyone can once the job has ended.
+    pub fn close(&mut self, job_id: JobId) -> Promise {
+        let now = env::block_timestamp();
+        let caller = env::predecessor_account_id();
+        let by_board = self.board.as_ref() == Some(&caller);
+        let job = self.job_mut(job_id);
+        let idle = match job.state {
+            JobState::Draft | JobState::Open | JobState::CheckRejected => true,
+            JobState::Challenging => job.run_is_stale(now),
             _ => false,
         };
-        require!(expired, "job has not expired");
-        self.start_payout(job_id, from, JobState::Expiring, JobState::Expired, false)
+        require!(idle, "only a job with no worker on it can be closed");
+        require!(
+            caller == job.buyer || by_board || now >= job.expires_at.0,
+            "only the buyer can close this job before it ends"
+        );
+        job.run_started_at = None;
+        job.state = JobState::RefundDue;
+        self.start_refund(job_id)
     }
 
-    /// Settles a payout once its transfer has finished. On failure the job goes back to the
-    /// state it came from, so the payout can be retried.
+    /// Settles a payout once its transfer has finished. On failure the job goes back, so the
+    /// payout can be retried.
     #[private]
-    pub fn on_payout(&mut self, job_id: JobId, done: JobState, revert_to: JobState) -> bool {
+    pub fn on_payout(&mut self, job_id: JobId, to_worker: bool) -> bool {
         // Only the outcome matters, so no result bytes are read. A result longer than that limit
         // still means the transfer succeeded, and must never be retried as if it had failed.
         let paid = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
         let job = self.job_mut(job_id);
-        job.state = if paid { done } else { revert_to };
-        let (buyer, token, amount) = (job.buyer.clone(), job.token.clone(), job.amount.0);
-        if paid {
-            let cap = self.cap_mut(token.as_ref());
-            cap.held = U128(cap.held.0.saturating_sub(amount));
-            let key = (buyer, token);
-            let left = self
-                .held_by_buyer
-                .get(&key)
-                .copied()
-                .unwrap_or(0)
-                .saturating_sub(amount);
-            if left == 0 {
-                self.held_by_buyer.remove(&key);
+        let (buyer, amount) = (job.buyer.clone(), job.amount.0);
+        if !paid {
+            job.state = if to_worker {
+                JobState::Passed
             } else {
-                self.held_by_buyer.insert(key, left);
-            }
+                JobState::RefundDue
+            };
+            emit("payout_failed", job_id);
+            return false;
         }
-        emit(if paid { "payout_done" } else { "payout_failed" }, job_id);
-        paid
+        if to_worker {
+            job.state = JobState::Released;
+            if let Some(worker) = job.worker.clone() {
+                let record = AttemptRecord {
+                    worker,
+                    outcome: Outcome::Paid,
+                    failed_rule: None,
+                    deliverable_hash: job.deliverable_hash.clone(),
+                    report_hash: job.report_hash.clone(),
+                    verdict_request_id: job.verdict_request_id,
+                };
+                job.history.push(record);
+            }
+        } else {
+            job.state = JobState::Refunded;
+            job.compute_budget = U128(0);
+        }
+        self.release_hold(&buyer, amount);
+        // A paid job's leftover compute budget goes back through `return_budget`, its own call
+        // with its own gas, so this callback stays small enough to always finish.
+        emit("payout_done", job_id);
+        true
+    }
+
+    /// Returns what is left of a paid job's compute budget to the buyer. Anyone can retry it if a
+    /// transfer failed.
+    pub fn return_budget(&mut self, job_id: JobId) -> Promise {
+        let job = self.job(job_id);
+        require!(job.state == JobState::Released, "job has not been paid");
+        require!(job.compute_budget.0 > 0, "nothing is left to return");
+        self.start_budget_return(job_id)
+    }
+
+    #[private]
+    pub fn on_budget_returned(&mut self, job_id: JobId, amount: U128) -> bool {
+        let sent = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
+        if !sent {
+            let job = self.job_mut(job_id);
+            job.compute_budget = U128(job.compute_budget.0.saturating_add(amount.0));
+        }
+        sent
     }
 
     // ---- Views ----
@@ -923,7 +1050,7 @@ impl Escrow {
         self.jobs.get(&job_id).cloned()
     }
 
-    /// Jobs with ids from `from_id`, at most `limit` (capped at 50). Cancelled jobs are skipped.
+    /// Jobs with ids from `from_id`, at most `limit` (capped at 50).
     pub fn get_jobs(&self, from_id: JobId, limit: u64) -> Vec<(JobId, Job)> {
         let end = from_id.saturating_add(limit.min(50)).min(self.next_id);
         (from_id..end)
@@ -936,33 +1063,53 @@ impl Escrow {
         self.job(job_id).secrets_profile(job_id, kind)
     }
 
+    /// What a new job with this many attempts must bring for runs, in yoctoNEAR.
+    pub fn get_budget_for(&self, max_attempts: u32) -> U128 {
+        U128(budget_for(max_attempts, self.run_deposit).as_yoctonear())
+    }
+
     pub fn get_config(&self) -> Config {
         Config {
             owner: self.owner.clone(),
             outlayer: self.outlayer.clone(),
+            board: self.board.clone(),
             verifier_url: self.verifier_url.clone(),
             verifier_hash: self.verifier_hash.clone(),
             secrets_owner: self.secrets_owner.clone(),
-            tokens: self.tokens.clone(),
             next_job_id: self.next_id,
             paused: self.paused,
+            run_deposit: U128(self.run_deposit.as_yoctonear()),
             caps: self.caps.clone(),
         }
     }
 }
 
 impl Escrow {
-    fn cap_mut(&mut self, token: Option<&AccountId>) -> &mut AssetCap {
+    fn near_cap(&mut self) -> &mut AssetCap {
         self.caps
             .iter_mut()
-            .find(|cap| cap.token.as_ref() == token)
-            .unwrap_or_else(|| env::panic_str("this asset has no cap"))
+            .find(|cap| cap.token.is_none())
+            .unwrap_or_else(|| env::panic_str("NEAR has no cap"))
     }
 
     fn require_owner(&self) {
         require!(
             env::predecessor_account_id() == self.owner,
             "only the owner can do this"
+        );
+    }
+
+    fn require_board(&self) {
+        require!(
+            self.board.as_ref() == Some(&env::predecessor_account_id()),
+            "only the board can do this"
+        );
+    }
+
+    fn require_payout_gas() {
+        require!(
+            env::prepaid_gas() >= MIN_PREPAID_GAS_FOR_PAYOUT,
+            "attach at least 50 Tgas"
         );
     }
 
@@ -978,35 +1125,9 @@ impl Escrow {
             .unwrap_or_else(|| env::panic_str("job not found"))
     }
 
-    fn lock_payment(
-        &mut self,
-        job_id: JobId,
-        payer: &AccountId,
-        token: Option<&AccountId>,
-        amount: u128,
-    ) {
-        let now = env::block_timestamp();
-        let job = self.job_mut(job_id);
-        require!(*payer == job.buyer, "only the buyer can fund");
-        require!(job.token.as_ref() == token, "pay in the job's token");
-        require!(
-            job.state == JobState::Challenged,
-            "job is not ready to fund: the check must pass its challenge first"
-        );
-        require!(amount == job.amount.0, "pay exactly the job amount");
-        // Funding at the last moment would use up the worker's one attempt with no time to do the work.
-        require!(
-            job.deadline.0 >= now.saturating_add(MIN_TIME_AFTER_FUNDING_NANOS),
-            "the job must leave at least 30 minutes after funding"
-        );
-        // A job from before public formats can never get a verdict, so it must not take money.
-        require!(
-            job.format_hash.len() == 64,
-            "this job has no public format"
-        );
-        job.state = JobState::Funded;
-        require!(!self.paused, "new funding is paused");
-        let cap = self.cap_mut(token);
+    /// Counts a new job's payment against the caps.
+    fn hold(&mut self, buyer: &AccountId, amount: u128) {
+        let cap = self.near_cap();
         require!(amount <= cap.max_job.0, "amount is over the per-job cap");
         let held = cap.held.0.saturating_add(amount);
         require!(
@@ -1015,7 +1136,7 @@ impl Escrow {
         );
         cap.held = U128(held);
         let per_buyer = cap.max_held_per_buyer.0;
-        let key = (payer.clone(), token.cloned());
+        let key = (buyer.clone(), None);
         let by_buyer = self
             .held_by_buyer
             .get(&key)
@@ -1027,30 +1148,91 @@ impl Escrow {
             "this would pass this buyer's cap on money held"
         );
         self.held_by_buyer.insert(key, by_buyer);
-        emit("job_funded", job_id);
     }
 
-    /// Starts one OutLayer run of the job's pinned verifier on the job's own hashes, and chains
-    /// the private callback that is the only way a result can be recorded.
+    fn release_hold(&mut self, buyer: &AccountId, amount: u128) {
+        let cap = self.near_cap();
+        cap.held = U128(cap.held.0.saturating_sub(amount));
+        let key = (buyer.clone(), None);
+        let left = self
+            .held_by_buyer
+            .get(&key)
+            .copied()
+            .unwrap_or(0)
+            .saturating_sub(amount);
+        if left == 0 {
+            self.held_by_buyer.remove(&key);
+        } else {
+            self.held_by_buyer.insert(key, left);
+        }
+    }
+
+    /// After an attempt ended without a pass.
+    fn reopen_or_refund(&mut self, job_id: JobId, now: u64) -> Option<Promise> {
+        let job = self.job_mut(job_id);
+        if job.can_reopen(now) {
+            job.state = JobState::Open;
+            emit("job_reopened", job_id);
+            None
+        } else {
+            job.state = JobState::RefundDue;
+            Some(self.start_refund(job_id))
+        }
+    }
+
+    /// Returns the payment and what is left of the compute budget to the buyer, in one transfer.
+    fn start_refund(&mut self, job_id: JobId) -> Promise {
+        Self::require_payout_gas();
+        let job = self.job_mut(job_id);
+        require!(job.state == JobState::RefundDue, "no refund is due");
+        job.state = JobState::Refunding;
+        let total = NearToken::from_yoctonear(job.amount.0.saturating_add(job.compute_budget.0));
+        let buyer = job.buyer.clone();
+        emit("payout_started", job_id);
+        Promise::new(buyer).transfer(total).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_PAYOUT_CALLBACK)
+                .on_payout(job_id, false),
+        )
+    }
+
+    /// Sends the rest of the compute budget to the buyer, counted out first so it cannot go twice.
+    fn start_budget_return(&mut self, job_id: JobId) -> Promise {
+        let job = self.job_mut(job_id);
+        let amount = job.compute_budget;
+        job.compute_budget = U128(0);
+        Promise::new(job.buyer.clone())
+            .transfer(NearToken::from_yoctonear(amount.0))
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(GAS_FOR_PAYOUT_CALLBACK)
+                    .on_budget_returned(job_id, amount),
+            )
+    }
+
+    /// Starts one OutLayer run of the job's pinned verifier on the job's own hashes, paid from its
+    /// compute budget, and chains the private callback that is the only way a result can be
+    /// recorded.
     fn start_run(&mut self, job_id: JobId, kind: RunKind, running: JobState) -> Promise {
-        let deposit = env::attached_deposit();
-        require!(
-            deposit >= MIN_RUN_DEPOSIT && deposit <= MAX_RUN_DEPOSIT,
-            "attach between 0.1 and 1 NEAR for OutLayer; the unused part comes back"
-        );
         require!(
             env::prepaid_gas() >= MIN_PREPAID_GAS_FOR_RUN,
             "attach at least 150 Tgas"
         );
+        let deposit = self.run_deposit;
         let now = env::block_timestamp();
         let escrow = env::current_account_id();
-        let payer = env::predecessor_account_id();
         let outlayer = self.outlayer.clone();
         let job = self.job_mut(job_id);
+        require!(
+            job.compute_budget.0 >= deposit.as_yoctonear(),
+            "the compute budget is used up: the buyer can top it up"
+        );
+        job.compute_budget = U128(job.compute_budget.0 - deposit.as_yoctonear());
         job.state = running;
         job.attempt = job.attempt.saturating_add(1);
         job.run_started_at = Some(U64(now));
         let attempt = job.attempt;
+        let buyer = job.buyer.clone();
         let args = json!({
             "source": { "WasmUrl": { "url": job.verifier_url, "hash": job.verifier_hash, "build_target": BUILD_TARGET } },
             "input_data": job.run_input(job_id, kind, &escrow),
@@ -1061,12 +1243,12 @@ impl Escrow {
             },
             "secrets_ref": { "profile": job.secrets_profile(job_id, kind), "account_id": job.secrets_owner },
             "response_format": "Json",
-            // OutLayer returns unused NEAR straight to whoever triggered this run.
-            "payer_account_id": payer,
+            // OutLayer returns the unused part of the deposit straight to the buyer, who paid it.
+            "payer_account_id": buyer,
         });
         emit("run_started", job_id);
         Promise::new(outlayer)
-            .refund_to(payer)
+            .refund_to(buyer)
             .function_call_weight(
                 "request_execution",
                 args.to_string().into_bytes(),
@@ -1080,48 +1262,6 @@ impl Escrow {
                     .with_unused_gas_weight(0)
                     .on_run_result(job_id, attempt, kind),
             )
-    }
-
-    fn start_payout(
-        &mut self,
-        job_id: JobId,
-        from: JobState,
-        pending: JobState,
-        done: JobState,
-        to_worker: bool,
-    ) -> Promise {
-        require!(
-            env::prepaid_gas() >= MIN_PREPAID_GAS_FOR_PAYOUT,
-            "attach at least 50 Tgas"
-        );
-        let job = self.job_mut(job_id);
-        require!(
-            job.state == from,
-            match from {
-                JobState::Passed => "job has not passed",
-                JobState::Failed => "job has not failed",
-                _ => "job cannot be paid out now",
-            }
-        );
-        job.state = pending;
-        let receiver = if to_worker {
-            job.worker.clone()
-        } else {
-            job.buyer.clone()
-        };
-        let transfer = match job.token.clone() {
-            None => Promise::new(receiver).transfer(NearToken::from_yoctonear(job.amount.0)),
-            Some(token) => ext_ft::ext(token)
-                .with_attached_deposit(ONE_YOCTO)
-                .with_static_gas(GAS_FOR_FT_TRANSFER)
-                .ft_transfer(receiver, job.amount, Some(format!("Proven job {job_id}"))),
-        };
-        emit("payout_started", job_id);
-        transfer.then(
-            Self::ext(env::current_account_id())
-                .with_static_gas(GAS_FOR_PAYOUT_CALLBACK)
-                .on_payout(job_id, done, from),
-        )
     }
 }
 

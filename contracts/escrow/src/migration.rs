@@ -1,17 +1,9 @@
-//! The layout of the version already deployed on mainnet, read once by `migrate`.
+//! The layout of the version deployed on mainnet before one-signature jobs, read once by `migrate`.
 
-use crate::{Job, JobId, JobState, StorageKey};
+use crate::{AssetCap, Job, JobId, JobState, Release, StorageKey};
 use near_sdk::json_types::{U128, U64};
 use near_sdk::store::LookupMap;
 use near_sdk::{near, AccountId, NearToken};
-
-#[near(serializers = [borsh])]
-pub(crate) struct OldCap {
-    pub token: Option<AccountId>,
-    pub max_job: U128,
-    pub max_held: U128,
-    pub held: U128,
-}
 
 #[near(serializers = [borsh])]
 pub(crate) struct OldEscrow {
@@ -24,7 +16,51 @@ pub(crate) struct OldEscrow {
     pub jobs: LookupMap<JobId, OldJob>,
     pub next_id: JobId,
     pub paused: bool,
-    pub caps: Vec<OldCap>,
+    pub caps: Vec<AssetCap>,
+    pub held_by_buyer: LookupMap<(AccountId, Option<AccountId>), u128>,
+}
+
+/// The earlier job's state names, in their earlier order.
+#[near(serializers = [borsh])]
+#[derive(Clone, Copy)]
+pub(crate) enum OldState {
+    Draft,
+    Challenging,
+    CheckRejected,
+    Challenged,
+    Funded,
+    Delivered,
+    Verifying,
+    Passed,
+    Failed,
+    Releasing,
+    Refunding,
+    Expiring,
+    Released,
+    Refunded,
+    Expired,
+}
+
+impl OldState {
+    fn upgraded(self) -> JobState {
+        match self {
+            Self::Draft => JobState::Draft,
+            Self::Challenging => JobState::Challenging,
+            Self::CheckRejected => JobState::CheckRejected,
+            Self::Challenged => JobState::Challenged,
+            Self::Funded => JobState::Funded,
+            Self::Delivered => JobState::Delivered,
+            Self::Verifying => JobState::Verifying,
+            Self::Passed => JobState::Passed,
+            Self::Failed => JobState::Failed,
+            Self::Releasing => JobState::Releasing,
+            Self::Refunding => JobState::Refunding,
+            Self::Expiring => JobState::Expiring,
+            Self::Released => JobState::Released,
+            Self::Refunded => JobState::Refunded,
+            Self::Expired => JobState::Expired,
+        }
+    }
 }
 
 #[near(serializers = [borsh])]
@@ -35,12 +71,13 @@ pub(crate) struct OldJob {
     pub amount: U128,
     pub spec_hash: String,
     pub fakes_hash: String,
+    pub format_hash: String,
     pub verifier_url: String,
     pub verifier_hash: String,
     pub secrets_owner: AccountId,
     pub deadline: U64,
     pub verdict_window_secs: u32,
-    pub state: JobState,
+    pub state: OldState,
     pub storage_deposit: NearToken,
     pub attempt: u32,
     pub run_started_at: Option<U64>,
@@ -56,21 +93,28 @@ pub(crate) struct OldJob {
 }
 
 impl OldJob {
+    /// An earlier job had one named worker and one attempt, and no compute budget.
     pub(crate) fn upgraded(self) -> Job {
         Job {
             buyer: self.buyer,
-            worker: self.worker,
+            worker: Some(self.worker),
             token: self.token,
             amount: self.amount,
             spec_hash: self.spec_hash,
             fakes_hash: self.fakes_hash,
-            format_hash: String::new(),
+            format_hash: self.format_hash,
             verifier_url: self.verifier_url,
             verifier_hash: self.verifier_hash,
             secrets_owner: self.secrets_owner,
+            release: Release::Verdict,
+            compute_budget: U128(0),
+            expires_at: self.deadline,
+            deliver_secs: 0,
             deadline: self.deadline,
             verdict_window_secs: self.verdict_window_secs,
-            state: self.state,
+            max_attempts: 1,
+            history: Vec::new(),
+            state: self.state.upgraded(),
             storage_deposit: self.storage_deposit,
             attempt: self.attempt,
             run_started_at: self.run_started_at,
@@ -94,3 +138,6 @@ pub(crate) fn job_key(id: JobId) -> Vec<u8> {
     key.extend(near_sdk::borsh::to_vec(&id).unwrap_or_default());
     key
 }
+
+#[allow(dead_code)]
+const _: Option<(U64, NearToken)> = None;
