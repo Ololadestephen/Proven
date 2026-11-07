@@ -539,3 +539,38 @@
   border-color: #f0d6d8;
   background: var(--coral-light);
 }
+
+/* Collected files remain plain text; only the display can be pretty-printed. */
+.workspace-app .collected-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+}
+.workspace-app .collected-fingerprint {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.workspace-app .collected-matches {
+  color: var(--green);
+}
+.workspace-app .collected-toggle {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.workspace-app .collected-toggle input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--purple);
+}
+.workspace-app .collected-copy-status {
+  color: var(--green);
+  font-size: 12px;
+}

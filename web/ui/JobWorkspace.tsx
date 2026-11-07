@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CollectedWork } from "./CollectedWork.tsx";
 import {
   nextStep,
   showNear,
@@ -10,7 +11,7 @@ import { recall, short } from "./market-client.ts";
 import { performJobAction, resendDelivery } from "./job-actions.ts";
 import { jobProgress, workerProgress } from "./job-progress.ts";
 import { noteFor, roleOf, stepForViewer } from "./role-steps.ts";
-import { COIN, IS_MAINNET, OUTLAYER_API } from "./network.ts";
+import { COIN, IS_MAINNET, NETWORK, OUTLAYER_API } from "./network.ts";
 export function JobWorkspace({
   bid,
   market,
@@ -356,11 +357,8 @@ export function JobWorkspace({
             : "No delivery has been recorded yet."}
         </p>
       ) : null}
-      {collected !== null ? (
-        <div className="market-collected">
-          <strong>The delivered work, as untrusted text</strong>
-          <pre className="market-pre">{collected}</pre>
-        </div>
+      {collected !== null && job ? (
+        <CollectedWork bid={bid} job={job} text={collected} network={NETWORK} />
       ) : null}
     </article>
   );
