@@ -9,6 +9,7 @@
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts upgrade <wasm>
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts board <wasm>
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts relay
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts one-signature <escrow.wasm> <board.wasm>
 // Add --dry-run to read the chain and print the writes without sending any.
 // Each one-time step is recorded before it runs, and an unknown outcome stops rather than repeats.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -595,6 +596,108 @@ async function setupRelay() {
   );
 }
 
+/** The one-signature upgrade of both contracts: pause, the escrow's code and migration in one
+ * transaction, the board's code and migration in one transaction, then unpause. The escrow refuses to
+ * migrate while it holds money or has an unfinished job. */
+const RUN_DEPOSIT = 10n ** 22n; // 0.01 NEAR per run; OutLayer quoted 0.007 for these limits.
+async function upgradeOneSignature(escrowWasm: string, boardWasm: string) {
+  const escrowId = env.MAINNET_ESCROW_ACCOUNT_ID;
+  const boardId = env.MAINNET_BOARD_ACCOUNT_ID;
+  if (!escrowId || !boardId || !escrowWasm || !boardWasm)
+    throw new PublicError("Name both accounts and both wasm files.");
+  const plans: Array<{ id: string; code: Buffer }> = [
+    { id: escrowId, code: readFileSync(escrowWasm) },
+    { id: boardId, code: readFileSync(boardWasm) },
+  ];
+  const config = (await provider.callFunction({
+    contractId: escrowId,
+    method: "get_config",
+    args: {},
+  })) as { owner: string; caps: Array<{ held: string }>; next_job_id: number };
+  if (config.owner !== env.MAINNET_OPS_ACCOUNT_ID)
+    throw new PublicError("The escrow's owner is not the ops account.");
+  if (config.caps.some((cap) => BigInt(cap.held) !== 0n))
+    throw new PublicError(
+      "The escrow holds money. Upgrade only when it holds none.",
+    );
+  const report: Record<string, unknown> = {};
+  for (const plan of plans) {
+    const view = await provider.viewAccount({ accountId: plan.id });
+    // New code plus what the state already uses, plus room for gas held during the migration.
+    const current = (await provider.query({
+      request_type: "view_code",
+      account_id: plan.id,
+      finality: "final",
+    })) as unknown as { code_base64: string };
+    const stateBytes =
+      BigInt(view.storage_usage) -
+      BigInt(Buffer.from(current.code_base64, "base64").length);
+    const needed =
+      (BigInt(plan.code.length) + stateBytes) * YOCTO_PER_BYTE +
+      5n * 10n ** 22n;
+    const short = needed - BigInt(view.amount);
+    report[plan.id] = {
+      new_code_bytes: plan.code.length,
+      state_bytes: Number(stateBytes),
+      balance_near: Number(view.amount) / 1e24,
+      needs_near: Number(needed) / 1e24,
+      add_near_first: short > 0n ? Number(short) / 1e24 : 0,
+    };
+    if (!dry && short > 0n)
+      throw new PublicError(`${plan.id} needs more NEAR for its new code.`);
+  }
+  if (dry) {
+    console.log(
+      JSON.stringify({
+        ...report,
+        writes_in_order: [
+          "set_paused true on the escrow (ops)",
+          `escrow: deploy and migrate({ board: ${boardId}, run_deposit: 0.01 NEAR }) in one transaction`,
+          "board: deploy and migrate() in one transaction",
+          `escrow: set_secrets_owner stays ${env.MAINNET_RELAY_ACCOUNT_ID}`,
+          "set_paused false on the escrow (ops)",
+        ],
+      }),
+    );
+  }
+  const ops = dry ? null : account("MAINNET_OPS");
+  const ownerCall = (method: string, args: Record<string, unknown>) =>
+    ops!.callFunctionRaw({
+      contractId: escrowId,
+      methodName: method,
+      args,
+      gas: 30_000_000_000_000n,
+    });
+  await once("onesig_pause", async () =>
+    settled(await ownerCall("set_paused", { paused: true })),
+  );
+  for (const [step, prefix, plan, args] of [
+    [
+      "onesig_escrow",
+      "MAINNET_ESCROW",
+      plans[0]!,
+      { board: boardId, run_deposit: RUN_DEPOSIT.toString() },
+    ],
+    ["onesig_board", "MAINNET_BOARD", plans[1]!, {}],
+  ] as const) {
+    await once(step, async () => {
+      const signerAccount = account(prefix);
+      return settled(
+        await signerAccount.signAndSendTransaction({
+          receiverId: plan.id,
+          actions: [
+            actions.deployContract(plan.code),
+            actions.functionCall("migrate", args, 40_000_000_000_000n, 0n),
+          ],
+        }),
+      );
+    });
+  }
+  await once("onesig_unpause", async () =>
+    settled(await ownerCall("set_paused", { paused: false })),
+  );
+}
+
 async function main() {
   const [command, argument] = process.argv
     .slice(2)
@@ -607,6 +710,11 @@ async function main() {
   if (command === "upgrade") return upgradeEscrow(argument);
   if (command === "board") return deployBoard(argument);
   if (command === "relay") return setupRelay();
+  if (command === "one-signature")
+    return upgradeOneSignature(
+      argument,
+      process.argv.filter((a) => a !== "--dry-run")[4] ?? "",
+    );
   if (command === "verify-config") {
     if (dry) {
       console.log("would read get_config from the escrow");

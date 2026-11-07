@@ -689,9 +689,10 @@ impl Board {
             _ => None,
         };
         if let Some(state) = ended {
+            // Also a bid closed before its review: the escrow has refunded it either way.
             if matches!(
                 bid.state,
-                BidState::Open | BidState::Claimed | BidState::Blocked
+                BidState::Unreviewed | BidState::Blocked | BidState::Open | BidState::Claimed
             ) {
                 bid.state = state;
                 bid.claim = None;

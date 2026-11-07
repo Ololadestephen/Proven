@@ -497,3 +497,14 @@ fn a_blocked_review_asks_the_escrow_to_refund_the_buyer() {
     assert_eq!(closes, 1);
     assert_eq!(board.get_bid(id).unwrap().state, BidState::Blocked);
 }
+
+#[test]
+fn closing_a_bid_before_its_review_still_ends_it() {
+    context(buyer(), NearToken::from_yoctonear(0));
+    let mut board = Board::new(escrow(), reviewer());
+    let id = posted(&mut board, 1, HASH);
+    callback(json_result(json!(7)));
+    board.on_job_created(id);
+    callback(job("Refunded", None, json!([])));
+    assert_eq!(board.on_sync(id, None), BidState::Closed);
+}
