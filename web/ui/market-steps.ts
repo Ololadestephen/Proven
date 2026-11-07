@@ -52,6 +52,9 @@ export interface MarketBid {
   claims_made: number;
   funded_attempts: number;
   fees?: string[];
+  /** The description is cut to its first line and the format removed, once the bid has ended. */
+  finished?: boolean;
+  storage_paid?: string;
   job: MarketJob | null;
   last_job: MarketJob | null;
 }

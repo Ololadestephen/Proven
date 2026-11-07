@@ -16,6 +16,9 @@ export interface KeptBid {
   state: string;
   claim: { agent: string } | null;
   fees?: string[];
+  job_id?: number | null;
+  storage_paid?: string;
+  finished?: boolean;
 }
 
 export type Nudge =
@@ -76,4 +79,18 @@ export function boardBehind(bid: KeptBid, job: KeptJob): boolean {
 
 function ended(job: KeptJob): boolean {
   return job.state === "Released" || job.state === "Refunded";
+}
+
+/** Whether a bid has ended with every fee settled and still holds storage its buyer can have back.
+ * Then the relay asks the escrow and the board to return it; both refuse if nothing is due. Earlier
+ * bids recorded no storage payment and are left alone. */
+export function storageDue(bid: KeptBid): boolean {
+  return (
+    ["Done", "Closed", "Cancelled"].includes(bid.state) &&
+    !bid.finished &&
+    BigInt(bid.storage_paid ?? "0") > 0n &&
+    (bid.fees ?? []).every(
+      (fee) => fee === "PaidToWorker" || fee === "ReturnedToBuyer",
+    )
+  );
 }

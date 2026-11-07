@@ -2,6 +2,7 @@
 import {
   boardBehind,
   nextNudge,
+  storageDue,
   type KeptBid,
   type KeptJob,
 } from "./keeper.ts";
@@ -85,6 +86,8 @@ export interface HandoffDependencies {
   trigger?(jobId: number, kind: RunKind): Promise<string>;
   /** Moves a job on once the chain allows it: pays out, expires, returns budget, syncs the board. */
   keep?(jobId: number, job: HandoffJob): Promise<void>;
+  /** Returns unused storage of bids and jobs that have ended. Anyone may; nothing is decided. */
+  finish?(): Promise<void>;
 }
 
 /** What the reveal rule reads about a bid. */
@@ -972,6 +975,7 @@ export async function startHandoffServer(
     await sweepSecrets(deps, directory, handle, cleaned);
     await handle({ action: "expire_pins" }, true);
     await sweepDeliveries(deps, directory);
+    await deps.finish?.().catch(() => undefined);
   };
   void sweep();
   setInterval(() => void sweep(), SWEEP_EVERY_MS).unref();
@@ -1163,6 +1167,43 @@ async function main(): Promise<void> {
         .catch(() => undefined);
   }
 
+  // Bids already handled, so each is asked about at most once per run of the relay.
+  const finishedBids = new Set<number>();
+  /** Gives back the storage of every ended bid and its job. Each call is one anyone could make, and
+   * the contract refuses it when nothing is due. */
+  async function finishEnded() {
+    if (!board || signingSuspended) return;
+    for (let from = 0; ; from += 50) {
+      const page = (await account.provider.callFunction({
+        contractId: board,
+        method: "get_bids",
+        args: { from_id: from, limit: 50 },
+      })) as Array<[number, KeptBid]>;
+      for (const [bidId, bid] of page) {
+        if (finishedBids.has(bidId) || !storageDue(bid)) continue;
+        finishedBids.add(bidId);
+        if (bid.job_id != null)
+          await near
+            .nudge(account, config.escrowContract, "finish_storage", {
+              job_id: bid.job_id,
+            })
+            .catch((error: Error) =>
+              console.error(
+                `keeper: job ${bid.job_id} finish_storage: ${String(error.message).slice(0, 200)}`,
+              ),
+            );
+        await near
+          .nudge(account, board, "finish_bid", { bid_id: bidId })
+          .catch((error: Error) =>
+            console.error(
+              `keeper: bid ${bidId} finish_bid: ${String(error.message).slice(0, 200)}`,
+            ),
+          );
+      }
+      if (page.length < 50) break;
+    }
+  }
+
   async function signing<T>(call: () => Promise<T>): Promise<T> {
     inFlight = null;
     try {
@@ -1281,6 +1322,7 @@ async function main(): Promise<void> {
       demoCompute,
       trigger: (jobId, kind) => near.triggerRun(account, config, jobId, kind),
       keep: (jobId, job) => keepOne(jobId, job),
+      finish: () => finishEnded(),
       allowedBuyers: marketAccess(process.env.PROVEN_MARKET_ACCESS),
       isSigningSuspended: () => signingSuspended,
       reconcile,

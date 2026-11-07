@@ -65,6 +65,7 @@ export function JobWorkspace({
     });
 
   const record = market.buyer_records?.[bid.buyer];
+  const workerRecord = worker ? market.agent_records?.[worker] : undefined;
   const ended = ["Done", "Closed", "Cancelled"].includes(bid.state);
   const revealed = ended ? (
     <p>
@@ -209,10 +210,18 @@ export function JobWorkspace({
       {tab === "brief" ? (
         <>
           <p className="market-description">{bid.description}</p>
-          <details>
-            <summary>Public format: every field a check may look at</summary>
-            <pre className="market-pre">{bid.format}</pre>
-          </details>
+          {bid.finished ? (
+            <p className="post-hint">
+              This bid has ended and its storage went back to the buyer. The
+              full description and format stay in the transaction that posted
+              it; their hashes are below.
+            </p>
+          ) : (
+            <details>
+              <summary>Public format: every field a check may look at</summary>
+              <pre className="market-pre">{bid.format}</pre>
+            </details>
+          )}
           <p>
             Bid ends{" "}
             {new Date(
@@ -229,6 +238,15 @@ export function JobWorkspace({
             Buyer: {bid.buyer}.{" "}
             {worker ? `Worker: ${worker}.` : "No worker has claimed this job."}
           </p>
+          {workerRecord ? (
+            <p>
+              This worker’s record, from the chain: {workerRecord.paid} paid,{" "}
+              {workerRecord.failed} failed the check,{" "}
+              {workerRecord.failed_format} did not fit the format,{" "}
+              {workerRecord.no_delivery} not delivered,{" "}
+              {workerRecord.no_verdict} with no verdict.
+            </p>
+          ) : null}
           <details>
             <summary>What each side is protected from</summary>
             <p>

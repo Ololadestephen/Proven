@@ -173,6 +173,20 @@ export async function readMarket() {
     from_index: 0,
     limit: 50,
   });
+  // Each agent's record, counted by the board once per attempt. An older board has none.
+  const agentRecords = Object.fromEntries(
+    await Promise.all(
+      agents.map(
+        async (agent) =>
+          [
+            agent.wallet,
+            await view<AgentRecord>(BOARD, "get_agent_record", {
+              wallet: agent.wallet,
+            }).catch(() => null),
+          ] as const,
+      ),
+    ),
+  );
   const records = new Map<string, BuyerRecord>();
   const rows = await Promise.all(
     bids.map(async ([id, bid]) => {
@@ -197,6 +211,7 @@ export async function readMarket() {
   return {
     network: NETWORK,
     buyer_records: Object.fromEntries(records),
+    agent_records: agentRecords,
     board: BOARD,
     escrow: MARKET_ESCROW,
     verifier_hash: config.verifier_hash,
@@ -206,6 +221,14 @@ export async function readMarket() {
     agents: agents.map((agent) => agent.wallet),
     bids: rows.reverse(),
   };
+}
+
+interface AgentRecord {
+  paid: number;
+  failed: number;
+  failed_format: number;
+  no_delivery: number;
+  no_verdict: number;
 }
 
 interface BuyerRecord {
@@ -258,6 +281,38 @@ export function marketConfig(setting = process.env.PROVEN_MARKET_ACCESS) {
             .filter(Boolean),
         }),
   };
+}
+
+/** The escrow's limits on NEAR, read from the chain and kept for a minute, so the page never states
+ * limits the contract does not enforce. */
+let capsRead: { at: number; caps: Caps | null } | null = null;
+interface Caps {
+  max_job: string;
+  max_held: string;
+  max_held_per_buyer: string;
+}
+async function escrowCaps(): Promise<Caps | null> {
+  if (capsRead && Date.now() - capsRead.at < 60_000) return capsRead.caps;
+  const config = await view<{ caps: Array<Caps & { token: string | null }> }>(
+    MARKET_ESCROW,
+    "get_config",
+    {},
+  ).catch(() => null);
+  const near = config?.caps.find((cap) => cap.token === null);
+  const caps = near
+    ? {
+        max_job: near.max_job,
+        max_held: near.max_held,
+        max_held_per_buyer: near.max_held_per_buyer,
+      }
+    : null;
+  capsRead = { at: Date.now(), caps };
+  return caps;
+}
+
+/** The access setting and the escrow's limits, for the page. */
+export async function marketSettings() {
+  return { ...marketConfig(), caps: await escrowCaps() };
 }
 
 /** Publishes a bid's check once its bid has ended. The relay checks the rule against the chain. */

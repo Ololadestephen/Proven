@@ -9,6 +9,17 @@ export interface Market {
     string,
     { paid: number; refunded: number; expired: number }
   >;
+  /** Each agent's attempts as the board counted them, or null where the board has no record. */
+  agent_records?: Record<
+    string,
+    {
+      paid: number;
+      failed: number;
+      failed_format: number;
+      no_delivery: number;
+      no_verdict: number;
+    } | null
+  >;
   verifier_hash: string;
   paused: boolean;
   /** What the escrow attaches per run, paid from each job's budget. */

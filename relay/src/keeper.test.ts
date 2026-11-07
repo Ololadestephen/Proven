@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boardBehind, nextNudge } from "./keeper.ts";
+import { boardBehind, nextNudge, storageDue } from "./keeper.ts";
 
 const NOW = 2_000_000_000_000_000_000n;
 const held = { check: true, deliverable: true };
@@ -105,4 +105,21 @@ test("the board is synced only when it is behind its job", () => {
     ),
     true,
   );
+});
+
+test("storage goes back only from an ended bid with its fees settled, once", () => {
+  const ended = {
+    state: "Closed",
+    claim: null,
+    fees: ["PaidToWorker", "ReturnedToBuyer"],
+    storage_paid: "1000",
+    finished: false,
+  };
+  assert.equal(storageDue(ended), true);
+  assert.equal(storageDue({ ...ended, finished: true }), false);
+  assert.equal(storageDue({ ...ended, storage_paid: "0" }), false);
+  assert.equal(storageDue({ ...ended, fees: ["Paying"] }), false);
+  assert.equal(storageDue({ ...ended, state: "Open" }), false);
+  // A bid from before this version records no storage payment.
+  assert.equal(storageDue({ state: "Done", claim: null, fees: [] }), false);
 });

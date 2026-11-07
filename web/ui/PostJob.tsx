@@ -1,4 +1,4 @@
-import { canPost, COIN, NETWORK } from "./network.ts";
+import { canPost, COIN, MAX_JOB, NETWORK } from "./network.ts";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { requestReview, sendCheck } from "./job-actions.ts";
 import type { Market, Wallet } from "./market-types.ts";
@@ -37,7 +37,7 @@ function terms(draft: Draft) {
     new TextEncoder().encode(draft.description).length > 2048
   )
     throw new Error("The public description must contain 1 to 2,048 bytes.");
-  const amount = parseNearAmount(draft.amount);
+  const amount = parseNearAmount(draft.amount, MAX_JOB);
   if (!/^[1-7]$/.test(draft.days))
     throw new Error("A bid must end within 1 to 7 days.");
   if (!["1", "4", "12", "24"].includes(draft.deliverHours))
@@ -525,7 +525,11 @@ export function PostJob({
                   />
                   <span>{COIN}</span>
                 </div>
-                <span className="post-hint">Up to 0.1 NEAR.</span>
+                {MAX_JOB !== null ? (
+                  <span className="post-hint">
+                    Up to {Number(MAX_JOB / 10n ** 18n) / 1e6} {COIN}.
+                  </span>
+                ) : null}
               </div>
               <div className="post-field">
                 <span className="post-label">Bid stays open for</span>

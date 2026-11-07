@@ -12,7 +12,7 @@ import { demoRoute } from "./demo-routes.ts";
 import { loadJob } from "./evidence.ts";
 import {
   hostedRoute,
-  marketConfig,
+  marketSettings,
   revealRoute,
   createDevWallet,
   RateLimiter,
@@ -167,7 +167,7 @@ async function marketRoute(
   if (req.method === "GET") {
     if (path === "/api/market") return readMarketCached();
     if (path === "/api/market/sample") return sample();
-    if (path === "/api/market/config") return marketConfig();
+    if (path === "/api/market/config") return marketSettings();
     const reveal = /^\/api\/market\/reveal\/([0-9]+)$/.exec(path);
     if (reveal) return revealRoute(Number(reveal[1]));
     if (path.startsWith("/api/market/hosted/"))

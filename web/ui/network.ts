@@ -5,6 +5,11 @@ const config = (await fetch("/api/market/config")
   network?: string;
   open?: boolean;
   buyers?: string[];
+  caps?: {
+    max_job: string;
+    max_held: string;
+    max_held_per_buyer: string;
+  } | null;
 };
 
 export const NETWORK: "mainnet" | "testnet" =
@@ -14,9 +19,16 @@ export const IS_MAINNET = NETWORK === "mainnet";
 export const MARKET_OPEN = config.open !== false;
 export const canPost = (account: string | undefined) =>
   MARKET_OPEN || (!!account && (config.buyers ?? []).includes(account));
-/** Shown wherever the network is named. Mainnet is never shown without its caps. */
+const inNear = (yocto: string) => Number(BigInt(yocto) / 10n ** 18n) / 1e6;
+/** The most one job can pay, as the escrow enforces it. Unknown means the page cannot check it. */
+export const MAX_JOB: bigint | null = config.caps
+  ? BigInt(config.caps.max_job)
+  : null;
+/** Shown wherever the network is named. Mainnet is shown with its limits, read from the escrow. */
 export const NETWORK_LABEL = IS_MAINNET
-  ? "Mainnet · unaudited · at most 0.1 NEAR per job, 0.2 per buyer, 1 held in total"
+  ? config.caps
+    ? `Mainnet · unaudited · at most ${inNear(config.caps.max_job)} NEAR per job, ${inNear(config.caps.max_held_per_buyer)} per buyer, ${inNear(config.caps.max_held)} held in total`
+    : "Mainnet · unaudited"
   : "Testnet";
 export const COIN = IS_MAINNET ? "NEAR" : "testnet NEAR";
 export const OUTLAYER_API = IS_MAINNET

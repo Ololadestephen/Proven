@@ -10,6 +10,7 @@
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts board <wasm>
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts relay
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts one-signature <escrow.wasm> <board.wasm>
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts storage <escrow.wasm> <board.wasm>
 // Add --dry-run to read the chain and print the writes without sending any.
 // Each one-time step is recorded before it runs, and an unknown outcome stops rather than repeats.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -26,9 +27,10 @@ import { assertPolicy, custodyRead } from "../src/custody.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
 import { networkSettings } from "../src/network.ts";
 
-const MAX_JOB = 10n ** 23n; // 0.1 NEAR, enforced by the contract.
-const MAX_HELD = 10n ** 24n; // 1 NEAR, enforced by the contract.
-const MAX_HELD_PER_BUYER = 2n * 10n ** 23n; // 0.2 NEAR, enforced by the contract.
+// The owner's limits from November 7, enforced by the contract: two full jobs held, one per buyer.
+const MAX_JOB = 5n * 10n ** 24n; // 5 NEAR.
+const MAX_HELD = 10n * 10n ** 24n; // 10 NEAR.
+const MAX_HELD_PER_BUYER = 5n * 10n ** 24n; // 5 NEAR.
 const BUDGET = 66n * 10n ** 23n; // The owner's limit: stop above 6.6 NEAR across the new accounts.
 const YOCTO_PER_BYTE = 10n ** 19n;
 const STATE_ROOM_BYTES = 10_000n; // Room for the contract's records on top of its code.
@@ -601,6 +603,54 @@ async function setupRelay() {
  * migrate while it holds money or has an unfinished job. */
 const RUN_DEPOSIT = 10n ** 22n; // 0.01 NEAR per run; OutLayer quoted 0.007 for these limits.
 async function upgradeOneSignature(escrowWasm: string, boardWasm: string) {
+  return upgradeBoth("onesig", escrowWasm, boardWasm, {
+    escrow: {
+      board: env.MAINNET_BOARD_ACCOUNT_ID,
+      run_deposit: RUN_DEPOSIT.toString(),
+    },
+    board: {},
+  });
+}
+
+/** The storage-and-governance upgrade of both contracts: unused storage goes back when a job and its
+ * bid end, the board gets its owner (the ops account) and an on-chain list of who may post, starting
+ * closed with MAINNET_BOARD_BUYERS, and then the escrow takes the owner's limits of November 7. */
+async function upgradeStorage(escrowWasm: string, boardWasm: string) {
+  const buyers = (env.MAINNET_BOARD_BUYERS ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (!buyers.length)
+    throw new PublicError(
+      "Set MAINNET_BOARD_BUYERS in .env: the buyers who may post while the market is closed.",
+    );
+  await upgradeBoth("storage", escrowWasm, boardWasm, {
+    escrow: {},
+    board: { owner: env.MAINNET_OPS_ACCOUNT_ID, buyers },
+    after: {
+      method: "set_caps",
+      args: {
+        max_job: MAX_JOB.toString(),
+        max_held: MAX_HELD.toString(),
+        max_held_per_buyer: MAX_HELD_PER_BUYER.toString(),
+      },
+      says: "escrow: set_caps 5 NEAR per job, 10 held, 5 per buyer (ops)",
+    },
+  });
+}
+
+/** Pause, each contract's code and migration in one transaction, an optional owner call, then
+ * unpause. Refuses while the escrow holds money. */
+async function upgradeBoth(
+  name: string,
+  escrowWasm: string,
+  boardWasm: string,
+  migrate: {
+    escrow: Record<string, unknown>;
+    board: Record<string, unknown>;
+    after?: { method: string; args: Record<string, unknown>; says: string };
+  },
+) {
   const escrowId = env.MAINNET_ESCROW_ACCOUNT_ID;
   const boardId = env.MAINNET_BOARD_ACCOUNT_ID;
   if (!escrowId || !boardId || !escrowWasm || !boardWasm)
@@ -652,9 +702,9 @@ async function upgradeOneSignature(escrowWasm: string, boardWasm: string) {
         ...report,
         writes_in_order: [
           "set_paused true on the escrow (ops)",
-          `escrow: deploy and migrate({ board: ${boardId}, run_deposit: 0.01 NEAR }) in one transaction`,
-          "board: deploy and migrate() in one transaction",
-          `escrow: set_secrets_owner stays ${env.MAINNET_RELAY_ACCOUNT_ID}`,
+          `escrow: deploy and migrate(${JSON.stringify(migrate.escrow)}) in one transaction`,
+          `board: deploy and migrate(${JSON.stringify(migrate.board)}) in one transaction`,
+          ...(migrate.after ? [migrate.after.says] : []),
           "set_paused false on the escrow (ops)",
         ],
       }),
@@ -668,17 +718,12 @@ async function upgradeOneSignature(escrowWasm: string, boardWasm: string) {
       args,
       gas: 30_000_000_000_000n,
     });
-  await once("onesig_pause", async () =>
+  await once(`${name}_pause`, async () =>
     settled(await ownerCall("set_paused", { paused: true })),
   );
   for (const [step, prefix, plan, args] of [
-    [
-      "onesig_escrow",
-      "MAINNET_ESCROW",
-      plans[0]!,
-      { board: boardId, run_deposit: RUN_DEPOSIT.toString() },
-    ],
-    ["onesig_board", "MAINNET_BOARD", plans[1]!, {}],
+    [`${name}_escrow`, "MAINNET_ESCROW", plans[0]!, migrate.escrow],
+    [`${name}_board`, "MAINNET_BOARD", plans[1]!, migrate.board],
   ] as const) {
     await once(step, async () => {
       const signerAccount = account(prefix);
@@ -695,7 +740,12 @@ async function upgradeOneSignature(escrowWasm: string, boardWasm: string) {
       );
     });
   }
-  await once("onesig_unpause", async () =>
+  const after = migrate.after;
+  if (after)
+    await once(`${name}_${after.method}`, async () =>
+      settled(await ownerCall(after.method, after.args)),
+    );
+  await once(`${name}_unpause`, async () =>
     settled(await ownerCall("set_paused", { paused: false })),
   );
 }
@@ -714,6 +764,11 @@ async function main() {
   if (command === "relay") return setupRelay();
   if (command === "one-signature")
     return upgradeOneSignature(
+      argument,
+      process.argv.filter((a) => a !== "--dry-run")[4] ?? "",
+    );
+  if (command === "storage")
+    return upgradeStorage(
       argument,
       process.argv.filter((a) => a !== "--dry-run")[4] ?? "",
     );

@@ -71,18 +71,23 @@ test("routes separate overview, browse, role views, post and bid IDs", () => {
   assert.equal(completed({ ...bid, state: "Done" }), true);
 });
 test("NEAR amounts preserve yocto precision and reject rounded or malformed payments", () => {
-  assert.equal(parseNearAmount("0.000000000000000000000001"), 1n);
-  assert.equal(parseNearAmount("0.1"), 10n ** 23n);
+  const max = 5n * 10n ** 24n; // The escrow's limit, read from the chain.
+  assert.equal(parseNearAmount("0.000000000000000000000001", max), 1n);
+  assert.equal(parseNearAmount("0.1", max), 10n ** 23n);
+  assert.equal(parseNearAmount("5", max), max);
+  assert.throws(
+    () => parseNearAmount("5.000000000000000000000001", max),
+    /at most 5 NEAR/,
+  );
   for (const value of [
     "0",
     "-0.1",
-    "0.100000000000000000000001",
     "1e-2",
     "NaN",
     "0.0000000000000000000000001",
     "0.01 ",
   ])
-    assert.throws(() => parseNearAmount(value));
+    assert.throws(() => parseNearAmount(value, max));
 });
 test("synchronous gate blocks double clicks, unknown outcomes remain pending, unrelated updates do not unlock Create", () => {
   const gate = new ActionGate();
