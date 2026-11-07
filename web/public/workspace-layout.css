@@ -59,6 +59,7 @@
   margin-bottom: 36px;
 }
 .workspace-app .workspace-toolbar-actions {
+  align-items: center;
   justify-content: flex-end;
   min-width: 0;
 }
@@ -84,15 +85,29 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+.workspace-app .workspace-wallet {
+  display: flex;
+}
 .workspace-app .workspace-wallet .market-wallet {
   justify-content: flex-end;
   flex-wrap: wrap;
 }
 /* Connected: one button, with its menu floating below so the toolbar keeps its height. */
-.market-wallet details {
+.workspace-app .market-wallet details {
   position: relative;
+  display: flex;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
 }
-.market-wallet summary {
+.workspace-app .market-wallet summary,
+.workspace-app .wallet-menu .button {
+  line-height: 1.2;
+}
+.workspace-app .market-wallet summary {
+  display: inline-flex;
+  margin: 0;
   list-style: none;
   cursor: pointer;
 }
@@ -115,6 +130,9 @@
 }
 .wallet-menu p {
   margin: 0;
+}
+.wallet-menu .button {
+  width: 100%;
 }
 .workspace-app .workspace-toolbar .button {
   min-height: 38px;
