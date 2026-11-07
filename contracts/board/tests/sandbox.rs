@@ -69,7 +69,7 @@ async fn setup() -> anyhow::Result<Env> {
         .args_json(json!({
             "owner": owner.id(), "outlayer": outlayer.id(), "board": board.id(),
             "verifier_url": "https://example.test/verifier.wasm",
-            "verifier_hash": VERIFIER, "secrets_owner": owner.id(),
+            "verifier_hash": VERIFIER, "secrets_owner": stranger.id(),
             "run_deposit": RUN.to_string(),
             "max_job_amount": (1_000 * ONE_NEAR).to_string(), "max_held": (10_000 * ONE_NEAR).to_string(), "max_held_per_buyer": (10_000 * ONE_NEAR).to_string(),
         }))

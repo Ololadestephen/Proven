@@ -125,7 +125,7 @@ fn create(escrow: &mut Escrow) -> JobId {
 }
 
 fn challenging(escrow: &mut Escrow, id: JobId) {
-    call(stranger(), zero(), START);
+    call(relay(), zero(), START);
     let _ = escrow.request_challenge(id);
 }
 
@@ -227,7 +227,7 @@ const TRIGGERED_AT: u64 = START + 120 * SEC;
 
 fn verifying() -> (Escrow, JobId, u32) {
     let (mut escrow, id) = delivered();
-    call(stranger(), zero(), TRIGGERED_AT);
+    call(relay(), zero(), TRIGGERED_AT);
     let _ = escrow.request_verification(id);
     let attempt = escrow.get_job(id).unwrap().attempt;
     (escrow, id, attempt)
@@ -313,7 +313,7 @@ fn assert_no_verdict(result: PromiseResult) {
     );
     assert_eq!(job.run_started_at, None);
     // And it can be tried again.
-    call(stranger(), zero(), TRIGGERED_AT + SEC);
+    call(relay(), zero(), TRIGGERED_AT + SEC);
     let _ = escrow.request_verification(id);
     assert_eq!(state(&escrow, id), JobState::Verifying);
 }
@@ -472,7 +472,7 @@ fn an_oversized_failed_rule_is_no_verdict() {
 #[should_panic(expected = "job is not awaiting verification")]
 fn a_second_trigger_while_a_run_is_in_flight_is_refused() {
     let (mut escrow, id, _) = verifying();
-    call(stranger(), zero(), TRIGGERED_AT + SEC);
+    call(relay(), zero(), TRIGGERED_AT + SEC);
     let _ = escrow.request_verification(id);
 }
 
@@ -510,7 +510,7 @@ fn a_trigger_after_a_verdict_is_refused() {
         &verify_output(id, true),
         TRIGGERED_AT
     ));
-    call(stranger(), zero(), TRIGGERED_AT + SEC);
+    call(relay(), zero(), TRIGGERED_AT + SEC);
     let _ = escrow.request_verification(id);
 }
 
@@ -519,7 +519,7 @@ fn a_run_whose_callback_never_came_can_be_triggered_again_and_the_late_callback_
     let (mut escrow, id, first) = verifying();
     // The first callback ran out of gas, say: it never recorded anything.
     let stale = TRIGGERED_AT + RUN_TIMEOUT_NANOS + 1;
-    call(stranger(), zero(), stale);
+    call(relay(), zero(), stale);
     let _ = escrow.request_verification(id);
     let second = escrow.get_job(id).unwrap().attempt;
     assert_eq!(second, first + 1);
@@ -548,7 +548,7 @@ fn a_run_whose_callback_never_came_can_be_triggered_again_and_the_late_callback_
 #[should_panic(expected = "job is not awaiting verification")]
 fn a_run_cannot_be_retriggered_before_it_is_stale() {
     let (mut escrow, id, _) = verifying();
-    call(stranger(), zero(), TRIGGERED_AT + RUN_TIMEOUT_NANOS);
+    call(relay(), zero(), TRIGGERED_AT + RUN_TIMEOUT_NANOS);
     let _ = escrow.request_verification(id);
 }
 
@@ -558,7 +558,7 @@ fn a_run_cannot_be_retriggered_before_it_is_stale() {
 #[should_panic(expected = "the verdict window has closed")]
 fn a_trigger_after_the_window_is_refused() {
     let (mut escrow, id) = delivered();
-    call(stranger(), zero(), WINDOW_END + 1);
+    call(relay(), zero(), WINDOW_END + 1);
     let _ = escrow.request_verification(id);
 }
 
@@ -566,14 +566,14 @@ fn a_trigger_after_the_window_is_refused() {
 #[should_panic(expected = "the verdict window has closed")]
 fn a_stale_run_cannot_be_retriggered_after_the_window() {
     let (mut escrow, id, _) = verifying();
-    call(stranger(), zero(), WINDOW_END + RUN_TIMEOUT_NANOS + 1);
+    call(relay(), zero(), WINDOW_END + RUN_TIMEOUT_NANOS + 1);
     let _ = escrow.request_verification(id);
 }
 
 #[test]
 fn a_result_for_a_run_started_in_the_window_counts_even_if_it_lands_after_it() {
     let (mut escrow, id) = delivered();
-    call(stranger(), zero(), WINDOW_END);
+    call(relay(), zero(), WINDOW_END);
     let _ = escrow.request_verification(id);
     let attempt = escrow.get_job(id).unwrap().attempt;
     assert!(returned_json(
@@ -591,7 +591,7 @@ fn a_result_for_a_run_started_in_the_window_counts_even_if_it_lands_after_it() {
 #[should_panic(expected = "job has not expired")]
 fn a_run_in_flight_blocks_expiry_until_it_is_stale() {
     let (mut escrow, id) = delivered();
-    call(stranger(), zero(), WINDOW_END);
+    call(relay(), zero(), WINDOW_END);
     let _ = escrow.request_verification(id);
     call(stranger(), zero(), WINDOW_END + RUN_TIMEOUT_NANOS);
     let _ = escrow.expire(id);
@@ -674,7 +674,7 @@ fn a_stale_challenge_callback_cannot_accept_or_reject_the_check() {
 // ---- Triggering ----
 
 #[test]
-fn anyone_can_trigger_a_run() {
+fn the_worker_can_start_its_own_verification() {
     let (mut escrow, id) = delivered();
     call(worker(), zero(), TRIGGERED_AT);
     let _ = escrow.request_verification(id);
@@ -682,10 +682,37 @@ fn anyone_can_trigger_a_run() {
 }
 
 #[test]
+#[should_panic(expected = "only the relay or the job's worker can start verification")]
+fn the_buyer_cannot_spend_the_budget_on_verification_runs() {
+    let (mut escrow, id) = delivered();
+    call(buyer(), zero(), TRIGGERED_AT);
+    let _ = escrow.request_verification(id);
+}
+
+#[test]
+#[should_panic(expected = "only the relay or the buyer can start the challenge")]
+fn a_stranger_cannot_spend_the_budget_on_challenge_runs() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    call(stranger(), zero(), START);
+    let _ = escrow.request_challenge(id);
+}
+
+#[test]
+#[should_panic(expected = "this job has finished")]
+fn a_finished_job_takes_no_top_up() {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    escrow.jobs.get_mut(&id).unwrap().state = JobState::Expired;
+    call(buyer(), RUN, START);
+    escrow.top_up(id);
+}
+
+#[test]
 #[should_panic(expected = "attach at least 150 Tgas")]
 fn a_run_needs_enough_gas_to_guarantee_its_callback() {
     let (mut escrow, id) = delivered();
-    testing_env!(context(stranger(), zero(), TRIGGERED_AT)
+    testing_env!(context(relay(), zero(), TRIGGERED_AT)
         .prepaid_gas(Gas::from_tgas(149))
         .build());
     let _ = escrow.request_verification(id);
@@ -695,7 +722,7 @@ fn a_run_needs_enough_gas_to_guarantee_its_callback() {
 #[should_panic(expected = "job is not awaiting verification")]
 fn a_job_with_no_delivery_cannot_be_verified() {
     let (mut escrow, id) = funded();
-    call(stranger(), zero(), TRIGGERED_AT);
+    call(relay(), zero(), TRIGGERED_AT);
     let _ = escrow.request_verification(id);
 }
 
@@ -1007,7 +1034,7 @@ fn a_verdict_for_a_different_format_is_no_verdict() {
 // ---- One-signature jobs: creating, assigning, paying for runs, reopening, closing ----
 
 fn verify_returns(escrow: &mut Escrow, id: JobId, pass: bool, at: u64) {
-    call(stranger(), zero(), at);
+    call(relay(), zero(), at);
     let _ = escrow.request_verification(id);
     let attempt = escrow.get_job(id).unwrap().attempt;
     assert!(returned_json(
@@ -1425,7 +1452,7 @@ fn a_failed_attempt_after_the_job_ended_refunds_instead_of_reopening() {
 fn a_late_verdict_from_an_earlier_worker_is_ignored_after_the_job_reopens() {
     let (mut escrow, id) = funded_with(2);
     deliver(&mut escrow, id, DELIVERED_AT);
-    call(stranger(), zero(), TRIGGERED_AT);
+    call(relay(), zero(), TRIGGERED_AT);
     let _ = escrow.request_verification(id);
     let old_run = escrow.get_job(id).unwrap().attempt;
     // The run is lost; the window passes and the attempt expires.

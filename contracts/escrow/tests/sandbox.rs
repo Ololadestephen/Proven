@@ -258,7 +258,7 @@ async fn the_run_uses_exactly_what_the_job_fixed() -> anyhow::Result<()> {
     );
     assert_eq!(request["response_format"], "Json");
     assert_eq!(request["predecessor"], env.escrow.id().as_str());
-    assert_eq!(request["signer"], env.stranger.id().as_str());
+    assert_eq!(request["signer"], env.secrets_owner.id().as_str());
     // OutLayer returns the unused deposit to the buyer, who paid for it through the budget.
     assert_eq!(request["payer_account_id"], env.buyer.id().as_str());
     Ok(())
@@ -321,7 +321,7 @@ async fn a_run_needs_enough_gas_and_a_budget() -> anyhow::Result<()> {
     behave(&env, "pass").await?;
     let args = json!({ "job_id": id });
     let low = env
-        .stranger
+        .secrets_owner
         .call(env.escrow.id(), "request_verification")
         .args_json(args)
         .deposit(NO_DEPOSIT)
@@ -341,7 +341,7 @@ async fn a_second_trigger_is_refused_while_a_run_is_in_flight_and_one_verdict_is
     behave(&env, "hold").await?;
     // The call stays open until the held run resolves, so send it without waiting.
     let pending = env
-        .stranger
+        .secrets_owner
         .call(env.escrow.id(), "request_verification")
         .args_json(json!({ "job_id": id }))
         .deposit(NO_DEPOSIT)
@@ -380,7 +380,7 @@ async fn a_run_that_times_out_is_no_verdict_and_the_job_then_expires_to_the_buye
     let id = delivered_near_job(&env, 3_600).await?;
     behave(&env, "hold").await?;
     let pending = env
-        .stranger
+        .secrets_owner
         .call(env.escrow.id(), "request_verification")
         .args_json(json!({ "job_id": id }))
         .deposit(NO_DEPOSIT)
@@ -570,7 +570,7 @@ async fn an_exhausted_callback_keeps_the_job_retriable_then_expirable() -> anyho
     let id = delivered_near_job(&env, 3_600).await?;
     behave(&env, "hold").await?;
     let pending = env
-        .stranger
+        .secrets_owner
         .call(env.escrow.id(), "request_verification")
         .args_json(json!({ "job_id": id }))
         .deposit(NO_DEPOSIT)
@@ -635,7 +635,7 @@ async fn the_minimum_trigger_gas_runs_a_bounded_callback() -> anyhow::Result<()>
     let id = delivered_near_job(&env, 3_600).await?;
     behave(&env, "max_size").await?;
     let result = env
-        .stranger
+        .secrets_owner
         .call(env.escrow.id(), "request_verification")
         .args_json(json!({ "job_id": id }))
         .deposit(NO_DEPOSIT)

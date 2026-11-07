@@ -93,6 +93,13 @@ pub(crate) struct OldJob {
 }
 
 impl OldJob {
+    pub(crate) fn is_finished(&self) -> bool {
+        matches!(
+            self.state,
+            OldState::Released | OldState::Refunded | OldState::Expired
+        )
+    }
+
     /// An earlier job had one named worker and one attempt, and no compute budget.
     pub(crate) fn upgraded(self) -> Job {
         Job {

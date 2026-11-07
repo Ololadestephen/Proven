@@ -149,11 +149,11 @@ pub async fn create_job_with(
         .json()?)
 }
 
-/// Triggers a run as the stranger: anyone can.
+/// Triggers a run as the relay, the account that holds the job's texts.
 pub async fn run(env: &Env, method: &str, id: u64) -> anyhow::Result<ExecutionFinalResult> {
     call(
         env,
-        &env.stranger,
+        &env.secrets_owner,
         method,
         json!({ "job_id": id }),
         NO_DEPOSIT,

@@ -330,7 +330,7 @@ fn a_failed_attempt_frees_the_bid_and_pays_its_fee_by_its_outcome() {
         None,
         json!([attempt(agent(), "Failed", Some("totals"), true)]),
     ));
-    assert_eq!(board.on_sync(id), BidState::Open);
+    assert_eq!(board.on_sync(id, Some(1)), BidState::Open);
     assert_eq!(
         transfers(),
         vec![(agent().to_string(), ATTEMPT_FEE.as_yoctonear())]
@@ -353,7 +353,7 @@ fn an_agent_gets_one_attempt_per_bid() {
         None,
         json!([attempt(agent(), "NoDelivery", None, false)]),
     ));
-    board.on_sync(id);
+    board.on_sync(id, Some(1));
     context(agent(), CLAIM_DEPOSIT);
     let _ = board.claim(id);
 }
@@ -366,7 +366,7 @@ fn a_paid_job_finishes_the_bid_and_returns_the_unused_fees() {
         Some(agent()),
         json!([attempt(agent(), "Paid", None, true)]),
     ));
-    assert_eq!(board.on_sync(id), BidState::Done);
+    assert_eq!(board.on_sync(id, Some(1)), BidState::Done);
     let fee = ATTEMPT_FEE.as_yoctonear();
     assert_eq!(
         transfers(),
@@ -389,9 +389,9 @@ fn a_fee_is_settled_once() {
         )
     };
     callback(failed());
-    board.on_sync(id);
+    board.on_sync(id, Some(1));
     callback(failed());
-    board.on_sync(id);
+    board.on_sync(id, Some(1));
     assert!(transfers().is_empty());
 }
 
@@ -403,7 +403,7 @@ fn a_failed_fee_transfer_can_be_settled_again() {
         None,
         json!([attempt(agent(), "NoDelivery", None, false)]),
     ));
-    board.on_sync(id);
+    board.on_sync(id, Some(1));
     callback(PromiseResult::Failed);
     assert!(!board.on_fee_paid(id, 0, false));
     assert_eq!(board.get_bid(id).unwrap().fees[0], FeeState::Held);
@@ -412,7 +412,7 @@ fn a_failed_fee_transfer_can_be_settled_again() {
         None,
         json!([attempt(agent(), "NoDelivery", None, false)]),
     ));
-    board.on_sync(id);
+    board.on_sync(id, Some(1));
     assert_eq!(
         transfers(),
         vec![(buyer().to_string(), ATTEMPT_FEE.as_yoctonear())]
@@ -423,9 +423,9 @@ fn a_failed_fee_transfer_can_be_settled_again() {
 fn a_failed_read_changes_nothing() {
     let (mut board, id) = claimed(1);
     callback(PromiseResult::Failed);
-    assert_eq!(board.on_sync(id), BidState::Claimed);
+    assert_eq!(board.on_sync(id, Some(1)), BidState::Claimed);
     callback(PromiseResult::Successful(b"not json".to_vec()));
-    assert_eq!(board.on_sync(id), BidState::Claimed);
+    assert_eq!(board.on_sync(id, Some(1)), BidState::Claimed);
     assert!(transfers().is_empty());
 }
 
@@ -433,7 +433,7 @@ fn a_failed_read_changes_nothing() {
 fn a_rejected_check_asks_the_escrow_to_refund_the_buyer() {
     let (mut board, id) = open_board(1);
     callback(job("CheckRejected", None, json!([])));
-    board.on_sync(id);
+    board.on_sync(id, Some(1));
     let closes = get_created_receipts()
         .into_iter()
         .filter(|r| r.receiver_id == escrow())
@@ -463,9 +463,37 @@ fn the_buyer_closes_an_open_bid_through_the_escrow() {
     context(buyer(), NearToken::from_yoctonear(0));
     let _ = board.close_bid(id);
     callback(job("Refunded", None, json!([])));
-    assert_eq!(board.on_sync(id), BidState::Closed);
+    assert_eq!(board.on_sync(id, Some(1)), BidState::Closed);
     assert_eq!(
         transfers(),
         vec![(buyer().to_string(), ATTEMPT_FEE.as_yoctonear())]
     );
+}
+
+#[test]
+fn a_stale_sync_cannot_end_a_newer_claim() {
+    let (mut board, id) = claimed(2);
+    // A sync started before this claim existed read the job before the escrow assigned it.
+    callback(job("Open", None, json!([])));
+    assert_eq!(board.on_sync(id, None), BidState::Claimed);
+    // Even for the claim it saw, nothing ends without the escrow recording that attempt.
+    callback(job("Open", None, json!([])));
+    assert_eq!(board.on_sync(id, Some(1)), BidState::Claimed);
+}
+
+#[test]
+fn a_blocked_review_asks_the_escrow_to_refund_the_buyer() {
+    context(buyer(), NearToken::from_yoctonear(0));
+    let mut board = Board::new(escrow(), reviewer());
+    let id = posted(&mut board, 1, HASH);
+    callback(json_result(json!(7)));
+    board.on_job_created(id);
+    context(reviewer(), NearToken::from_yoctonear(0));
+    board.record_review(id, false, HASH.into(), "m".into(), "c".into());
+    let closes = get_created_receipts()
+        .into_iter()
+        .filter(|r| r.receiver_id == escrow())
+        .count();
+    assert_eq!(closes, 1);
+    assert_eq!(board.get_bid(id).unwrap().state, BidState::Blocked);
 }

@@ -485,6 +485,11 @@ impl Board {
             chat_id,
         });
         env::log_str(&format!("bid_reviewed {bid_id} allow={allow}"));
+        // A blocked bid can never run, so its buyer is refunded at once and its money stops counting
+        // against the caps.
+        if !allow {
+            self.close_job(bid_id).detach();
+        }
     }
 
     /// The caller's account is the agent's wallet. Its hashes never change: a new prompt needs a new
@@ -633,6 +638,12 @@ impl Board {
     /// failed read changes nothing.
     pub fn sync(&mut self, bid_id: BidId) -> PromiseOrValue<BidState> {
         let bid = self.bid(bid_id);
+        // Only the claim seen now can be ended by this read, never one made while it was running.
+        let claim_number = bid
+            .claim
+            .as_ref()
+            .filter(|_| bid.state == BidState::Claimed)
+            .map(|claim| claim.number);
         match bid.job_id {
             Some(job_id) => PromiseOrValue::Promise(
                 ext_escrow::ext(self.escrow.clone())
@@ -641,7 +652,7 @@ impl Board {
                     .then(
                         Self::ext(env::current_account_id())
                             .with_static_gas(SYNC_CALLBACK_GAS)
-                            .on_sync(bid_id),
+                            .on_sync(bid_id, claim_number),
                     ),
             ),
             None => PromiseOrValue::Value(bid.state),
@@ -649,17 +660,20 @@ impl Board {
     }
 
     #[private]
-    pub fn on_sync(&mut self, bid_id: BidId) -> BidState {
+    pub fn on_sync(&mut self, bid_id: BidId, claim_number: Option<u32>) -> BidState {
         let Ok(Some(job)) = read_job() else {
             return self.bid(bid_id).state;
         };
-        // An attempt the escrow has finished frees the bid for the next agent.
+        // An attempt the escrow has recorded as finished frees the bid for the next agent. It must be
+        // the claim this sync saw, and the escrow's history must show that agent's attempt ended.
         let bid = self.bid(bid_id);
         let finished_claim = bid
             .claim
             .as_ref()
             .filter(|_| bid.state == BidState::Claimed)
+            .filter(|claim| Some(claim.number) == claim_number)
             .filter(|claim| job.worker.as_ref() != Some(&claim.agent))
+            .filter(|claim| job.history.iter().any(|a| a.worker == claim.agent))
             .map(|claim| claim.agent.clone());
         if let Some(agent) = finished_claim {
             self.attempts.insert((bid_id, agent), Attempt::Used);

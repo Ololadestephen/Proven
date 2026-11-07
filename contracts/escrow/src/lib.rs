@@ -568,14 +568,20 @@ impl Escrow {
         for cap in &old.caps {
             require!(cap.held.0 == 0, "no money may be held during this upgrade");
         }
+        // Only finished jobs come across: an unfinished one could be closed and refunded from money
+        // this contract never held for it.
         for id in 0..old.next_id {
             let key = migration::job_key(id);
             let Some(bytes) = env::storage_read(&key) else {
                 continue; // A cancelled job.
             };
-            let job = near_sdk::borsh::from_slice::<migration::OldJob>(&bytes)
-                .unwrap_or_else(|_| env::panic_str("could not read an earlier job"))
-                .upgraded();
+            let old_job = near_sdk::borsh::from_slice::<migration::OldJob>(&bytes)
+                .unwrap_or_else(|_| env::panic_str("could not read an earlier job"));
+            require!(
+                old_job.is_finished(),
+                "every earlier job must be finished before this upgrade"
+            );
+            let job = old_job.upgraded();
             let bytes = near_sdk::borsh::to_vec(&job)
                 .unwrap_or_else(|_| env::panic_str("could not write an upgraded job"));
             env::storage_write(&key, &bytes);
@@ -801,11 +807,18 @@ impl Escrow {
         emit("job_delivered", job_id);
     }
 
-    // ---- Anyone: run the verifier, paid from the job's compute budget ----
+    // ---- The job's own parties and its relay: run the verifier, paid from the job's budget ----
 
+    /// Only the relay that holds the texts or the buyer can start it, so nobody else can spend the
+    /// buyer's budget on runs that cannot read the texts.
     pub fn request_challenge(&mut self, job_id: JobId) -> Promise {
         let now = env::block_timestamp();
         let job = self.job(job_id);
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == job.secrets_owner || caller == job.buyer,
+            "only the relay or the buyer can start the challenge"
+        );
         let ready = match job.state {
             JobState::Draft => true,
             JobState::Challenging => job.run_is_stale(now),
@@ -816,10 +829,17 @@ impl Escrow {
         self.start_run(job_id, RunKind::Challenge, JobState::Challenging)
     }
 
-    /// Refused once the verdict window has closed.
+    /// Only the relay that holds the texts or the job's worker can start it, so the buyer cannot use up
+    /// the budget with failing runs and leave honest work without a verdict. Refused once the verdict
+    /// window has closed.
     pub fn request_verification(&mut self, job_id: JobId) -> Promise {
         let now = env::block_timestamp();
         let job = self.job(job_id);
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == job.secrets_owner || job.worker.as_ref() == Some(&caller),
+            "only the relay or the job's worker can start verification"
+        );
         let ready = match job.state {
             JobState::Delivered => true,
             JobState::Verifying => job.run_is_stale(now),
@@ -839,9 +859,14 @@ impl Escrow {
         let added = env::attached_deposit().as_yoctonear();
         let job = self.job_mut(job_id);
         require!(
-            !matches!(
+            matches!(
                 job.state,
-                JobState::Released | JobState::Refunded | JobState::Releasing | JobState::Refunding
+                JobState::Draft
+                    | JobState::Challenging
+                    | JobState::Open
+                    | JobState::Funded
+                    | JobState::Delivered
+                    | JobState::Verifying
             ),
             "this job has finished"
         );
