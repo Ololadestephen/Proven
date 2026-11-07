@@ -75,19 +75,18 @@ export async function healthReport(deps: {
         expirable.push(id);
         alerts.push({ kind: "stuck_job", detail: `Job ${id}: ${reason}.` });
       }
-      if (
-        ["Released", "Refunded", "Expired", "Passed", "Failed"].includes(
-          job.state,
-        )
-      ) {
-        const fee = await board.fee(id);
-        if (fee?.state === "Held")
-          alerts.push({
-            kind: "unsettled_fee",
-            detail: `Job ${id} has a fee to settle.`,
-          });
-      }
     }
+  }
+  // Attempt fees the board still holds for a job that has ended.
+  for (let from = 0; ; from += 50) {
+    const page = await board.bids(from, 50);
+    for (const [id, bid] of page)
+      if (["Done", "Closed"].includes(bid.state) && bid.fees.includes("Held"))
+        alerts.push({
+          kind: "unsettled_fee",
+          detail: `Bid ${id} has attempt fees to settle.`,
+        });
+    if (page.length < 50) break;
   }
   for (const entry of deps.balances) {
     const balance = await deps.balance(entry.account);

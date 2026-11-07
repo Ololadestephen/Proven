@@ -1,7 +1,13 @@
 // CLI and MCP tools for the bid board. Writes go through the configured custody wallet; board calls
 // hold no job money. The JSON feed is read-only and needs no credentials.
 import { createHash } from "node:crypto";
-import { BoardClient, buyerRecord, fundRefusal, type Wallet } from "./board.ts";
+import {
+  BoardClient,
+  buyerRecord,
+  postingDeposit,
+  type Wallet,
+} from "./board.ts";
+import { handoff, handoffOverWeb } from "./handoff.ts";
 import type { Config } from "./config.ts";
 import { BOARD } from "./custody.ts";
 import { PublicError } from "./errors.ts";
@@ -54,13 +60,14 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
     ],
     [
       "post_bid",
-      "Post checkable work. Fixes the check, reference and verifier hashes. Nothing can claim the bid until a review allows it. Custody wallet only.",
+      "Post checkable work and pay for it once: the payment, a compute budget, the attempt fees and storage, with what is unused returned. Fixes the check, reference and verifier hashes, then sends the check to be tested and starts the review, neither needing a signature. Nothing can claim the bid until the review allows it and the check has passed its test. Custody wallet only.",
       {
         description: string,
         check: string,
         reference: string,
         amount_near: string,
-        claim_window_secs: { type: "integer", minimum: 60, maximum: 86400 },
+        deliver_hours: { type: "integer", minimum: 1, maximum: 24 },
+        max_attempts: { type: "integer", minimum: 1, maximum: 3 },
         expires_in_hours: { type: "integer", minimum: 1, maximum: 168 },
         reveal_agreed: {
           type: "boolean",
@@ -83,39 +90,15 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
     ],
     [
       "claim_bid",
-      "Claim an open bid with this agent's wallet. Spend nothing on inference until the job is Funded.",
+      "Apply for an open bid with this agent's wallet. The money is already held, so once the claim is confirmed the job is yours and you can start.",
       { bid_id: id },
       ["bid_id"],
-    ],
-    [
-      "link_job",
-      "The buyer ties an active claim to a matching escrow job and pays the attempt fee (0.015 NEAR, plus 0.002 NEAR for its record). The worker keeps the fee if well-formed work fails a real rule. A pass, no delivery or no verdict returns it.",
-      { bid_id: id, job_id: id },
-      ["bid_id", "job_id"],
-    ],
-    [
-      "post_job_for_claim",
-      "Create the job for a bid's active claim. The worker and amount come from the chain, never from this call. Buyer custody only.",
-      { bid_id: id, check: string, reference: string },
-      ["bid_id", "check", "reference"],
-    ],
-    [
-      "fund_linked_job",
-      "Fund a job only if its bid's claim is still active and linked to it. Buyer custody only.",
-      { bid_id: id, job_id: id },
-      ["bid_id", "job_id"],
     ],
     [
       "sync_bid",
-      "Bring a bid in line with its linked job, or lapse a claim that passed its window. Anyone can call it.",
+      "Bring a bid in line with its escrow job: end a finished attempt and settle attempt fees by their recorded outcomes. Anyone can call it.",
       { bid_id: id },
       ["bid_id"],
-    ],
-    [
-      "settle_fee",
-      "Send a job's attempt fee where its recorded outcome says. Anyone can call it, and it changes nothing until the job has an outcome.",
-      { job_id: id },
-      ["job_id"],
     ],
     [
       "buyer_record",
@@ -125,7 +108,7 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
     ],
     [
       "close_bid",
-      "Take down your own bid, unless a linked job has been funded and has not ended.",
+      "Take down your own bid while no worker is on it. The escrow refunds the payment and what is left of the compute budget; a sync then returns the unused fees.",
       { bid_id: id },
       ["bid_id"],
     ],
@@ -172,8 +155,6 @@ export async function executeBoardTool(
   name: string,
   input: unknown,
   config: Config,
-  fund: (jobId: number) => Promise<unknown>,
-  postForWorker: (worker: string, args: Args) => Promise<unknown>,
   forceDry = false,
 ): Promise<unknown> {
   const definition = definitions.find(([key]) => key === name);
@@ -237,14 +218,63 @@ export async function executeBoardTool(
       format,
       expires_at: ((await board.now()) + hours * 3_600_000_000_000n).toString(),
       reveal_agreed: true,
-      claim_window_secs: integer(args, "claim_window_secs", 60, 86_400, 1_800),
+      deliver_secs: integer(args, "deliver_hours", 1, 24, 4) * 3_600,
+      max_attempts: integer(args, "max_attempts", 1, 3, 3),
       allowed_workers: Array.isArray(args.allowed_workers)
         ? args.allowed_workers.map((worker) => accountId(String(worker)))
         : null,
     };
-    return dry
-      ? planned("post_bid", call)
-      : board.postBid(wallet(config), call);
+    if (dry) return planned("post_bid", call);
+    const escrowConfig = await board.view<{ run_deposit: string }>(
+      "get_config",
+      {},
+      config.escrow,
+    );
+    const deposit = postingDeposit(
+      BigInt(call.amount),
+      call.max_attempts,
+      BigInt(escrowConfig.run_deposit),
+    );
+    const posted = await board.postBid(wallet(config), call, deposit);
+    // The bid and its job, found by the check this call fixed.
+    const found = (await board.bids(0, 50)).find(
+      ([, bid]) => bid.check_hash === call.check_hash,
+    );
+    const bidId = found?.[0];
+    const jobId = found?.[1].job_id ?? null;
+    if (bidId === undefined || jobId === null)
+      return { ...posted, note: "Posted. Read the bid to find its job." };
+    // No signature: the texts match the hashes just fixed on chain.
+    const challenge = { action: "challenge", job_id: jobId, check, reference };
+    const sent = await (
+      config.relayUrl
+        ? handoffOverWeb(config.relayUrl, challenge)
+        : handoff(config.socket, challenge)
+    ).then(
+      () => true,
+      () => false,
+    );
+    const reviewed = config.relayUrl
+      ? await fetch(
+          `${config.relayUrl.replace(/\/$/, "")}/api/market/review/${bidId}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{}",
+            signal: AbortSignal.timeout(320_000),
+          },
+        ).then(
+          (reply) => reply.ok,
+          () => false,
+        )
+      : false;
+    return {
+      ...posted,
+      bid_id: bidId,
+      job_id: jobId,
+      check_sent: sent,
+      review_started: reviewed,
+    };
   }
   if (name === "register_agent") {
     const call = {
@@ -273,37 +303,5 @@ export async function executeBoardTool(
       ? planned("close_bid", { bid_id: bidId() })
       : board.close(wallet(config), bidId());
 
-  if (name === "post_job_for_claim") {
-    const bid = await board.bid(bidId());
-    if (!bid?.claim || bid.state !== "Claimed")
-      throw new PublicError("That bid has no active claim.");
-    const check = text(args, "check");
-    const reference = text(args, "reference");
-    if (
-      hash(check) !== bid.check_hash ||
-      hash(reference) !== bid.reference_hash
-    )
-      throw new PublicError("These texts do not match the bid's hashes.");
-    return postForWorker(bid.claim.agent, {
-      worker: bid.claim.agent,
-      check,
-      reference,
-      amount_near: nearText(bid.amount),
-    });
-  }
-  const jobId = integer(args, "job_id", 0, Number.MAX_SAFE_INTEGER);
-  if (name === "settle_fee")
-    return dry
-      ? planned("settle_fee", { job_id: jobId })
-      : board.settleFee(wallet(config), jobId);
-  if (name === "link_job")
-    return dry
-      ? planned("link_job", { bid_id: bidId(), job_id: jobId })
-      : board.link(wallet(config), bidId(), jobId);
-
-  const bid = await board.bid(bidId());
-  if (!bid) throw new PublicError("Bid was not found.");
-  const refusal = fundRefusal(bid, jobId, await board.now());
-  if (refusal) throw new PublicError(`Not funding: ${refusal}.`);
-  return dry ? { dry_run: true, would_fund: jobId } : fund(jobId);
+  throw new PublicError("Unknown tool.");
 }

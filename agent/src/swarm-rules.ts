@@ -19,7 +19,7 @@ export function workRefusal(
   if (job.worker !== wallet) return "the job names a different worker";
   if (job.token !== null || job.amount !== bid.amount)
     return "the job pays something other than the bid";
-  if (bid.claim?.agent !== wallet || bid.claim.job_id !== jobId)
-    return "this job is not linked to this agent's claim";
+  if (bid.claim?.agent !== wallet || bid.job_id !== jobId)
+    return "this job is not this bid's, or the claim is not this agent's";
   return null;
 }

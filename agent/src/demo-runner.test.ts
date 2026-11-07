@@ -88,7 +88,7 @@ function fixture() {
         if (name === "release_or_refund") {
           const pass = job.state === "Passed";
           assert.ok(pass || job.state === "Failed");
-          const receiver = pass ? job.worker : job.buyer;
+          const receiver = (pass ? job.worker : job.buyer) ?? "";
           balances.set(receiver, (balances.get(receiver) ?? 0n) + PAYMENT);
           job.state = pass ? "Released" : "Refunded";
         }

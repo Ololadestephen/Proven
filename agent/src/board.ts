@@ -10,20 +10,36 @@ import type { CallResult } from "./types.ts";
 const NEAR = 10n ** 24n;
 export const CLAIM_DEPOSIT = (NEAR / 1000n) * 5n;
 export const REGISTER_DEPOSIT = (NEAR / 1000n) * 20n;
-export const POST_DEPOSIT = (NEAR / 1000n) * 80n;
-/** The attempt fee plus its record. A pass, no delivery or no verdict returns the fee, not the record. */
-export const LINK_DEPOSIT = (NEAR / 1000n) * 17n;
-const READ_GAS = "90000000000000";
+/** The attempt fee plus its record, prepaid at posting for each attempt. Unused fees come back. */
+export const FEE_PER_ATTEMPT = (NEAR / 1000n) * 17n;
+const POST_RESERVE = NEAR / 100n;
+/** Storage for the bid and the escrow job at their largest. The unused part comes back. */
+const STORAGE_MARGIN = (NEAR / 100n) * 7n;
+const READ_GAS = "200000000000000";
+const POST_GAS = "150000000000000";
+const CLAIM_GAS = "100000000000000";
 const SHORT_GAS = "30000000000000";
-/** The buyer does not fund a claim with less than this left: the fund call has to land first. */
-export const FUND_MARGIN_NANOS = 60_000_000_000n;
+
+/** Everything one posting attaches: the payment, the escrow's compute budget, the attempt fees and
+ * storage. The escrow and board return what they do not use. */
+export function postingDeposit(
+  amount: bigint,
+  attempts: number,
+  runDeposit: bigint,
+): bigint {
+  return (
+    amount +
+    runDeposit * BigInt(2 + 2 * attempts) +
+    FEE_PER_ATTEMPT * BigInt(attempts) +
+    POST_RESERVE +
+    STORAGE_MARGIN
+  );
+}
 
 export interface Claim {
   number: number;
   agent: string;
   claimed_at: string;
-  expires_at: string;
-  job_id: number | null;
 }
 export interface Bid {
   buyer: string;
@@ -35,7 +51,10 @@ export interface Bid {
   format: string;
   format_hash: string;
   expires_at: string;
-  claim_window_secs: number;
+  deliver_secs: number;
+  max_attempts: number;
+  /** The escrow job holding this bid's money. Null only while it is being created. */
+  job_id: number | null;
   state: string;
   review: {
     allow: boolean;
@@ -47,12 +66,8 @@ export interface Bid {
   claims_made: number;
   funded_attempts: number;
   allowed_workers: string[] | null;
-  past_jobs: Array<{
-    agent: string;
-    job_id: number;
-    funded: boolean;
-    bid_state_after: string;
-  }>;
+  /** One per prepaid attempt: Held, Paying, PaidToWorker or ReturnedToBuyer. */
+  fees: string[];
 }
 export interface Agent {
   wallet: string;
@@ -62,35 +77,12 @@ export interface Agent {
   owner?: string | null;
   model: string;
 }
-export interface AttemptFee {
-  bid_id: number;
-  buyer: string;
-  worker: string;
-  amount: string;
-  state: "Held" | "Paying" | "PaidToWorker" | "ReturnedToBuyer";
-}
-
 export interface Wallet {
   hosted?: { owner: string; treasury: string };
   api: string;
   key: string;
   account: string;
   escrow: string;
-}
-
-/** Link before fund: the buyer funds only a claim that is still active and linked to this job. */
-export function fundRefusal(
-  bid: Bid,
-  jobId: number,
-  now: bigint,
-): string | null {
-  if (bid.state !== "Claimed" || !bid.claim)
-    return "the bid has no active claim";
-  if (bid.claim.job_id !== jobId) return "the claim is not linked to this job";
-  if (now >= BigInt(bid.expires_at)) return "the bid has expired";
-  if (now + FUND_MARGIN_NANOS >= BigInt(bid.claim.expires_at))
-    return "the claim window is about to end";
-  return null;
 }
 
 export class BoardClient {
@@ -173,11 +165,13 @@ export class BoardClient {
       format: string;
       expires_at: string;
       reveal_agreed: boolean;
-      claim_window_secs: number;
+      deliver_secs: number;
+      max_attempts: number;
       allowed_workers?: string[] | null;
     },
+    deposit: bigint,
   ) {
-    return this.write(wallet, "post_bid", args, POST_DEPOSIT, SHORT_GAS);
+    return this.write(wallet, "post_bid", args, deposit, POST_GAS);
   }
   register(wallet: Wallet, args: Omit<Agent, "wallet">) {
     return this.write(
@@ -194,29 +188,14 @@ export class BoardClient {
       "claim",
       { bid_id: bidId },
       CLAIM_DEPOSIT,
-      SHORT_GAS,
+      CLAIM_GAS,
     );
-  }
-  link(wallet: Wallet, bidId: number, jobId: number) {
-    return this.write(
-      wallet,
-      "link_job",
-      { bid_id: bidId, job_id: jobId },
-      LINK_DEPOSIT,
-      READ_GAS,
-    );
-  }
-  settleFee(wallet: Wallet, jobId: number) {
-    return this.write(wallet, "settle_fee", { job_id: jobId }, 0n, READ_GAS);
-  }
-  fee(jobId: number): Promise<AttemptFee | null> {
-    return this.view("get_fee", { job_id: jobId });
   }
   sync(wallet: Wallet, bidId: number) {
     return this.write(wallet, "sync", { bid_id: bidId }, 0n, READ_GAS);
   }
   close(wallet: Wallet, bidId: number) {
-    return this.write(wallet, "close_bid", { bid_id: bidId }, 0n, READ_GAS);
+    return this.write(wallet, "close_bid", { bid_id: bidId }, 0n, POST_GAS);
   }
 }
 
@@ -243,17 +222,16 @@ export async function buyerRecord(
     for (const [, bid] of page) {
       if (bid.buyer !== buyer) continue;
       record.bids += 1;
-      const ids = new Set(bid.past_jobs.map((past) => past.job_id));
-      if (bid.claim?.job_id != null) ids.add(bid.claim.job_id);
-      for (const jobId of ids) {
-        const job = await board.view<{ state: string } | null>(
-          "get_job",
-          { job_id: jobId },
-          escrow,
-        );
-        if (job?.state === "Released") record.jobs_paid += 1;
-        if (job?.state === "Refunded") record.jobs_refunded += 1;
-        if (job?.state === "Expired") record.jobs_expired += 1;
+      if (bid.job_id === null) continue;
+      const job = await board.view<{
+        history?: Array<{ outcome: string }>;
+      } | null>("get_job", { job_id: bid.job_id }, escrow);
+      // Counted per attempt, from the escrow's own records.
+      for (const attempt of job?.history ?? []) {
+        if (attempt.outcome === "Paid") record.jobs_paid += 1;
+        if (attempt.outcome === "Failed") record.jobs_refunded += 1;
+        if (attempt.outcome === "NoDelivery" || attempt.outcome === "NoVerdict")
+          record.jobs_expired += 1;
       }
     }
     if (page.length < 50) break;

@@ -454,18 +454,6 @@ export async function executeTool(
   const config = loadConfig(options?.actor);
   const service = createService(createRuntime(config));
   if (isBoardTool(name))
-    return executeBoardTool(
-      name,
-      args,
-      config,
-      (job_id) => service("fund_job", { job_id }),
-      (worker, jobArgs) =>
-        createService(createRuntime({ ...config, allowedWorkers: [worker] }))(
-          "post_job",
-          jobArgs,
-          options?.dryRun,
-        ),
-      options?.dryRun,
-    );
+    return executeBoardTool(name, args, config, options?.dryRun);
   return service(name, args, options?.dryRun);
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseReview } from "./bid-review.ts";
-import { FUND_MARGIN_NANOS, fundRefusal, type Bid } from "./board.ts";
+import type { Bid } from "./board.ts";
 import { inferenceLimit, workRefusal } from "./swarm.ts";
 import type { Job } from "./types.ts";
 
@@ -11,13 +11,8 @@ const bid = (over: Partial<Bid> = {}): Bid =>
     state: "Claimed",
     amount: "10",
     expires_at: (EXPIRES * 1000n).toString(),
-    claim: {
-      number: 1,
-      agent: "agent.testnet",
-      claimed_at: "0",
-      expires_at: EXPIRES.toString(),
-      job_id: 7,
-    },
+    job_id: 7,
+    claim: { number: 1, agent: "agent.testnet", claimed_at: "0" },
     ...over,
   }) as Bid;
 const job = (over: Partial<Job> = {}): Job =>
@@ -29,19 +24,6 @@ const job = (over: Partial<Job> = {}): Job =>
     deadline: "1000000000000",
     ...over,
   }) as Job;
-
-test("the buyer funds only an active claim linked to this job, with time left", () => {
-  assert.equal(fundRefusal(bid(), 7, 0n), null);
-  assert.match(fundRefusal(bid(), 8, 0n) ?? "", /not linked/);
-  assert.match(
-    fundRefusal(bid({ state: "Open", claim: null }), 7, 0n) ?? "",
-    /no active claim/,
-  );
-  assert.match(
-    fundRefusal(bid(), 7, EXPIRES - FUND_MARGIN_NANOS) ?? "",
-    /about to end/,
-  );
-});
 
 test("the agent starts only on a funded job naming it, for this bid", () => {
   assert.equal(workRefusal(bid(), 7, job(), "agent.testnet", 0n), null);
@@ -75,7 +57,7 @@ test("the agent starts only on a funded job naming it, for this bid", () => {
   );
   assert.match(
     workRefusal(bid(), 8, job(), "agent.testnet", 0n) ?? "",
-    /not linked/,
+    /not this bid's/,
   );
 });
 

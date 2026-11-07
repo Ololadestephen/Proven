@@ -218,18 +218,29 @@ async function advance(
   const board = new BoardClient(deps.config.rpc);
   const wallet = walletOf(agent, deps.config);
   wallet.hosted = { owner: agent.owner, treasury: deps.treasury };
-  const jobId = bid.claim?.job_id ?? null;
-  if (jobId === null) {
-    if ((await board.now()) > BigInt(bid.claim!.expires_at))
-      await board.sync(wallet, bidId);
-    return;
-  }
+  const jobId = bid.job_id;
+  if (jobId === null) return;
   const job = await board.view<Job | null>(
     "get_job",
     { job_id: jobId },
     deps.config.escrow,
   );
-  if (!job) return void (await board.sync(wallet, bidId));
+  if (!job) return;
+  // The escrow ended this agent's attempt and reopened the job, or gave it to someone else.
+  if (
+    job.worker !== agent.wallet &&
+    !["Released", "Refunded"].includes(job.state)
+  ) {
+    await board.sync(wallet, bidId);
+    await settleSpending(deps, agent);
+    const mine = (job.history ?? [])
+      .filter((a) => a.worker === agent.wallet)
+      .at(-1);
+    return deps.store.log(jobId, {
+      step: "finished",
+      detail: { outcome: mine?.outcome },
+    });
+  }
   const tool = createService(
     createRuntime(agentConfig(agent, deps.config, deps.treasury)),
   );
@@ -266,15 +277,8 @@ async function advance(
       );
     }
     case "Released":
-    case "Refunded":
-    case "Expired":
-    case "CheckRejected": {
-      const fee = await board.fee(jobId);
-      if (fee?.state === "Held")
-        log(
-          "settle_fee",
-          (await board.settleFee(wallet, jobId)).transaction_hash,
-        );
+    case "Refunded": {
+      // The sync settles this attempt's fee by its recorded outcome.
       await board.sync(wallet, bidId);
       await settleSpending(deps, agent);
       return log("finished", {

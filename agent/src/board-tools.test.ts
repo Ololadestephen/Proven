@@ -16,11 +16,10 @@ const config = {
   rpc: "https://test.rpc.fastnear.com",
   custodyApi: "https://testnet-api.outlayer.ai",
 } as Config;
-const never = () => Promise.reject(new Error("must not fund"));
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
 test("board tools have schemas and are recognised", () => {
-  assert.ok(boardTools.length >= 11);
+  assert.ok(boardTools.length >= 10);
   assert.ok(boardTools.every((tool) => isBoardTool(tool.name)));
   assert.equal(isBoardTool("post_job"), false);
 });
@@ -37,15 +36,14 @@ test("a dry post_bid fixes the hashes and the verifier named in the check", asyn
       reveal_agreed: true,
     },
     config,
-    never,
-    never,
     true,
   )) as { call: { receiver_id: string; args: Record<string, unknown> } };
   assert.equal(result.call.receiver_id, BOARD);
   assert.equal(result.call.args.check_hash, sha(check));
   assert.equal(result.call.args.reference_hash, sha("r"));
   assert.equal(result.call.args.verifier_hash, "a".repeat(64));
-  assert.equal(result.call.args.claim_window_secs, 1800);
+  assert.equal(result.call.args.deliver_secs, 4 * 3_600);
+  assert.equal(result.call.args.max_attempts, 3);
 });
 
 test("a description over the board's limit, unknown fields and a keyless write are refused", async () => {
@@ -61,8 +59,6 @@ test("a description over the board's limit, unknown fields and a keyless write a
         reveal_agreed: true,
       },
       config,
-      never,
-      never,
       true,
     ),
   );
@@ -71,14 +67,12 @@ test("a description over the board's limit, unknown fields and a keyless write a
       "claim_bid",
       { bid_id: 0, payee: "x.testnet" },
       config,
-      never,
-      never,
       true,
     ),
     /Unknown field/,
   );
   await assert.rejects(
-    executeBoardTool("claim_bid", { bid_id: 0 }, config, never, never),
+    executeBoardTool("claim_bid", { bid_id: 0 }, config),
     /custody wallet/,
   );
 });

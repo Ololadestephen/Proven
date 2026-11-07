@@ -2,7 +2,16 @@ export type Actor = "buyer" | "honest" | "fake" | "agent";
 export type RunKind = "Challenge" | "Verify";
 export interface Job {
   buyer: string;
-  worker: string;
+  /** Null while the job waits for a worker. */
+  worker: string | null;
+  /** Every attempt the escrow has finished, in order. */
+  history?: Array<{
+    worker: string;
+    outcome: string;
+    failed_rule: string | null;
+    verdict_request_id: string | null;
+  }>;
+  compute_budget?: string;
   amount: string;
   token: string | null;
   state: string;

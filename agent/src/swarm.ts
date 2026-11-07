@@ -10,8 +10,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { Account, KeyPair, KeyPairSigner } from "near-api-js";
-import { BoardClient, fundRefusal, type Bid, type Wallet } from "./board.ts";
-import { nearText } from "./board-tools.ts";
+import { BoardClient, postingDeposit, type Bid, type Wallet } from "./board.ts";
+import { handoff, handoffOverWeb } from "./handoff.ts";
 import { keysFrom, KeyPool } from "./key-pool.ts";
 import { attestationUrl } from "./network.ts";
 import { loadConfig, ROOT, type Config } from "./config.ts";
@@ -152,30 +152,58 @@ export async function postBid(
     format: string;
   };
   const board = new BoardClient(config.rpc);
-  const result = await board.postBid(wallet, {
+  const { run_deposit } = await board.view<{ run_deposit: string }>(
+    "get_config",
+    {},
+    config.escrow,
+  );
+  const amount = 10n ** 22n;
+  const call = {
     description,
-    amount: (10n ** 22n).toString(),
+    amount: amount.toString(),
     check_hash: sha256(check),
     reference_hash: sha256(reference),
     verifier_hash: verifier,
     format,
     expires_at: ((await board.now()) + 72n * 3_600_000_000_000n).toString(),
     reveal_agreed: true,
-    claim_window_secs: CLAIM_WINDOW_SECS,
+    deliver_secs: 4 * 3_600,
+    max_attempts: 3,
     // A test can keep a bid to named workers, so hosted agents do not take it.
     allowed_workers: process.env.PROVEN_BID_WORKERS?.split(",") ?? null,
-  });
+  };
+  const result = await board.postBid(
+    wallet,
+    call,
+    postingDeposit(amount, call.max_attempts, BigInt(run_deposit)),
+  );
+  // The bid and its job, then the check to the relay, which tests it. No signature is needed.
+  const found = (await board.bids(0, 50)).find(
+    ([, bid]) => bid.check_hash === call.check_hash,
+  );
+  if (found && found[1].job_id !== null) {
+    const challenge = {
+      action: "challenge",
+      job_id: found[1].job_id,
+      check,
+      reference,
+    };
+    await (config.relayUrl
+      ? handoffOverWeb(config.relayUrl, challenge)
+      : handoff(config.socket, challenge));
+  }
   // The exact text a job on this bid must use.
   mkdirSync(`${ROOT}runs/private`, { recursive: true, mode: 0o700 });
   writeFileSync(
-    `${ROOT}runs/private/bid-${String(result.result)}-check.json`,
+    `${ROOT}runs/private/bid-${String(found?.[0])}-check.json`,
     check,
     {
       mode: 0o600,
     },
   );
   return {
-    bid_id: result.result,
+    bid_id: found?.[0] ?? null,
+    job_id: found?.[1].job_id ?? null,
     transaction_hash: result.transaction_hash,
     check,
   };
@@ -305,52 +333,20 @@ export async function attempt(
   }
 
   let bid = await readBid();
-  // Lapse a claim past its window first, so no job is created for a claim that has already ended.
-  if (
-    bid.claim &&
-    (bid.claim.agent !== account ||
-      (bid.claim.job_id === null &&
-        (await board.now()) > BigInt(bid.claim.expires_at)))
-  ) {
-    await board.sync(agent.wallet, bidId);
-    bid = await readBid();
-  }
   if (bid.state === "Open") {
+    // The money is already held: the claim gives this agent the job straight away.
     log("claim", (await board.claim(agent.wallet, bidId)).transaction_hash);
     bid = await readBid();
   }
-  if (bid.state !== "Claimed" || bid.claim?.agent !== account)
+  if (
+    bid.state !== "Claimed" ||
+    bid.claim?.agent !== account ||
+    bid.job_id === null
+  )
     throw new PublicError(
       `This agent does not hold a claim on this bid. Its state is ${bid.state}.`,
     );
-
-  // Link before funding, so a claim cannot lapse under a job about to run.
-  let jobId = bid.claim.job_id;
-  if (jobId === null) {
-    // The worker and amount come from the claim the chain records.
-    const forClaim = createService(
-      createRuntime({ ...buyerConfig, allowedWorkers: [bid.claim.agent] }),
-    );
-    const posted = (await forClaim("post_job", {
-      worker: bid.claim.agent,
-      check,
-      reference,
-      amount_near: nearText(bid.amount),
-    })) as { result: number; transaction_hash: string };
-    jobId = posted.result;
-    if (!Number.isSafeInteger(jobId))
-      throw new PublicError(
-        `post_job returned no job id: ${posted.transaction_hash}`,
-      );
-    log("post_job", {
-      job_id: jobId,
-      transaction_hash: posted.transaction_hash,
-    });
-    log(
-      "link_job",
-      (await board.link(buyerWallet, bidId, jobId)).transaction_hash,
-    );
-  }
+  const jobId = bid.job_id;
   const readJob = async () => {
     const job = await board.view<Job | null>(
       "get_job",
@@ -369,35 +365,6 @@ export async function attempt(
   for (let step = 0; step < POLLS; step++) {
     const job = await readJob();
     switch (job.state) {
-      case "Draft": {
-        const run = (await buyerTool("challenge_check", {
-          job_id: jobId,
-          check,
-          reference,
-        })) as { transaction_hash?: string; job?: Job };
-        log("challenge", {
-          transaction_hash: run.transaction_hash,
-          state: run.job?.state,
-          fakes: `${run.job?.fakes_caught} of ${run.job?.fakes_total}`,
-          request: run.job?.challenge_request_id,
-        });
-        break;
-      }
-      case "Challenged": {
-        const refusal = fundRefusal(await readBid(), jobId, await board.now());
-        if (refusal)
-          throw new PublicError(`The buyer did not fund: ${refusal}.`);
-        const funded = (await buyerTool("fund_job", { job_id: jobId })) as {
-          transaction_hash?: string;
-          failed?: boolean;
-        };
-        if (funded.failed)
-          throw new PublicError(
-            `Funding failed on chain: ${funded.transaction_hash}`,
-          );
-        log("fund_job", funded.transaction_hash);
-        break;
-      }
       case "Funded": {
         const refusal = workRefusal(
           await readBid(),
@@ -496,7 +463,6 @@ export async function attempt(
         );
         break;
       }
-      case "Challenging":
       case "Verifying":
       case "Releasing":
       case "Refunding":
@@ -504,6 +470,15 @@ export async function attempt(
         // A run or payout is in flight. Starting another could pay twice for compute, so only wait.
         await pause();
         break;
+      case "Open":
+        // The escrow ended this agent's attempt and reopened the job for the next worker.
+        await board.sync(agent.wallet, bidId);
+        return {
+          bid_id: bidId,
+          job_id: jobId,
+          outcome: "attempt ended",
+          history: job.history,
+        };
       default: {
         await board.sync(agent.wallet, bidId);
         const after = await readBid();

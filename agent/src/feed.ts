@@ -83,7 +83,7 @@ async function bidView(
   bid: Bid,
   readJob: (jobId: number) => Promise<unknown>,
 ) {
-  const current = bid.claim?.job_id ?? null;
+  const current = bid.job_id;
   return {
     id,
     state: bid.state,
@@ -93,18 +93,15 @@ async function bidView(
     check_hash: bid.check_hash,
     reference_hash: bid.reference_hash,
     verifier_hash: bid.verifier_hash,
-    claim_window_secs: bid.claim_window_secs,
+    deliver_secs: bid.deliver_secs,
+    max_attempts: bid.max_attempts,
+    fees: bid.fees,
     review: bid.review,
     claim: bid.claim,
     claims_made: bid.claims_made,
     funded_attempts: bid.funded_attempts,
-    current_job: current === null ? null : await readJob(current),
-    past_jobs: await Promise.all(
-      bid.past_jobs.map(async (past) => ({
-        ...past,
-        job: await readJob(past.job_id),
-      })),
-    ),
+    /** The escrow job, with every attempt in its history. */
+    job: current === null ? null : await readJob(current),
   };
 }
 
