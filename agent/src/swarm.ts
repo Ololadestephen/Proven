@@ -86,7 +86,8 @@ interface AgentFiles {
 }
 
 function env(): Record<string, string | undefined> {
-  return parseEnv(readFileSync(`${ROOT}.env`, "utf8"));
+  // A service's own environment wins, so a mainnet service never picks up the file's testnet values.
+  return { ...parseEnv(readFileSync(`${ROOT}.env`, "utf8")), ...process.env };
 }
 
 function buyer(): { wallet: Wallet; config: Config } {

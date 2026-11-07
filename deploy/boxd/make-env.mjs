@@ -53,11 +53,36 @@ const hosted = {
       }
     : {}),
 };
+// Mainnet, closed: unaudited and owner-funded. PROVEN_STAGE2_APPROVED counts only from the service's own env.
+const mainnet = {
+  NEAR_NETWORK: "mainnet",
+  PROVEN_STAGE2_APPROVED: "yes",
+  MAINNET_ESCROW_ACCOUNT_ID: need("MAINNET_ESCROW_ACCOUNT_ID"),
+  PROVEN_BOARD: need("MAINNET_BOARD_ACCOUNT_ID"),
+  // One listed buyer. "open" here is the owner's decision alone.
+  PROVEN_MARKET_ACCESS: need("MAINNET_BUYER_ACCOUNT_ID"),
+};
+const mainnetRelay = {
+  ...mainnet,
+  MAINNET_RELAY_ACCOUNT_ID: need("MAINNET_RELAY_ACCOUNT_ID"),
+  MAINNET_RELAY_PRIVATE_KEY: need("MAINNET_RELAY_PRIVATE_KEY"),
+};
+// No relay key: the review key can call only record_review on the board.
+const mainnetWeb = {
+  ...mainnet,
+  PROVEN_MARKET_ESCROW: need("MAINNET_ESCROW_ACCOUNT_ID"),
+  PROVEN_HOSTED_URL: "http://127.0.0.1:4177",
+  NEAR_ACCOUNT_ID: need("MAINNET_RELAY_ACCOUNT_ID"),
+  PROVEN_REVIEWER_V4_PRIVATE_KEY: need("MAINNET_REVIEWER_PRIVATE_KEY"),
+  NEARAI_KEY_REVIEW: need("NEARAI_KEY_REVIEW"),
+};
 mkdirSync(new URL("runs/private/", root), { recursive: true, mode: 0o700 });
 for (const [name, lines] of [
   ["boxd.env", web],
   ["boxd-relay.env", relay],
   ["boxd-hosted.env", hosted],
+  ["boxd-mainnet-relay.env", mainnetRelay],
+  ["boxd-mainnet-web.env", mainnetWeb],
 ]) {
   const out = new URL(`runs/private/${name}`, root);
   writeFileSync(
@@ -69,4 +94,4 @@ for (const [name, lines] of [
   );
   chmodSync(out, 0o600);
 }
-console.log("Wrote the three short env files under runs/private.");
+console.log("Wrote the short env files under runs/private.");

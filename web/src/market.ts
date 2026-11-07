@@ -242,7 +242,26 @@ function countJob(record: BuyerRecord, state: string | undefined) {
 }
 
 /** What the page and the agent tools need in order to reach the right network and wallets. */
-export const marketConfig = () => ({ network: NETWORK });
+/** The same setting the relay obeys. Mainnet has no default, so forgetting it leaves the market closed. */
+export function marketOpenTo(
+  buyer: string,
+  setting = process.env.PROVEN_MARKET_ACCESS,
+  network: string = NETWORK,
+): boolean {
+  if (setting === "open") return true;
+  if (setting === undefined && network !== "mainnet") return true;
+  return (setting ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .includes(buyer);
+}
+
+export const marketConfig = () => ({
+  network: NETWORK,
+  open:
+    process.env.PROVEN_MARKET_ACCESS === "open" ||
+    (process.env.PROVEN_MARKET_ACCESS === undefined && NETWORK !== "mainnet"),
+});
 
 /** Publishes a bid's check once its bid has ended. The relay checks the rule against the chain. */
 export function revealRoute(bidId: number) {
@@ -367,6 +386,9 @@ export async function reviewRoute(
   if (!bid) throw new ReadError("No such bid.", 404);
   if (bid.state !== "Unreviewed")
     throw new ReadError("That bid is not waiting for a review.", 409);
+  // A review spends the operator's model credit, so a closed market reviews only its listed buyers.
+  if (!marketOpenTo(bid.buyer))
+    throw new ReadError("The market is not open to this buyer.", 403);
   const allowed = await verifier.verify(
     auth,
     [bid.buyer],

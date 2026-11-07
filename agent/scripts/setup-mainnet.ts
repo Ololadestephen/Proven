@@ -8,6 +8,7 @@
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts verify-config
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts upgrade <wasm>
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts board <wasm>
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts relay
 // Add --dry-run to read the chain and print the writes without sending any.
 // Each one-time step is recorded before it runs, and an unknown outcome stops rather than repeats.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -122,7 +123,15 @@ const settled = (result: {
 async function balances() {
   let total = 0n;
   const rows: Record<string, string> = {};
-  const ids = ["ESCROW", "OPS", "WORKER_A", "WORKER_B", "BUYER", "BOARD", "RELAY"]
+  const ids = [
+    "ESCROW",
+    "OPS",
+    "WORKER_A",
+    "WORKER_B",
+    "BUYER",
+    "BOARD",
+    "RELAY",
+  ]
     .map((prefix) => env[`MAINNET_${prefix}_ACCOUNT_ID`])
     .filter((id): id is string => Boolean(id));
   for (const id of ids) {
@@ -336,7 +345,9 @@ async function upgradeEscrow(wasmPath: string) {
   const url = env.MAINNET_VERIFIER_URL;
   if (!id || !wasmPath) throw new PublicError("Name the escrow and its wasm.");
   if (!url || !hash)
-    throw new PublicError("Publish the verifier first and set its URL and hash.");
+    throw new PublicError(
+      "Publish the verifier first and set its URL and hash.",
+    );
   const code = readFileSync(wasmPath);
   const config = (await provider.callFunction({
     contractId: id,
@@ -351,7 +362,9 @@ async function upgradeEscrow(wasmPath: string) {
   if (config.owner !== env.MAINNET_OPS_ACCOUNT_ID)
     throw new PublicError("The escrow's owner is not the ops account.");
   if (config.caps.some((cap) => BigInt(cap.held) !== 0n))
-    throw new PublicError("The escrow holds money. Upgrade only when it holds none.");
+    throw new PublicError(
+      "The escrow holds money. Upgrade only when it holds none.",
+    );
   const view = await provider.viewAccount({ accountId: id });
   const needed = (BigInt(code.length) + STATE_ROOM_BYTES) * YOCTO_PER_BYTE;
   const short = needed - BigInt(view.amount);
@@ -419,7 +432,8 @@ async function deployBoard(wasmPath: string) {
   const id = env.MAINNET_BOARD_ACCOUNT_ID;
   const escrowId = env.MAINNET_ESCROW_ACCOUNT_ID;
   const reviewer = env.MAINNET_RELAY_ACCOUNT_ID;
-  if (!wasmPath || !escrowId) throw new PublicError("Name the wasm and escrow.");
+  if (!wasmPath || !escrowId)
+    throw new PublicError("Name the wasm and escrow.");
   const code = readFileSync(wasmPath);
   const needed = (BigInt(code.length) + STATE_ROOM_BYTES) * YOCTO_PER_BYTE;
   if (dry) {
@@ -526,6 +540,61 @@ async function setupWorkers() {
   }
 }
 
+/** The relay signs secrets as its own account, so the escrow's owner key never goes on a server. Reviews
+ * use a second key on that account that can call only record_review on the board. */
+async function setupRelay() {
+  const id = env.MAINNET_ESCROW_ACCOUNT_ID;
+  const relayId = env.MAINNET_RELAY_ACCOUNT_ID;
+  const boardId = env.MAINNET_BOARD_ACCOUNT_ID;
+  if (!id || !relayId || !boardId)
+    throw new PublicError("Set the escrow, relay and board accounts in .env.");
+  if (dry)
+    console.log(
+      JSON.stringify({
+        would_set_secrets_owner: relayId,
+        on: id,
+        would_add_key_on: relayId,
+        receiver: boardId,
+        methods: ["record_review"],
+        allowance_near: 0.05,
+      }),
+    );
+  await once("relay_secrets_owner", async () =>
+    settled(
+      await account("MAINNET_OPS").callFunctionRaw({
+        contractId: id,
+        methodName: "set_secrets_owner",
+        args: { secrets_owner: relayId },
+        gas: 30_000_000_000_000n,
+      }),
+    ),
+  );
+  if (dry) return;
+  if (!env.MAINNET_REVIEWER_PRIVATE_KEY)
+    saveEnv({
+      MAINNET_REVIEWER_PRIVATE_KEY: KeyPair.fromRandom("ed25519").toString(),
+    });
+  const key = KeyPair.fromString(
+    env.MAINNET_REVIEWER_PRIVATE_KEY as `ed25519:${string}`,
+  );
+  const relay = account("MAINNET_RELAY");
+  await once("relay_review_key", async () =>
+    settled(
+      await relay.signAndSendTransaction({
+        receiverId: relayId,
+        actions: [
+          actions.addFunctionCallAccessKey(
+            key.getPublicKey(),
+            boardId,
+            ["record_review"],
+            5n * 10n ** 22n,
+          ),
+        ],
+      }),
+    ),
+  );
+}
+
 async function main() {
   const [command, argument] = process.argv
     .slice(2)
@@ -537,6 +606,7 @@ async function main() {
   if (command === "workers") return setupWorkers();
   if (command === "upgrade") return upgradeEscrow(argument);
   if (command === "board") return deployBoard(argument);
+  if (command === "relay") return setupRelay();
   if (command === "verify-config") {
     if (dry) {
       console.log("would read get_config from the escrow");

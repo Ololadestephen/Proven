@@ -357,13 +357,16 @@ if (
   server.on("error", () => {
     process.exitCode = 1;
     console.error(
-      "Local server could not start. Check whether port 4173 is already in use.",
+      "Local server could not start. Check whether its port is already in use.",
     );
     return;
   });
-  server.listen(4173, open ? "0.0.0.0" : "127.0.0.1", () =>
+  const port = Number(process.env.PROVEN_PORT ?? 4173);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535)
+    throw new Error("PROVEN_PORT is not a usable port.");
+  server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () =>
     console.log(
-      "Proven job evidence: http://127.0.0.1:4173 (testnet; live demo requires a separate operator allowance)",
+      `Proven job evidence: http://127.0.0.1:${port} (testnet; live demo requires a separate operator allowance)`,
     ),
   );
 }

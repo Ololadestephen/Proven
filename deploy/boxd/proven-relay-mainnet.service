@@ -1,0 +1,36 @@
+[Unit]
+Description=Proven relay (mainnet, unaudited, owner-funded, closed)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=proven-relay
+Group=proven-relay
+RuntimeDirectory=proven-mainnet
+RuntimeDirectoryMode=0750
+WorkingDirectory=/opt/proven/relay
+# Set here, so a mistyped env file cannot leave a reachable relay without signature checks.
+Environment=PROVEN_RELAY_REQUIRE_SIGNATURES=yes
+Environment=PROVEN_RELAY_SOCKET=/run/proven-mainnet/relay.sock
+Environment=PROVEN_RELAY_DATA=/var/lib/proven/relay-mainnet
+ExecStartPre=+/bin/rm -f /run/proven-mainnet/relay.sock
+ExecStartPost=+/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do test -S /run/proven-mainnet/relay.sock && break; sleep 1; done; chgrp proven-sock /run/proven-mainnet /run/proven-mainnet/relay.sock'
+ExecStart=/opt/node/node --env-file=/etc/proven/relay-mainnet.env src/handoff.ts
+Restart=on-failure
+RestartSec=10
+UMask=0007
+ReadWritePaths=/var/lib/proven/relay-mainnet /run/proven-mainnet
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+# Docker's socket would be root, and the machine's own boxd tool could reach other machines.
+InaccessiblePaths=-/var/run/docker.sock -/run/docker.sock -/usr/local/bin/boxd -/usr/local/bin/claude -/usr/local/bin/codex -/usr/local/bin/gh -/run/boxd
+MemoryMax=1500M
+TasksMax=128
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

@@ -37,15 +37,16 @@ export const MAINNET_RPC_URLS: readonly string[] = [
 function loadMainnetConfig(): Config {
   if (process.env.PROVEN_STAGE2_APPROVED !== "yes")
     throw new Error("Mainnet is refused without the Stage 2 approval flag.");
-  const key = required("MAINNET_OPS_PRIVATE_KEY");
+  // Its own small account, as on testnet. The ops account owns the escrow and never goes on a server.
+  const key = required("MAINNET_RELAY_PRIVATE_KEY");
   if (!key.startsWith("ed25519:"))
-    throw new Error("MAINNET_OPS_PRIVATE_KEY must be an ed25519 key");
+    throw new Error("MAINNET_RELAY_PRIVATE_KEY must be an ed25519 key");
   const rpcUrl = process.env.MAINNET_RPC_URL || MAINNET_RPC_URLS[0]!;
   if (!MAINNET_RPC_URLS.includes(rpcUrl))
     throw new Error("Use an approved mainnet RPC endpoint");
   return {
     rpcUrl,
-    relayAccountId: required("MAINNET_OPS_ACCOUNT_ID"),
+    relayAccountId: required("MAINNET_RELAY_ACCOUNT_ID"),
     relayPrivateKey: key as KeyPairString,
     escrowContract: required("MAINNET_ESCROW_ACCOUNT_ID"),
     outlayerContract: "outlayer.near",

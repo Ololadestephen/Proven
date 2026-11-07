@@ -4,6 +4,7 @@ import { WorkspacePages } from "./WorkspacePages.tsx";
 import { WalletControls } from "./WalletControls.tsx";
 import { useMarket } from "./use-market.ts";
 import { appRoute } from "./app-route.ts";
+import { IS_MAINNET, MARKET_OPEN, NETWORK_LABEL } from "./network.ts";
 import "../public/workspace.css";
 function App() {
   const route = appRoute(location.pathname, location.hash);
@@ -80,6 +81,12 @@ function App() {
           </p>
         </section>
       ) : null}
+      {IS_MAINNET ? <p className="market-notice">{NETWORK_LABEL}</p> : null}
+      {MARKET_OPEN ? null : (
+        <p className="market-error">
+          This market is closed. Only listed buyers can run jobs here.
+        </p>
+      )}
       {market?.paused ? (
         <p className="market-error">
           New jobs and funding are paused on this escrow.
