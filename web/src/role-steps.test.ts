@@ -69,7 +69,11 @@ test("after the end the worker sees the outcome, not bookkeeping", () => {
   const failed = stepForViewer(
     sync,
     bid(null, {
-      last_job: { state: "Refunded", failed_rule: "totals", worker: "w" },
+      last_job: {
+        state: "Refunded",
+        worker: null,
+        history: [{ worker: "w", outcome: "Failed", failed_rule: "totals" }],
+      },
     }),
     "worker",
     NOW,
@@ -77,17 +81,21 @@ test("after the end the worker sees the outcome, not bookkeeping", () => {
   assert.match(failed?.label ?? "", /Not paid.*totals/);
 });
 
-test("the worker is offered the fee only when it is the worker's", () => {
-  const fee: Step = { id: "settle_fee", label: "Settle", jobId: 1 };
-  const failed = (rule: string) =>
-    bid(null, {
-      last_job: { state: "Refunded", failed_rule: rule, worker: "w" },
-    });
-  assert.equal(
-    stepForViewer(fee, failed("totals"), "worker", NOW)?.id,
-    "settle_fee",
+test("a worker whose attempt failed sees its own result from the escrow's record", () => {
+  const sync: Step = { id: "sync", label: "Update the bid" };
+  const value = bid(
+    {
+      state: "Open",
+      worker: null,
+      history: [{ worker: "w", outcome: "NoDelivery" }],
+    },
+    { claim: null },
   );
-  assert.equal(stepForViewer(fee, failed("format"), "worker", NOW), null);
+  assert.equal(roleOf(value, "w"), "worker");
+  assert.match(
+    stepForViewer(sync, value, "worker", NOW)?.label ?? "",
+    /no delivery arrived/,
+  );
 });
 
 test("a visitor can apply, and sees nothing of a job in progress", () => {

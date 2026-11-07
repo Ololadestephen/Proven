@@ -12,9 +12,9 @@ import type { MarketBid } from "../ui/market-steps.ts";
 const bid = {
   id: 1,
   buyer: "buyer.testnet",
-  claim: { agent: "worker.testnet", number: 1, job_id: null },
-  candidate_job_id: null,
-} as MarketBid;
+  claim: null,
+  job_id: 7,
+} as unknown as MarketBid;
 const market: Market = {
   bids: [bid],
   agents: [],
@@ -25,7 +25,7 @@ const market: Market = {
 };
 const call: Call = {
   receiver: "escrow.testnet",
-  method: "create_job",
+  method: "claim",
   args: { worker: "worker.testnet" },
   deposit: 2n,
   gas: 70n,
@@ -125,7 +125,7 @@ test("stale tab must refresh instead of sending an obsolete Create action", asyn
       ...env,
       readMarket: async () => ({
         ...market,
-        bids: [{ ...bid, candidate_job_id: 5 }],
+        bids: [{ ...bid, claim: { number: 2, agent: "other.testnet" } }],
       }),
       send: async () => {
         sends++;
@@ -172,7 +172,10 @@ test("stale reconciliation cannot erase a newer journal", async () => {
   const old = journalCall(env.marker, call);
   const next = { ...old, createdAt: 2 };
   env.storage.setItem(PENDING_KEY, JSON.stringify(next));
-  const observed = { ...market, bids: [{ ...bid, candidate_job_id: 5 }] };
+  const observed = {
+    ...market,
+    bids: [{ ...bid, claim: { number: 1, agent: "buyer.testnet" } }],
+  };
   await reconcilePending(env, old, observed);
   assert.equal(env.storage.getItem(PENDING_KEY), JSON.stringify(next));
   await reconcilePending(env, next, observed);

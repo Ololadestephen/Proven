@@ -22,11 +22,11 @@ const bid = {
   check_hash: "check",
   reference_hash: "ref",
   description: "A real job",
-  claim: { number: 1, agent: "worker.testnet", job_id: null },
-  candidate_job_id: null,
+  claim: null,
+  job_id: 7,
   job: null,
   last_job: null,
-} as MarketBid;
+} as unknown as MarketBid;
 const market = {
   agents: [],
   bids: [bid],
@@ -37,13 +37,13 @@ const market = {
 } as Market;
 const call: Call = {
   receiver: market.escrow,
-  method: "create_job",
+  method: "claim",
   args: { worker: "worker.testnet" },
   deposit: 20000000000000000000000n,
   gas: 70000000000000n,
 };
 function pending(
-  method = "create_job",
+  method = "claim",
   args: Record<string, unknown> = {},
 ): PendingAction {
   return journalCall(
@@ -66,7 +66,8 @@ test("routes separate overview, browse, role views, post and bid IDs", () => {
   assert.equal(ownBids([bid], null, "buying").length, 0);
   assert.equal(ownBids([bid], bid.buyer, "buying").length, 1);
   assert.equal(ownBids([bid], "stranger.testnet", "buying").length, 0);
-  assert.equal(ownBids([bid], "worker.testnet", "delivering").length, 1);
+  const claimed = { ...bid, claim: { number: 1, agent: "worker.testnet" } };
+  assert.equal(ownBids([claimed], "worker.testnet", "delivering").length, 1);
   assert.equal(completed({ ...bid, state: "Done" }), true);
 });
 test("NEAR amounts preserve yocto precision and reject rounded or malformed payments", () => {
@@ -101,7 +102,7 @@ test("synchronous gate blocks double clicks, unknown outcomes remain pending, un
   assert.equal(
     reconciled(pending(), {
       ...market,
-      bids: [{ ...bid, candidate_job_id: 27 }],
+      bids: [{ ...bid, claim: { number: 1, agent: bid.buyer } }],
     }),
     true,
   );
@@ -200,16 +201,12 @@ test("wallet adapter is testnet/account-bound, preserves call values and rejects
 });
 
 test("a fast failed OutLayer callback back to the original state is retriable after its attempt advances", () => {
-  for (const [method, state] of [
-    ["request_challenge", "Draft"],
-    ["request_verification", "Delivered"],
-  ]) {
+  for (const [method, state] of [["request_verification", "Delivered"]]) {
     const current = {
       ...market,
       bids: [
         {
           ...bid,
-          claim: { ...bid.claim!, job_id: 7 },
           job: { state, attempt: 1 } as MarketBid["job"],
         },
       ],

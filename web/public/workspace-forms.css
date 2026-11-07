@@ -413,7 +413,7 @@
 }
 .workspace-app .job-progress {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
   margin: 0 0 22px;
   padding: 0;
@@ -510,8 +510,8 @@
 .workspace-app .job-pending p {
   margin: 0;
 }
-.workspace-app .job-progress[data-steps="5"] {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+.workspace-app .job-progress[data-steps="4"] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .workspace-app .job-resend {
   width: 100%;

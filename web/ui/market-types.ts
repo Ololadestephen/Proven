@@ -11,6 +11,8 @@ export interface Market {
   >;
   verifier_hash: string;
   paused: boolean;
+  /** What the escrow attaches per run, paid from each job's budget. */
+  run_deposit?: string;
   agents: string[];
   bids: MarketBid[];
 }

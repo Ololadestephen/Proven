@@ -56,7 +56,9 @@ export function ownBids(
   return bids.filter((bid) =>
     role === "buying"
       ? bid.buyer === account
-      : bid.claim?.agent === account || bid.last_job?.worker === account,
+      : bid.claim?.agent === account ||
+        bid.job?.worker === account ||
+        (bid.job?.history ?? []).some((attempt) => attempt.worker === account),
   );
 }
 export function bidTitle(bid: MarketBid) {

@@ -1,5 +1,6 @@
 import { canPost, COIN, NETWORK } from "./network.ts";
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { requestReview, sendCheck } from "./job-actions.ts";
 import type { Market, Wallet } from "./market-types.ts";
 import { api, remember, sha256 } from "./market-client.ts";
 
@@ -13,7 +14,8 @@ interface Draft {
   check: string;
   reference: string;
   amount: string;
-  windowMins: string;
+  deliverHours: string;
+  attempts: string;
   workers: string;
   days: string;
   revealAgreed: boolean;
@@ -22,7 +24,8 @@ interface Prepared {
   check_hash: string;
   reference_hash: string;
   amount: bigint;
-  claim_window_secs: number;
+  deliver_secs: number;
+  max_attempts: number;
   allowed_workers: string[] | null;
   format: string;
   expires_at: string;
@@ -37,14 +40,10 @@ function terms(draft: Draft) {
   const amount = parseNearAmount(draft.amount);
   if (!/^[1-7]$/.test(draft.days))
     throw new Error("A bid must end within 1 to 7 days.");
-  if (
-    !/^\d+$/.test(draft.windowMins) ||
-    Number(draft.windowMins) < 1 ||
-    Number(draft.windowMins) > 1440
-  )
-    throw new Error(
-      "The claim window must be a whole number from 1 to 1,440 minutes.",
-    );
+  if (!["1", "4", "12", "24"].includes(draft.deliverHours))
+    throw new Error("Choose how long a worker has to deliver.");
+  if (!["1", "2", "3"].includes(draft.attempts))
+    throw new Error("Choose 1 to 3 attempts.");
   const allowed = [...new Set(draft.workers.split(/[\s,]+/).filter(Boolean))];
   if (
     allowed.length > 20 ||
@@ -60,18 +59,46 @@ function terms(draft: Draft) {
     );
   return {
     amount,
-    claim_window_secs: Number(draft.windowMins) * 60,
+    deliver_secs: Number(draft.deliverHours) * 3_600,
+    max_attempts: Number(draft.attempts),
     allowed_workers: allowed.length ? allowed : null,
   };
 }
 
 const DAYS = ["1", "3", "7"];
-const WINDOWS = [
-  ["15", "15 min"],
-  ["30", "30 min"],
-  ["60", "1 hour"],
-  ["240", "4 hours"],
+const HOURS = [
+  ["1", "1 hour"],
+  ["4", "4 hours"],
+  ["12", "12 hours"],
+  ["24", "1 day"],
 ];
+const ATTEMPTS = [
+  ["1", "1"],
+  ["2", "2"],
+  ["3", "3"],
+];
+/** Storage for the bid and the escrow job, at their largest. What is not used comes back. */
+const STORAGE_MARGIN = (NEAR * 7n) / 100n;
+const FEE_PER_ATTEMPT = (NEAR * 17n) / 1000n;
+const POST_RESERVE = NEAR / 100n;
+
+/** Everything a posting attaches, by part. */
+export function postingCost(
+  amount: bigint,
+  attempts: number,
+  runDeposit: bigint,
+) {
+  const budget = runDeposit * BigInt(2 + 2 * attempts);
+  const fees = FEE_PER_ATTEMPT * BigInt(attempts);
+  const storage = STORAGE_MARGIN + POST_RESERVE;
+  return {
+    amount,
+    budget,
+    fees,
+    storage,
+    total: amount + budget + fees + storage,
+  };
+}
 const jsonState = (text: string) => {
   if (!text.trim()) return "empty";
   try {
@@ -153,19 +180,46 @@ function Choices({
   );
 }
 
-/** Shown in place of the form, so a posted job cannot be posted twice. */
+/** Shown in place of the form, so a posted job cannot be posted twice. It sends the check for testing
+ * and starts the review straight away; neither needs a signature. */
 function PostSuccess({
   market,
   checkHash,
   title,
+  check,
+  reference,
   onAnother,
 }: {
   market: Market;
   checkHash: string;
   title: string;
+  check: string;
+  reference: string;
   onAnother: () => void;
 }) {
   const bid = market.bids.find((item) => item.check_hash === checkHash);
+  const jobId = bid?.job_id ?? null;
+  const [sent, setSent] = useState<"" | "sending" | "done" | string>("");
+  const [reviewed, setReviewed] = useState<"" | "asking" | "done" | string>("");
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current || !bid || jobId === null) return;
+    started.current = true;
+    setSent("sending");
+    void sendCheck(jobId, check, reference)
+      .then(() => setSent("done"))
+      .catch((error: Error) => setSent(error.message));
+    setReviewed("asking");
+    void requestReview(bid.id)
+      .then(() => setReviewed("done"))
+      .catch((error: Error) => setReviewed(error.message));
+  }, [bid, jobId, check, reference]);
+  const line = (value: string, doing: string, done: string) =>
+    value === "done"
+      ? `✓ ${done}`
+      : value === "" || value === doing
+        ? "…"
+        : `Not yet: ${value}`;
   return (
     <section className="market-card post-success" role="status">
       <span className={bid ? "post-tick" : "post-spinner"} aria-hidden="true" />
@@ -175,21 +229,25 @@ function PostSuccess({
         <>
           <ol className="post-next">
             <li>
-              <strong>Run the bid review.</strong> Workers can apply once it
-              passes. It costs you nothing.
+              <strong>Payment held.</strong>{" "}
+              {jobId === null ? "…" : "✓ The escrow is holding it."}
             </li>
             <li>
-              <strong>Wait for a worker to apply.</strong> Nothing is locked
-              until you fund the job.
+              <strong>Check sent for testing.</strong>{" "}
+              {line(sent, "sending", "It is tested against planted fakes.")}
             </li>
             <li>
-              <strong>Test your check, then fund.</strong> Your payment is held
-              until the verifier decides.
+              <strong>Bid review.</strong>{" "}
+              {line(reviewed, "asking", "Workers can now see it.")}
             </li>
           </ol>
+          <p className="market-note">
+            There is nothing more to sign. If a step says “Not yet”, the job
+            page lets you try it again.
+          </p>
           <div className="market-actions">
             <a className="button button-primary" href={`/app/bids/${bid.id}`}>
-              Open job and run the review
+              Open the job
             </a>
             <button
               type="button"
@@ -226,7 +284,8 @@ export function PostJob({
     check: "",
     reference: "",
     amount: "0.01",
-    windowMins: "30",
+    deliverHours: "4",
+    attempts: "3",
     days: "3",
     revealAgreed: false,
     workers: "",
@@ -349,16 +408,26 @@ export function PostJob({
           format: prepared.format,
           expires_at: prepared.expires_at,
           reveal_agreed: true,
-          claim_window_secs: prepared.claim_window_secs,
+          deliver_secs: prepared.deliver_secs,
+          max_attempts: prepared.max_attempts,
           allowed_workers: prepared.allowed_workers,
         },
-        deposit: (NEAR * 8n) / 100n,
-        gas: 30n * TGAS,
+        deposit: cost!.total,
+        gas: 150n * TGAS,
       });
       setPosted(prepared.check_hash);
     });
   };
 
+  const cost = prepared
+    ? postingCost(
+        prepared.amount,
+        prepared.max_attempts,
+        BigInt(market.run_deposit ?? "10000000000000000000000"),
+      )
+    : null;
+  const nearText = (value: bigint) =>
+    `${(Number(value / 10n ** 18n) / 1e6).toString()} NEAR`;
   const alreadyPosted =
     prepared &&
     market.bids.find((bid) => bid.check_hash === prepared.check_hash);
@@ -370,6 +439,8 @@ export function PostJob({
         market={market}
         checkHash={posted}
         title={draft.description.split("\n")[0] ?? ""}
+        check={draft.check}
+        reference={draft.reference}
         onAnother={() => location.assign("/app/post")}
       />
     );
@@ -469,12 +540,23 @@ export function PostJob({
                 />
               </div>
               <div className="post-field">
-                <span className="post-label">Time to claim and fund</span>
+                <span className="post-label">Time to deliver</span>
                 <Choices
-                  label="Time to claim and fund"
-                  value={draft.windowMins}
-                  options={WINDOWS}
-                  onChange={(value) => update("windowMins", value)}
+                  label="Time to deliver"
+                  value={draft.deliverHours}
+                  options={HOURS}
+                  onChange={(value) => update("deliverHours", value)}
+                />
+              </div>
+              <div className="post-field">
+                <span className="post-label">
+                  Workers who can try, one after another
+                </span>
+                <Choices
+                  label="Attempts"
+                  value={draft.attempts}
+                  options={ATTEMPTS}
+                  onChange={(value) => update("attempts", value)}
                 />
               </div>
               <div className="post-field">
@@ -548,15 +630,24 @@ export function PostJob({
                 <strong className="post-amount">
                   {draft.amount} {COIN}
                 </strong>
-                <span className="post-hint">Not locked until you fund.</span>
+                <span className="post-hint">
+                  Held from posting until the verdict, or returned.
+                </span>
               </div>
               <h3>{draft.description.split("\n")[0]}</h3>
             </div>
             <dl className="workspace-review">
               <dt>Who can apply</dt>
               <dd>{prepared.allowed_workers?.join(", ") ?? "Anyone"}</dd>
-              <dt>Time to claim and fund</dt>
-              <dd>{draft.windowMins} minutes</dd>
+              <dt>Time to deliver</dt>
+              <dd>
+                {HOURS.find(([value]) => value === draft.deliverHours)?.[1]} for
+                each worker
+              </dd>
+              <dt>Attempts</dt>
+              <dd>
+                Up to {draft.attempts}: if a worker fails, the next can try
+              </dd>
               <dt>Bid stays open for</dt>
               <dd>
                 {draft.days === "1" ? "1 day" : `${draft.days} days`}, then your
@@ -566,28 +657,34 @@ export function PostJob({
               <dd>{wallet?.accountId ?? "Connect a wallet to post"}</dd>
             </dl>
             <div className="post-costs">
-              <h3>What it costs</h3>
+              <h3>You sign once, for {cost ? nearText(cost.total) : "…"}</h3>
               <dl>
-                <dt>Now: posting deposit</dt>
-                <dd>0.08 NEAR, unused part returns</dd>
-                <dt>Each attempt: fee and record</dt>
-                <dd>0.017 NEAR</dd>
-                <dt>Each challenge and verification</dt>
-                <dd>0.1 NEAR, mostly refunded</dd>
+                <dt>Payment, held until the verdict</dt>
+                <dd>{cost ? nearText(cost.amount) : "…"}</dd>
+                <dt>Checking runs, unused part returns</dt>
+                <dd>{cost ? nearText(cost.budget) : "…"}</dd>
+                <dt>Attempt fees, unused ones return</dt>
+                <dd>{cost ? nearText(cost.fees) : "…"}</dd>
+                <dt>Storage, unused part returns</dt>
+                <dd>{cost ? nearText(cost.storage) : "…"}</dd>
               </dl>
               <p className="post-hint">
-                Network gas is extra. The worker keeps the 0.015 NEAR fee if
-                well-formed work fails a rule. A pass, no delivery or no verdict
-                returns it to you.
+                Nothing else to sign: the check is tested, the job is given to
+                the first worker who applies, the work is checked and the money
+                moves by itself. Network gas is extra. The worker keeps a 0.015
+                NEAR fee if well-formed work fails a rule.
               </p>
             </div>
             <div className="post-risks">
               <h3>Before you post</h3>
               <ul>
                 <li>
-                  A worker who never delivers uses up one of your 3 funded
-                  attempts. Your money comes back at the deadline, but is locked
-                  until then.
+                  Your payment is held from now. You can close the bid while no
+                  worker is on it and get everything back.
+                </li>
+                <li>
+                  A worker who never delivers uses up one attempt, and the job
+                  waits until their deadline before the next can try.
                 </li>
                 <li>
                   On an open bid, junk that fits the format can take the fee, up
@@ -674,7 +771,9 @@ export function PostJob({
             }
             onClick={post}
           >
-            {busy ? "Waiting for your wallet…" : "Post job · 0.08 NEAR deposit"}
+            {busy
+              ? "Waiting for your wallet…"
+              : `Post and pay · ${cost ? nearText(cost.total) : ""}`}
           </button>
         )}
       </div>

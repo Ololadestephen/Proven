@@ -73,7 +73,7 @@ export function JobWorkspace({
   ) : null;
 
   const needsPrivate =
-    step?.id === "challenge" && (!savedCheck || !savedReference);
+    step?.id === "send_check" && (!savedCheck || !savedReference);
   const note = step ? noteFor(step, role, market.escrow, bid.amount) : "";
   const resendBox = canResend ? (
     <details className="job-resend">
@@ -93,7 +93,7 @@ export function JobWorkspace({
           void run("Send my work again", () =>
             resendDelivery(
               wallet,
-              bid.job!.id ?? bid.claim!.job_id!,
+              (bid.job_id ?? bid.job!.id)!,
               resend || recall(deliveredHash!) || "",
               deliveredHash!,
             ),
@@ -175,7 +175,7 @@ export function JobWorkspace({
       </header>
       <ol
         className="job-progress"
-        data-steps={role === "worker" ? 5 : 8}
+        data-steps={role === "worker" ? 4 : 7}
         aria-label="Job progress"
       >
         {(role === "worker" ? workerProgress(bid) : jobProgress(bid)).map(
@@ -216,7 +216,7 @@ export function JobWorkspace({
             {new Date(
               Number(BigInt(bid.expires_at) / 1_000_000n),
             ).toUTCString()}
-            . {bid.funded_attempts} of 3 funded attempts used.
+            . {bid.funded_attempts} of {bid.max_attempts ?? 3} attempts used.
           </p>
           <p>
             This buyer’s record, from the chain: {record?.paid ?? 0} paid,{" "}
@@ -316,12 +316,15 @@ export function JobWorkspace({
                 Board: market.board,
                 Escrow: market.escrow,
                 "Bid ID": bid.id,
-                "Escrow job ID": bid.claim?.job_id ?? job?.id ?? "Not linked",
+                "Escrow job ID": bid.job_id ?? "Being created",
                 "Check hash": bid.check_hash,
                 "Reference hash": bid.reference_hash,
                 "Verifier hash": bid.verifier_hash,
                 "Format hash": bid.format_hash,
-                "Attempt fee": bid.fee ? bid.fee.state : "None",
+                "Attempt fees": (bid.fees ?? []).join(", ") || "None",
+                "Compute budget left": job?.compute_budget
+                  ? showNear(job.compute_budget)
+                  : "None",
                 "Deliverable hash": job?.deliverable_hash ?? "Not delivered",
                 "Challenge request": job?.challenge_request_id ?? "None",
               }).map(([key, value]) => (

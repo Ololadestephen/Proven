@@ -57,7 +57,8 @@ const view = <T>(
 
 interface Job {
   buyer: string;
-  worker: string;
+  /** Null while the job waits for a worker. */
+  worker: string | null;
   amount: string;
   token: string | null;
   state: string;
@@ -75,6 +76,15 @@ interface Job {
   challenge_request_id: string | null;
   verdict_request_id: string | null;
   deadline: string;
+  compute_budget: string;
+  expires_at: string;
+  max_attempts: number;
+  history: Array<{
+    worker: string;
+    outcome: string;
+    failed_rule: string | null;
+    verdict_request_id: string | null;
+  }>;
 }
 interface Claim {
   number: number;
@@ -94,30 +104,11 @@ interface Bid {
   expires_at: string;
   state: string;
   claim: Claim | null;
-  past_jobs: Array<{ job_id: number }>;
+  /** The escrow job that holds this bid's money. Null only while it is being created. */
+  job_id: number | null;
   [key: string]: unknown;
 }
 
-/** A job already created for this claim and not yet linked, so a reload never creates a second one. */
-export function candidateJob(
-  bid: Bid,
-  jobs: Array<[number, Job]>,
-): number | null {
-  if (!bid.claim || bid.claim.job_id !== null) return null;
-  const used = new Set(bid.past_jobs.map((past) => past.job_id));
-  const match = jobs.find(
-    ([id, job]) =>
-      !used.has(id) &&
-      job.buyer === bid.buyer &&
-      job.worker === bid.claim?.agent &&
-      job.spec_hash === bid.check_hash &&
-      job.fakes_hash === bid.reference_hash &&
-      job.format_hash === bid.format_hash &&
-      job.amount === bid.amount &&
-      job.state === "Draft",
-  );
-  return match ? match[0] : null;
-}
 
 const MARKET_CACHE_MS = 4_000;
 let cached: { at: number; value: Promise<unknown> } | null = null;
@@ -162,7 +153,12 @@ export class RateLimiter {
 
 export async function readMarket() {
   const [config, boardConfig] = await Promise.all([
-    view<{ next_job_id: number; verifier_hash: string; paused: boolean }>(
+    view<{
+      next_job_id: number;
+      verifier_hash: string;
+      paused: boolean;
+      run_deposit: string;
+    }>(
       MARKET_ESCROW,
       "get_config",
       {},
@@ -182,38 +178,24 @@ export async function readMarket() {
     from_index: 0,
     limit: 50,
   });
-  const recent = await view<Array<[number, Job]>>(MARKET_ESCROW, "get_jobs", {
-    from_id: Math.max(0, config.next_job_id - 50),
-    limit: 50,
-  });
-  const readJob = (id: number) =>
-    recent.find(([jobId]) => jobId === id)?.[1] ??
-    view<Job | null>(MARKET_ESCROW, "get_job", { job_id: id });
-  const readFee = (id: number) =>
-    view<{ state: string; amount: string } | null>(BOARD, "get_fee", {
-      job_id: id,
-    });
   const records = new Map<string, BuyerRecord>();
   const rows = await Promise.all(
     bids.map(async ([id, bid]) => {
-      const past = await Promise.all(
-        bid.past_jobs.map((entry) => readJob(entry.job_id)),
-      );
-      const current =
-        bid.claim?.job_id != null ? await readJob(bid.claim.job_id) : null;
+      const job =
+        bid.job_id !== null
+          ? await view<Job | null>(MARKET_ESCROW, "get_job", {
+              job_id: bid.job_id,
+            })
+          : null;
       const record = records.get(bid.buyer) ?? emptyRecord();
       records.set(bid.buyer, record);
-      for (const job of [...past, current]) countJob(record, job?.state);
-      const lastId = bid.past_jobs.at(-1)?.job_id;
-      const feeJob = bid.claim?.job_id ?? lastId ?? null;
+      countJob(record, job);
+      const ended = job && ["Released", "Refunded"].includes(job.state);
       return {
         id,
         ...bid,
-        job: current,
-        last_job: lastId !== undefined ? { id: lastId, ...past.at(-1)! } : null,
-        candidate_job_id: candidateJob(bid, recent),
-        fee_job_id: feeJob,
-        fee: feeJob !== null ? await readFee(feeJob) : null,
+        job: job ? { id: bid.job_id, ...job } : null,
+        last_job: ended ? { id: bid.job_id, ...job } : null,
       };
     }),
   );
@@ -224,6 +206,8 @@ export async function readMarket() {
     escrow: MARKET_ESCROW,
     verifier_hash: config.verifier_hash,
     paused: config.paused,
+    /** What the escrow attaches for each run, paid from the job's budget. */
+    run_deposit: config.run_deposit,
     agents: agents.map((agent) => agent.wallet),
     bids: rows.reverse(),
   };
@@ -235,10 +219,17 @@ interface BuyerRecord {
   expired: number;
 }
 const emptyRecord = (): BuyerRecord => ({ paid: 0, refunded: 0, expired: 0 });
-function countJob(record: BuyerRecord, state: string | undefined) {
-  if (state === "Released") record.paid += 1;
-  if (state === "Refunded") record.refunded += 1;
-  if (state === "Expired") record.expired += 1;
+/** Counted per attempt, from the escrow's own records. */
+function countJob(
+  record: BuyerRecord,
+  job: { history?: Array<{ outcome: string }> } | null,
+) {
+  for (const attempt of job?.history ?? []) {
+    if (attempt.outcome === "Paid") record.paid += 1;
+    if (attempt.outcome === "Failed") record.refunded += 1;
+    if (attempt.outcome === "NoDelivery" || attempt.outcome === "NoVerdict")
+      record.expired += 1;
+  }
 }
 
 /** What the page and the agent tools need in order to reach the right network and wallets. */
@@ -364,7 +355,8 @@ export async function relayRoute(body: unknown) {
     !HANDOFF_ACTIONS.has(request.action)
   )
     throw new ReadError("That relay action is not available.", 400);
-  if (!request.auth)
+  // A check and reference are proven by the job's hashes on chain, so they need no signature.
+  if (!request.auth && request.action !== "challenge")
     throw new ReadError("Sign this request with your wallet.", 401);
   return relay(request);
 }
@@ -400,15 +392,9 @@ export async function reviewRoute(
   // A review spends the operator's model credit, so a closed market reviews only its listed buyers.
   if (!marketOpenTo(bid.buyer))
     throw new ReadError("The market is not open to this buyer.", 403);
-  const allowed = await verifier.verify(
-    auth,
-    [bid.buyer],
-    "review",
-    bidId,
-    relayPayload({ action: "review" }),
-  );
-  if (!allowed)
-    throw new ReadError("Only the bid's buyer can ask for a review.", 403);
+  // Anyone can start it, so the buyer signs nothing after posting. The market-access check above, one
+  // review at a time, and the per-buyer limit below bound what it can cost.
+  void auth;
   if (reviewing) throw new ReadError("A review is already running.", 429);
   if (!reviewsByBuyer.allow(bid.buyer))
     throw new ReadError("Too many reviews. Try again later.", 429);

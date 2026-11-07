@@ -12,20 +12,13 @@ interface ActionContext {
   referenceText: string;
 }
 type SignedContext = Omit<ActionContext, "wallet"> & { wallet: Wallet };
-type BoardStep = Extract<
-  Step,
-  { id: "register" | "claim" | "sync" | "link_job" | "settle_fee" | "close" }
->;
-type RelayStep = Extract<Step, { id: "review" | "collect" }>;
-type ComputeStep = Extract<Step, { id: "challenge" | "verify" }>;
-type EscrowStep = Exclude<Step, BoardStep | RelayStep | { id: "wait" }>;
 
 function boardCall(
   context: SignedContext,
   method: string,
   args: Record<string, unknown>,
   deposit = 0n,
-  gas = 90n * TGAS,
+  gas = 150n * TGAS,
 ) {
   return context.wallet.call({
     receiver: context.market.board,
@@ -36,121 +29,42 @@ function boardCall(
   });
 }
 
+/** Escrow calls carry no deposit now: runs are paid from the job's budget, and payouts move held money. */
 function escrowCall(
   context: SignedContext,
   method: string,
   args: Record<string, unknown>,
-  deposit = 0n,
-  gas = 70n * TGAS,
+  gas = 100n * TGAS,
 ) {
   return context.wallet.call({
     receiver: context.market.escrow,
     method,
     args,
-    deposit,
+    deposit: 0n,
     gas,
   });
 }
 
-async function boardAction(current: BoardStep, context: SignedContext) {
-  const { bid } = context;
-  switch (current.id) {
-    case "register":
-      await boardCall(
-        context,
-        "register_agent",
-        {
-          prompt_hash: await sha256(
-            "A person or agent applying from the Proven market page.",
-          ),
-          knowledge_hash: await sha256(""),
-          tools_hash: await sha256("[]"),
-          model: "not-declared",
-          owner: null,
-        },
-        (NEAR * 2n) / 100n,
-        30n * TGAS,
-      );
-      return;
-    case "claim":
-      await boardCall(
-        context,
-        "claim",
-        { bid_id: bid.id },
-        (NEAR * 5n) / 1000n,
-        30n * TGAS,
-      );
-      return;
-    case "sync":
-      await boardCall(context, "sync", { bid_id: bid.id });
-      return;
-    case "link_job":
-      // The attempt fee and its record. The board returns all of it if the job does not fit.
-      await boardCall(
-        context,
-        "link_job",
-        { bid_id: bid.id, job_id: current.jobId },
-        (NEAR * 17n) / 1000n,
-      );
-      return;
-    case "settle_fee":
-      await boardCall(context, "settle_fee", { job_id: current.jobId });
-      return;
-    case "close":
-      await boardCall(context, "close_bid", { bid_id: bid.id });
-  }
-}
-
-async function relayAction(current: RelayStep, context: SignedContext) {
-  const { wallet, bid } = context;
-  if (current.id === "review") {
-    await api(
-      `/api/market/review/${bid.id}`,
-      await signed(wallet, { action: "review" }, bid.id),
-    );
-    return;
-  }
-  const reply = await api<{ deliverable: string }>(
-    "/api/market/relay",
-    await signed(
-      wallet,
-      { action: "collect", job_id: current.jobId },
-      current.jobId,
-    ),
-  );
-  return reply.deliverable;
-}
-
-async function requestCompute(current: ComputeStep, context: SignedContext) {
-  const { wallet, checkText, referenceText } = context;
-  if (current.id === "challenge" && (!checkText || !referenceText))
+/** Sends the check and reference to the relay, which tests the check. Their hashes on chain prove they
+ * are the buyer's, so no signature is needed. */
+export async function sendCheck(
+  jobId: number,
+  check: string,
+  reference: string,
+): Promise<void> {
+  if (!check || !reference)
     throw new Error("Paste the check and reference used for this bid.");
-  const request =
-    current.id === "challenge"
-      ? {
-          action: "challenge",
-          job_id: current.jobId,
-          check: checkText,
-          reference: referenceText,
-        }
-      : { action: "pin_verification", job_id: current.jobId };
-  await api(
-    "/api/market/relay",
-    await signed(wallet, request, current.jobId),
-  ).catch((error: Error) => {
-    throw new Error(
-      current.id === "verify"
-        ? "The relay refused this. It may not have the worker’s work yet: the worker can send it again from this page. Nothing was charged."
-        : error.message,
-    );
+  await api("/api/market/relay", {
+    action: "challenge",
+    job_id: jobId,
+    check,
+    reference,
   });
-  await escrowCall(
-    context,
-    current.id === "challenge" ? "request_challenge" : "request_verification",
-    { job_id: current.jobId },
-    NEAR / 10n,
-    150n * TGAS,
-  );
+}
+
+/** Asks for the bid review. Anyone can; it costs the operator, not the caller. */
+export async function requestReview(bidId: number): Promise<void> {
+  await api(`/api/market/review/${bidId}`, {});
 }
 
 async function deliver(
@@ -170,7 +84,6 @@ async function deliver(
     context,
     "deliver",
     { job_id: current.jobId, deliverable_hash: hash },
-    0n,
     15n * TGAS,
   );
   try {
@@ -208,73 +121,99 @@ export async function resendDelivery(
   await handOver(wallet, jobId, delivery);
 }
 
-async function escrowAction(current: EscrowStep, context: SignedContext) {
-  const { bid, clock } = context;
-  switch (current.id) {
-    case "create_job":
-      if (!bid.claim) throw new Error("The job has no worker claim to create.");
-      await escrowCall(
-        context,
-        "create_job",
-        {
-          worker: bid.claim.agent,
-          spec_hash: bid.check_hash,
-          fakes_hash: bid.reference_hash,
-          format_hash: bid.format_hash,
-          amount: bid.amount,
-          token: null,
-          deadline: ((BigInt(clock) + 3_600_000n) * 1_000_000n).toString(),
-          verdict_window_secs: 1800,
-          verifier_hash: bid.verifier_hash,
-        },
-        (NEAR * 2n) / 100n,
-      );
-      return;
-    case "challenge":
-    case "verify":
-      await requestCompute(current, context);
-      return;
-    case "fund":
-      await escrowCall(
-        context,
-        "fund",
-        { job_id: current.jobId },
-        BigInt(bid.amount),
-      );
-      return;
-    case "deliver":
-      await deliver(current, context);
-      return;
-    case "settle":
-      await escrowCall(context, current.method, { job_id: current.jobId });
-      return;
-    case "expire":
-      await escrowCall(context, "expire", { job_id: current.jobId });
-  }
-}
-
 /** Runs an explicitly selected action. Returned work remains untrusted display text. */
 export async function performJobAction(
   current: Step,
   context: ActionContext,
 ): Promise<string | undefined> {
   if (current.id === "wait") return;
+  // These two need no wallet.
+  if (current.id === "review") {
+    await requestReview(context.bid.id);
+    return;
+  }
+  if (current.id === "send_check") {
+    await sendCheck(current.jobId, context.checkText, context.referenceText);
+    return;
+  }
   const { wallet } = context;
   if (!wallet) throw new Error("Connect a wallet first.");
   const signedContext = { ...context, wallet };
+  const { bid } = context;
   switch (current.id) {
-    case "review":
-    case "collect":
-      return relayAction(current, signedContext);
     case "register":
-    case "claim":
-    case "sync":
-    case "link_job":
-    case "settle_fee":
-    case "close":
-      await boardAction(current, signedContext);
+      await boardCall(
+        signedContext,
+        "register_agent",
+        {
+          prompt_hash: await sha256(
+            "A person or agent applying from the Proven market page.",
+          ),
+          knowledge_hash: await sha256(""),
+          tools_hash: await sha256("[]"),
+          model: "not-declared",
+          owner: null,
+        },
+        (NEAR * 2n) / 100n,
+        30n * TGAS,
+      );
       return;
-    default:
-      await escrowAction(current, signedContext);
+    case "claim":
+      await boardCall(
+        signedContext,
+        "claim",
+        { bid_id: bid.id },
+        (NEAR * 5n) / 1000n,
+        100n * TGAS,
+      );
+      return;
+    case "sync":
+      await boardCall(
+        signedContext,
+        "sync",
+        { bid_id: bid.id },
+        0n,
+        200n * TGAS,
+      );
+      return;
+    case "close":
+      await boardCall(
+        signedContext,
+        "close_bid",
+        { bid_id: bid.id },
+        0n,
+        150n * TGAS,
+      );
+      return;
+    case "deliver":
+      await deliver(current, signedContext);
+      return;
+    case "verify":
+      await escrowCall(
+        signedContext,
+        "request_verification",
+        { job_id: current.jobId },
+        200n * TGAS,
+      );
+      return;
+    case "settle":
+      await escrowCall(signedContext, current.method, {
+        job_id: current.jobId,
+      });
+      return;
+    case "expire":
+      await escrowCall(signedContext, "expire", { job_id: current.jobId });
+      return;
+    case "collect": {
+      const reply = await api<{ deliverable: string }>(
+        "/api/market/relay",
+        await signed(
+          wallet,
+          { action: "collect", job_id: current.jobId },
+          current.jobId,
+        ),
+      );
+      return reply.deliverable;
+    }
   }
 }

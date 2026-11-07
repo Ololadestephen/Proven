@@ -8,7 +8,13 @@ export const WORKER_VERIFY_AFTER_MS = 10 * 60_000;
 export function roleOf(bid: MarketBid, viewer: string | null): Role {
   if (viewer && viewer === bid.buyer) return "buyer";
   const job = bid.job ?? bid.last_job;
-  if (viewer && (viewer === bid.claim?.agent || viewer === job?.worker))
+  const pastWorkers = (job?.history ?? []).map((attempt) => attempt.worker);
+  if (
+    viewer &&
+    (viewer === bid.claim?.agent ||
+      viewer === job?.worker ||
+      pastWorkers.includes(viewer))
+  )
     return "worker";
   return "visitor";
 }
@@ -26,18 +32,20 @@ export function stepForViewer(
   if (!step || role === "buyer") return step;
   const job = bid.job ?? bid.last_job;
   if (role === "visitor") {
-    if (["register", "claim", "wait", "close"].includes(step.id)) return step;
+    if (["register", "claim", "wait", "close", "review"].includes(step.id))
+      return step;
     return wait("Someone is working on this job.");
   }
+
   // The worker's view.
   switch (step.id) {
     case "verify": {
       const delivered = Number(BigInt(job?.delivered_at ?? "0") / 1_000_000n);
       if (nowMs < delivered + WORKER_VERIFY_AFTER_MS)
         return wait(
-          "Delivered. Waiting for the verdict. If the buyer has not started it within 10 minutes, you can.",
+          "Delivered. The work is being checked. If nothing happens within 10 minutes, you can start the check yourself.",
         );
-      return { ...step, label: "Run the verification yourself" };
+      return { ...step, label: "Start the check yourself" };
     }
     case "settle":
       return step.method === "release"
@@ -45,32 +53,34 @@ export function stepForViewer(
         : wait(
             `Not paid: the work failed the rule “${job?.failed_rule ?? "unknown"}”.`,
           );
-    case "settle_fee":
-      return job?.state === "Refunded" &&
-        job.failed_rule &&
-        job.failed_rule !== "format"
-        ? { ...step, label: "Collect your 0.015 NEAR attempt fee" }
-        : null;
-    case "sync":
-    case "expire":
-    case "close":
-    case "collect":
-      return job?.state === "Released"
-        ? wait(`Paid. ${showNear(job.amount)} was sent to you.`)
-        : job?.state === "Refunded"
-          ? wait(
-              `Not paid: the work failed the rule “${job.failed_rule ?? "unknown"}”.`,
-            )
-          : job?.state === "Expired"
-            ? wait("Expired. The money went back to the buyer.")
-            : job?.state === "CheckRejected"
-              ? wait(
-                  "The buyer’s check failed its own test, so this job cannot run. Nothing was paid.",
-                )
-              : null;
-    default:
+    case "deliver":
+    case "claim":
+    case "register":
       return step;
+    default:
+      return outcomeFor(bid);
   }
+}
+
+/** What a worker who has finished sees: its own result, read from the escrow's record of attempts. */
+function outcomeFor(bid: MarketBid): Step | null {
+  const job = bid.job ?? bid.last_job;
+  const last = job?.history?.at(-1);
+  if (job?.state === "Released")
+    return wait(`Paid. ${showNear(job.amount)} was sent to the worker.`);
+  if (last?.outcome === "Failed")
+    return wait(
+      `Not paid: the work failed the rule “${last.failed_rule ?? "unknown"}”.`,
+    );
+  if (last?.outcome === "NoDelivery")
+    return wait("Not paid: no delivery arrived before the deadline.");
+  if (last?.outcome === "NoVerdict")
+    return wait("Not paid: no verdict was recorded in time.");
+  if (job?.state === "CheckRejected")
+    return wait(
+      "The buyer’s check failed its own test, so this job cannot run. Nothing was paid.",
+    );
+  return wait("Waiting for the job to move on.");
 }
 
 /** A short note under the button, written for the person pressing it. */
@@ -92,16 +102,15 @@ export function noteFor(
   }
   switch (step.id) {
     case "review":
-      return "An automated review of the public brief. It can only keep a bid off the board and never decides payment. It costs you nothing.";
-    case "fund":
-      return `Sends ${showNear(amount)} to ${escrow}, held until the verdict. Only your check decides it.`;
-    case "challenge":
+      return "An automated review of the public brief. It can only keep a bid off the board and never decides payment. It costs you nothing, and it usually starts by itself.";
+    case "send_check":
+      return "Sends your check and reference to the relay, which tests the check against planted fakes. No signature and no cost: they match the hashes you posted.";
     case "verify":
-      return "Holds 0.1 NEAR plus gas for the run. Most of it comes back. The relay can read the private texts.";
-    case "create_job":
-      return "Creates the job for this worker. Costs 0.02 NEAR plus gas.";
-    case "link_job":
-      return "Links the job and pays the 0.015 NEAR attempt fee plus a 0.002 NEAR record.";
+      return "Paid from the job's compute budget. Usually this starts by itself as soon as the work arrives.";
+    case "settle":
+      return "Moves the held money as the recorded verdict says. Usually this happens by itself within a few minutes.";
+    case "close":
+      return "Returns your payment, what is left of the compute budget, and the unused attempt fees.";
     case "claim":
       return "Reserves the job for you. Costs 0.005 NEAR plus gas.";
     case "register":

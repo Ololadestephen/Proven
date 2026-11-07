@@ -50,47 +50,32 @@ export function reconciled(pending: PendingAction, market: Market): boolean {
   const bid = market.bids.find((bid) => bid.id === pending.bidId);
   if (!bid) return false;
   const old = before.value as Market["bids"][number] | null;
-  if (method === "create_job")
-    return (
-      bid.candidate_job_id !== null ||
-      (bid.claim?.job_id !== null && bid.claim?.job_id !== undefined)
-    );
+  const jobOf = (value: typeof bid | null) => value?.job ?? null;
+  const job = jobOf(bid);
+  const oldJob = jobOf(old);
   if (method === "claim")
     return (
       bid.claim?.agent === pending.account &&
       bid.claim.number !== old?.claim?.number
     );
-  if (method === "link_job") return bid.claim?.job_id === args.job_id;
-  if (method === "sync" || method === "settle_fee" || method === "close_bid")
+  if (method === "sync" || method === "close_bid")
     return JSON.stringify(bid) !== JSON.stringify(old);
-  if (method === "expire")
-    return ["Expired", "Expiring"].includes(
-      bid.job?.state ?? bid.last_job?.state ?? "",
-    );
-  if (method === "request_challenge")
+  // Any change to the job's state or attempts means the call was applied.
+  if (method === "expire" || method === "refund")
     return (
-      !!bid.job &&
-      bid.claim?.job_id === old?.claim?.job_id &&
-      (bid.job.state !== "Draft" ||
-        (bid.job.attempt ?? 0) > (old?.job?.attempt ?? 0))
+      !!job &&
+      (job.state !== oldJob?.state ||
+        (job.history?.length ?? 0) > (oldJob?.history?.length ?? 0))
     );
   if (method === "request_verification")
     return (
-      !!bid.job &&
-      bid.claim?.job_id === old?.claim?.job_id &&
-      (bid.job.state !== "Delivered" ||
-        (bid.job.attempt ?? 0) > (old?.job?.attempt ?? 0))
+      !!job &&
+      (job.state !== "Delivered" || (job.attempt ?? 0) > (oldJob?.attempt ?? 0))
     );
-  if (method === "fund")
-    return !!bid.job && !["Draft", "Challenged"].includes(bid.job.state);
   if (method === "deliver")
-    return bid.job?.deliverable_hash === args.deliverable_hash;
+    return job?.deliverable_hash === args.deliverable_hash;
   if (method === "release")
-    return bid.job?.state === "Released" || bid.last_job?.state === "Released";
-  if (method === "refund")
-    return ["Refunded", "Expired"].includes(
-      bid.job?.state ?? bid.last_job?.state ?? "",
-    );
+    return job?.state === "Released" || job?.state === "Releasing";
   return false;
 }
 export class ActionGate {

@@ -1,10 +1,15 @@
 // What a person can do next on a bid, worked out only from what the chain says. Wallet redirects reload
 // the page, so nothing here depends on memory. A step never decides a verdict.
+//
+// The buyer pays once, when posting. After that the relay sends the check to be tested, starts runs
+// and pays out when the chain allows; these steps are there for when it has not yet, and anyone may
+// take them.
 export interface MarketJob {
-  id?: number;
+  id?: number | null;
   attempt?: number;
   buyer: string;
-  worker: string;
+  /** Null while the job waits for a worker. */
+  worker: string | null;
   amount: string;
   state: string;
   deadline: string;
@@ -17,6 +22,14 @@ export interface MarketJob {
   failed_rule: string | null;
   challenge_request_id: string | null;
   verdict_request_id: string | null;
+  compute_budget?: string;
+  max_attempts?: number;
+  history?: Array<{
+    worker: string;
+    outcome: string;
+    failed_rule: string | null;
+    verdict_request_id: string | null;
+  }>;
 }
 export interface MarketBid {
   id: number;
@@ -30,45 +43,36 @@ export interface MarketBid {
   format_hash: string;
   expires_at: string;
   state: string;
-  claim_window_secs: number;
+  deliver_secs?: number;
+  max_attempts?: number;
+  job_id?: number | null;
   allowed_workers: string[] | null;
   review: { allow: boolean } | null;
-  claim: {
-    number: number;
-    agent: string;
-    expires_at: string;
-    job_id: number | null;
-  } | null;
+  claim: { number: number; agent: string } | null;
   claims_made: number;
   funded_attempts: number;
+  fees?: string[];
   job: MarketJob | null;
   last_job: MarketJob | null;
-  candidate_job_id: number | null;
-  fee_job_id?: number | null;
-  fee?: { state: string; amount: string } | null;
 }
 export type Step =
   | { id: "review"; label: string }
-  | { id: "create_job"; label: string }
-  | { id: "link_job"; label: string; jobId: number }
-  | { id: "challenge"; label: string; jobId: number }
-  | { id: "fund"; label: string; jobId: number }
-  | { id: "verify"; label: string; jobId: number }
-  | { id: "settle"; label: string; jobId: number; method: "release" | "refund" }
-  | { id: "sync"; label: string }
-  | { id: "expire"; label: string; jobId: number }
-  | { id: "settle_fee"; label: string; jobId: number }
+  | { id: "send_check"; label: string; jobId: number }
   | { id: "close"; label: string }
-  | { id: "collect"; label: string; jobId: number }
   | { id: "register"; label: string }
   | { id: "claim"; label: string }
   | { id: "deliver"; label: string; jobId: number }
+  | { id: "verify"; label: string; jobId: number }
+  | { id: "settle"; label: string; jobId: number; method: "release" | "refund" }
+  | { id: "expire"; label: string; jobId: number }
+  | { id: "sync"; label: string }
+  | { id: "collect"; label: string; jobId: number }
   | { id: "wait"; label: string };
 
-const FUND_MARGIN_NANOS = 60_000_000_000n;
 const near = (yocto: string) =>
   `${Number(BigInt(yocto) / 10n ** 18n) / 1e6} NEAR`;
 export const showNear = near;
+const wait = (label: string): Step => ({ id: "wait", label });
 
 export function nextStep(
   bid: MarketBid,
@@ -78,161 +82,130 @@ export function nextStep(
 ): Step | null {
   const now = BigInt(nowMs) * 1_000_000n;
   const job = bid.job;
-  const jobId = bid.claim?.job_id ?? null;
+  const jobId = bid.job_id ?? job?.id ?? null;
   const isBuyer = viewer === bid.buyer;
-  const isWorker = viewer !== null && viewer === bid.claim?.agent;
+  const isWorker = viewer !== null && viewer === job?.worker;
+  const ended = now >= BigInt(bid.expires_at);
 
-  // Anyone can move these on, so a stuck job or an unsettled fee never depends on one person.
+  if (bid.state === "Pending")
+    return wait("Creating the job and holding the payment");
+  if (bid.state === "Done")
+    return isBuyer && job?.state === "Released" && jobId !== null
+      ? { id: "collect", label: "Collect the work", jobId }
+      : null;
+  if (["Closed", "Cancelled"].includes(bid.state)) {
+    // Fees not yet returned are moved on by anyone.
+    return viewer && bid.fees?.includes("Held") && job
+      ? { id: "sync", label: "Return the unused attempt fees" }
+      : null;
+  }
+  // A bid that has ended with no worker on it is refunded by whoever closes it.
   if (
-    ["Open", "Done", "Closed", "Cancelled"].includes(bid.state) &&
-    bid.fee?.state === "Held" &&
-    bid.fee_job_id != null &&
-    bid.last_job
-  )
-    return {
-      id: "settle_fee",
-      label: "Settle the attempt fee",
-      jobId: bid.fee_job_id,
-    };
-  if (
-    now >= BigInt(bid.expires_at) &&
-    ["Unreviewed", "Blocked", "Open"].includes(bid.state)
+    ended &&
+    ["Unreviewed", "Blocked", "Open"].includes(bid.state) &&
+    (!job || ["Draft", "Open", "CheckRejected"].includes(job.state))
   )
     return viewer
-      ? { id: "close", label: "This bid has expired: close it" }
-      : { id: "wait", label: "This bid has expired" };
+      ? { id: "close", label: "This bid has ended: refund the buyer" }
+      : wait("This bid has ended");
   if (bid.state === "Unreviewed")
-    return isBuyer
+    return viewer
       ? { id: "review", label: "Run the bid review" }
-      : { id: "wait", label: "Waiting for the bid review" };
-  if (["Blocked", "Cancelled", "Closed"].includes(bid.state)) return null;
-  if (bid.state === "Done" || (bid.last_job && bid.state === "Open")) {
-    const last = bid.last_job;
-    if (isBuyer && last?.state === "Released" && last.id !== undefined)
-      return { id: "collect", label: "Collect the work", jobId: last.id };
-  }
-  if (bid.state === "Done") return null;
-  if (bid.state === "Open") {
-    if (!viewer) return { id: "wait", label: "Connect a wallet to apply" };
-    if (isBuyer)
-      return {
-        id: "wait",
-        label:
-          "Waiting for someone to apply. Nothing is locked. Share this page with a worker, who applies from a different account.",
-      };
-    if (bid.funded_attempts >= 3)
-      return { id: "wait", label: "This bid has used all three attempts" };
-    if (bid.allowed_workers && !bid.allowed_workers.includes(viewer))
-      return { id: "wait", label: "This bid is limited to listed workers" };
-    if (!registered) return { id: "register", label: "Register to apply" };
-    return { id: "claim", label: "Apply for this job" };
-  }
-
-  // Claimed from here.
-  if (jobId === null || !job) {
-    const lapsed = bid.claim && now > BigInt(bid.claim.expires_at);
-    if (lapsed)
-      return { id: "sync", label: "This claim lapsed: reopen the bid" };
-    if (!isBuyer)
-      return {
-        id: "wait",
-        label: isWorker
-          ? "Claimed. Wait until the buyer funds it, and spend nothing yet"
-          : "Someone is working on this",
-      };
-    if (bid.candidate_job_id !== null)
-      return {
-        id: "link_job",
-        label: "Link the job and pay the attempt fee (0.017 NEAR)",
-        jobId: bid.candidate_job_id,
-      };
-    return { id: "create_job", label: "Create the job for this agent" };
-  }
+      : wait("Waiting for the bid review");
+  if (bid.state === "Blocked")
+    return isBuyer
+      ? {
+          id: "close",
+          label: "The review blocked this bid: get your money back",
+        }
+      : null;
+  if (!job || jobId === null) return wait("Reading the job");
 
   switch (job.state) {
     case "Draft":
       return isBuyer
         ? {
-            id: "challenge",
-            label: "Run the fake challenge (0.1 NEAR, mostly refunded)",
+            id: "send_check",
+            label: "Send your check to start its test",
             jobId,
           }
-        : { id: "wait", label: "The buyer is testing the check" };
-    case "Challenged":
-      if (!isBuyer)
-        return { id: "wait", label: "The buyer has not funded yet" };
-      if (bid.claim && now + FUND_MARGIN_NANOS >= BigInt(bid.claim.expires_at))
-        return {
-          id: "wait",
-          label: "The claim is about to end, so funding is closed",
-        };
-      return { id: "fund", label: `Fund ${near(job.amount)}`, jobId };
+        : wait("The buyer’s check is about to be tested");
+    case "Challenging":
+      return wait("Testing the check against planted fakes");
     case "CheckRejected":
-      return {
-        id: "sync",
-        label: "The check failed its challenge: close the bid",
-      };
+      return viewer
+        ? { id: "sync", label: "The check failed its test: refund the buyer" }
+        : wait("The check failed its test");
+    case "Open":
+      if (bid.state === "Claimed")
+        return { id: "sync", label: "Update the bid" };
+      if (bid.state === "Assigning")
+        return wait("Giving the job to the worker");
+      if (!viewer) return wait("Connect a wallet to apply");
+      if (isBuyer)
+        return wait(
+          "Waiting for someone to apply. Your payment is held, and the worker can start as soon as they apply.",
+        );
+      if (bid.funded_attempts >= (bid.max_attempts ?? 3))
+        return wait("This bid has used all its attempts");
+      if (bid.allowed_workers && !bid.allowed_workers.includes(viewer))
+        return wait("This bid is limited to listed workers");
+      if (!registered) return { id: "register", label: "Register to apply" };
+      return { id: "claim", label: "Apply for this job" };
     case "Funded":
       if (now > BigInt(job.deadline))
         return {
           id: "expire",
-          label: "Expire this job and return the money to the buyer",
+          label: "The deadline passed: end this attempt",
           jobId,
         };
       return isWorker
         ? { id: "deliver", label: "Deliver the work", jobId }
-        : { id: "wait", label: "Funded. Waiting for the delivery" };
-    case "Delivered":
+        : wait("The worker has the job. Waiting for the delivery");
+    case "Delivered": {
+      const window = BigInt(job.verdict_window_secs ?? 0) * 1_000_000_000n;
+      if (job.delivered_at && now > BigInt(job.delivered_at) + window)
+        return {
+          id: "expire",
+          label: "No verdict in time: end this attempt",
+          jobId,
+        };
+      return { id: "verify", label: "Run verification", jobId };
+    }
+    case "Verifying": {
+      const window = BigInt(job.verdict_window_secs ?? 0) * 1_000_000_000n;
       if (
         job.delivered_at &&
-        now >
-          BigInt(job.delivered_at) +
-            BigInt(job.verdict_window_secs ?? 0) * 1_000_000_000n
+        job.run_started_at &&
+        now > BigInt(job.delivered_at) + window &&
+        now > BigInt(job.run_started_at) + 900_000_000_000n
       )
         return {
           id: "expire",
-          label: "No verdict in time: expire this job",
+          label: "The run never finished: end this attempt",
           jobId,
         };
-      return {
-        id: "verify",
-        label: "Run verification (0.1 NEAR, mostly refunded)",
-        jobId,
-      };
+      return wait("Checking the work");
+    }
     case "Passed":
       return {
         id: "settle",
-        label: "Release the payment",
+        label: "Pay the worker",
         jobId,
         method: "release",
       };
     case "Failed":
+    case "RefundDue":
       return {
         id: "settle",
-        label: "Refund the buyer",
+        label: "Close this failed attempt",
         jobId,
         method: "refund",
       };
     case "Released":
     case "Refunded":
-    case "Expired":
       return { id: "sync", label: "Update the bid" };
-    case "Verifying":
-      if (
-        job.delivered_at &&
-        job.run_started_at &&
-        now >
-          BigInt(job.delivered_at) +
-            BigInt(job.verdict_window_secs ?? 0) * 1_000_000_000n &&
-        now > BigInt(job.run_started_at) + 900_000_000_000n
-      )
-        return {
-          id: "expire",
-          label: "The run never finished: expire this job",
-          jobId,
-        };
-      return { id: "wait", label: "A run or payout is in progress" };
     default:
-      return { id: "wait", label: "A run or payout is in progress" };
+      return wait("A payout is in progress");
   }
 }

@@ -5,72 +5,68 @@ export interface ProgressStage {
   status: "done" | "current" | "todo" | "failed";
 }
 
-const REACHED: Record<string, number> = {
-  Draft: 3,
-  Challenging: 3,
-  CheckRejected: 3,
-  Challenged: 4,
-  Funded: 5,
-  Delivered: 6,
-  Verifying: 6,
-  Passed: 7,
-  Failed: 7,
-  Releasing: 7,
-  Refunding: 7,
-  Released: 8,
-  Refunded: 8,
-  Expired: 8,
-};
-const LAST_LABEL: Record<string, string> = {
-  Released: "Paid",
-  Refunded: "Refunded",
-  Expired: "Expired",
-};
+const RAN = [
+  "Passed",
+  "Failed",
+  "Releasing",
+  "Refunding",
+  "RefundDue",
+  "Released",
+  "Refunded",
+];
 
-/** Where a bid's latest attempt stands, read only from the chain. It decides nothing. */
+/** Where a bid's job stands, read only from the chain. It decides nothing. A refund is never shown as
+ * a success. */
 export function jobProgress(bid: MarketBid): ProgressStage[] {
   const job = bid.job ?? bid.last_job;
+  const history = job?.history ?? [];
+  const last = history.at(-1);
+  const state = job?.state ?? "";
+  const done = [
+    true,
+    bid.review !== null || !["Pending", "Unreviewed"].includes(bid.state),
+    !!job && !["Draft", "Challenging", "CheckRejected"].includes(state),
+    !!job?.worker || history.length > 0,
+    !!job?.delivered_at || history.some((a) => a.outcome !== "NoDelivery"),
+    RAN.includes(state) || history.some((a) => a.outcome === "Failed"),
+    state === "Released",
+  ];
+  const failed = [
+    false,
+    bid.state === "Blocked",
+    state === "CheckRejected",
+    false,
+    false,
+    state === "Failed" || last?.outcome === "Failed",
+    state === "Refunded",
+  ];
   const labels = [
     "Posted",
     "Reviewed",
-    "Claimed",
     "Check tested",
-    "Funded",
+    "Claimed",
     "Delivered",
     "Verified",
-    (job && LAST_LABEL[job.state]) ?? "Settled",
+    state === "Refunded" ? "Refunded" : "Paid",
   ];
-  let reached = bid.state === "Unreviewed" || bid.state === "Blocked" ? 1 : 2;
-  if (bid.claim || job) reached = 3;
-  if (job) reached = Math.max(reached, REACHED[job.state] ?? 3);
-  const failedAt =
-    bid.state === "Blocked"
-      ? 1
-      : job?.state === "CheckRejected"
-        ? 3
-        : job?.state === "Failed" || job?.state === "Refunded"
-          ? 6
-          : -1;
-  // A refund or an expiry ends the job, but it is not a success, so it is never shown in green.
-  const unpaid = job?.state === "Refunded" || job?.state === "Expired";
+  const current = done.findIndex((value, index) => !value && !failed[index]);
   return labels.map((label, index) => ({
     label,
-    status:
-      index === failedAt || (unpaid && index === 7)
-        ? "failed"
-        : index < reached
-          ? "done"
-          : index === reached
-            ? "current"
-            : "todo",
+    status: failed[index]
+      ? "failed"
+      : done[index]
+        ? "done"
+        : index === current
+          ? "current"
+          : "todo",
   }));
 }
 
 /** The worker's shorter path: from applying to being paid. */
 export function workerProgress(bid: MarketBid): ProgressStage[] {
   const full = jobProgress(bid);
-  const pick = [2, 4, 5, 6, 7];
-  const labels = ["Applied", "Funded", "Delivered", "Verdict"];
+  const pick = [3, 4, 5, 6];
+  const labels = ["Applied", "Delivered", "Verdict"];
   return pick.map((index, at) => ({
     label: labels[at] ?? full[index]!.label,
     status: full[index]!.status,
