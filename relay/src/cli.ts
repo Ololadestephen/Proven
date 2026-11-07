@@ -59,6 +59,8 @@ export function runInput(
   kind: RunKind,
   escrow: string,
 ): string {
+  // Jobs made before the public format was added have no format hash in their input.
+  const format = job.format_hash ? { format_hash: job.format_hash } : {};
   return JSON.stringify(
     kind === "Challenge"
       ? {
@@ -67,11 +69,13 @@ export function runInput(
           job: jobId,
           check_hash: job.spec_hash,
           reference_hash: job.fakes_hash,
+          ...format,
         }
       : {
           mode: "verify",
           escrow,
           job: jobId,
+          ...format,
           check_hash: job.spec_hash,
           deliverable_hash: job.deliverable_hash,
         },

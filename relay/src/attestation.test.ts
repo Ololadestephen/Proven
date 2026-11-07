@@ -92,6 +92,23 @@ test("a record whose fields were edited no longer matches the quote", () => {
   );
 });
 
+test("the rebuilt input includes the format hash, as in a real mainnet run", async () => {
+  const { runInput } = await import("./cli.ts");
+  // proven-escrow.near job 2, OutLayer request 2858, whose attested input_hash is below.
+  const job = {
+    spec_hash:
+      "b6ea8f968b89dc6d048e8ad79930885a50efcb7dfc36fa7b3e81cca9d4026e88",
+    fakes_hash:
+      "2c21728a2970b469ab93d6c1ed070845feb203ab6f3ceebe132403267291e8c8",
+    format_hash:
+      "49f904652939a67c775a566bac3be03703bfe3126b1385ffbe337d549fdd5159",
+  } as Parameters<typeof runInput>[0];
+  assert.equal(
+    sha256Hex(runInput(job, 2, "Challenge", "proven-escrow.near")),
+    "942b23166961f6b3c8833a4d44fc1a47732f18115e5605668213aef3e7cf005f",
+  );
+});
+
 test("the relay rebuilds exactly the input the contract sent to OutLayer", async () => {
   const { runInput } = await import("./cli.ts");
   // The real input of escrow-v2 job 0 (OutLayer request 8667), whose attested input_hash is below.

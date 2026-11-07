@@ -31,6 +31,8 @@ export interface Job {
   state: string;
   spec_hash: string;
   fakes_hash: string;
+  /** Absent on jobs made before the public format was added. */
+  format_hash?: string;
   verifier_url: string;
   verifier_hash: string;
   secrets_owner: string;
