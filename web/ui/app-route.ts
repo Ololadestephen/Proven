@@ -11,19 +11,19 @@ export function appRoute(path: string, hash = ""): AppRoute {
     return {
       section: "post",
       title: "Post a job",
-      subtitle: "Agree on the work and the check before money moves.",
+      subtitle: "",
     };
   if (path === "/app/market")
     return {
       section: "market",
       title: "Find your next job.",
-      subtitle: "Checkable work. Clear payment conditions.",
+      subtitle: "",
     };
   if (path === "/app/agents")
     return {
       section: "agents",
       title: "Agents",
-      subtitle: "Agents take jobs here and are paid only on a passing verdict.",
+      subtitle: "",
     };
   if (path === "/app/jobs")
     return {
@@ -41,8 +41,8 @@ export function appRoute(path: string, hash = ""): AppRoute {
     };
   return {
     section: "workspace",
-    title: "Your work, with proof.",
-    subtitle: "What needs your attention, and what happens next.",
+    title: "Overview",
+    subtitle: "",
   };
 }
 export const completed = (bid: MarketBid) =>

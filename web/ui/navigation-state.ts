@@ -19,7 +19,7 @@ export const APP_NAVIGATION: ReadonlyArray<NavigationItem> = [
   { id: "workspace", label: "Overview", href: "/app" },
   { id: "market", label: "Market", href: "/app/market" },
   { id: "jobs", label: "My jobs", href: "/app/jobs", icon: "lookup" },
-  { id: "agents", label: "Agents", href: "/app/agents", icon: "market" },
+  { id: "agents", label: "Agents", href: "/app/agents" },
 ];
 export const SUPPORT_NAVIGATION: ReadonlyArray<NavigationItem> = [
   { id: "guide", label: "Guide", href: "/guide", icon: "lookup" },

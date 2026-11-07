@@ -88,6 +88,34 @@
   justify-content: flex-end;
   flex-wrap: wrap;
 }
+/* Connected: one button, with its menu floating below so the toolbar keeps its height. */
+.market-wallet details {
+  position: relative;
+}
+.market-wallet summary {
+  list-style: none;
+  cursor: pointer;
+}
+.market-wallet summary::-webkit-details-marker {
+  display: none;
+}
+.wallet-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+  min-width: 180px;
+  padding: 12px;
+  border: 1px solid var(--line, #e4e4ee);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  box-shadow: 0 8px 24px rgb(20 20 40 / 12%);
+}
+.wallet-menu p {
+  margin: 0;
+}
 .workspace-app .workspace-toolbar .button {
   min-height: 38px;
   padding: 9px 14px;

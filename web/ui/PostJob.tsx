@@ -239,9 +239,8 @@ export function PostJob({
       )}
       {canPost(wallet?.accountId) ? null : (
         <p role="alert" className="market-error">
-          This market is closed for now, so only listed buyers can post. Posting
-          from another account would cost a deposit for a job that cannot run,
-          so it is turned off here.
+          Only listed buyers can post for now, so posting is off for this
+          account.
         </p>
       )}
       <fieldset disabled={locked}>

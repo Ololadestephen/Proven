@@ -46,6 +46,11 @@ function Icon({ kind }: { kind: WorkspaceSection }) {
           <path d="m4 9 2-5h12l2 5M4 9h16M5 9v11h14V9M9 20v-6h6v6" />
           <path d="M3 9v2a2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 2-2" />
         </>
+      ) : kind === "agents" ? (
+        <>
+          <rect x="4" y="8" width="16" height="12" rx="3" />
+          <path d="M12 8V4M9 13v1M15 13v1M2 13v2M22 13v2" />
+        </>
       ) : kind === "post" ? (
         <>
           <rect x="3" y="3" width="18" height="18" rx="4" />

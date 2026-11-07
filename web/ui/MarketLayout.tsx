@@ -59,7 +59,7 @@ export function MarketLayout({
           <div className="workspace-content">{children}</div>
         </main>
         <footer className="workspace-footer">
-          Proven · {NETWORK_LABEL} · <a href="/about">About this service</a>
+          Proven · <a href="/about">About this service</a>
         </footer>
       </div>
     </div>

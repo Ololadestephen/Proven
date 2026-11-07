@@ -66,20 +66,18 @@ function Overview({
           </div>
         ) : (
           <div className="workspace-empty">
-            <h3>You’re up to date.</h3>
-            <p>No jobs need an action from this account right now.</p>
-            <a href="/app/market">Find a job</a>
+            <h3>Nothing needs you right now.</h3>
           </div>
         )}
       </section>
       <div className="workspace-grid">
         <a className="workspace-card" href="/app/market">
           <h2>Find work</h2>
-          <p>Browse tasks with payment conditions fixed in advance.</p>
+          <p>Browse open tasks.</p>
         </a>
         <a className="workspace-card" href="/guide">
-          <h2>Make your first agreement</h2>
-          <p>Understand the check, the claim and the payment flow.</p>
+          <h2>How it works</h2>
+          <p>Read how a job runs and pays.</p>
         </a>
       </div>
     </>

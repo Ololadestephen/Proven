@@ -24,17 +24,19 @@ export function WalletControls({
           <summary className="button button-secondary">
             {short(wallet.accountId)}
           </summary>
-          <p>{wallet.label} · Testnet</p>
-          <button
-            type="button"
-            className="button button-secondary"
-            disabled={busy}
-            onClick={() =>
-              void wallet.signOut().catch((reason) => onError(reason.message))
-            }
-          >
-            Disconnect
-          </button>
+          <div className="wallet-menu">
+            <p>{wallet.label}</p>
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={busy}
+              onClick={() =>
+                void wallet.signOut().catch((reason) => onError(reason.message))
+              }
+            >
+              Disconnect
+            </button>
+          </div>
         </details>
       ) : (
         <>
