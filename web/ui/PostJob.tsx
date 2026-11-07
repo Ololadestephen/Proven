@@ -369,7 +369,14 @@ export function PostJob({
                 be checked against its hash.
               </dd>
               <dt>Attempts</dt>
-              <dd>At most 3 funded attempts, one per account.</dd>
+              <dd>
+                At most 3 funded attempts, one per account. Each funded attempt
+                counts even if the worker never delivers: your money comes back
+                at the deadline, but is locked until then, and three such
+                workers close the bid. On an open bid, junk that fits the format
+                can also take the fee, up to 0.045 NEAR. List allowed workers to
+                avoid both.
+              </dd>
               <dt>Attempt fee</dt>
               <dd>
                 0.017 NEAR at each link: 0.015 fee and 0.002 for its record. The
