@@ -510,3 +510,15 @@
 .workspace-app .job-pending p {
   margin: 0;
 }
+.workspace-app .job-progress[data-steps="5"] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.workspace-app .job-resend {
+  width: 100%;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.workspace-app .job-resend textarea {
+  width: 100%;
+  margin: 8px 0;
+}

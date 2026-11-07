@@ -7,8 +7,9 @@ import {
 } from "./market-steps.ts";
 import type { Market, Wallet, Run } from "./market-types.ts";
 import { recall, short } from "./market-client.ts";
-import { performJobAction } from "./job-actions.ts";
-import { jobProgress } from "./job-progress.ts";
+import { performJobAction, resendDelivery } from "./job-actions.ts";
+import { jobProgress, workerProgress } from "./job-progress.ts";
+import { noteFor, roleOf, stepForViewer } from "./role-steps.ts";
 import { COIN, IS_MAINNET, OUTLAYER_API } from "./network.ts";
 export function JobWorkspace({
   bid,
@@ -32,11 +33,21 @@ export function JobWorkspace({
   const [reference, setReference] = useState("");
   const viewer = wallet?.accountId ?? null;
   const registered = viewer ? market.agents.includes(viewer) : false;
-  const step = nextStep(bid, viewer, registered, clock);
+  const role = roleOf(bid, viewer);
+  const step = stepForViewer(
+    nextStep(bid, viewer, registered, clock),
+    bid,
+    role,
+    clock,
+  );
   const job = bid.job ?? bid.last_job;
   const worker = bid.claim?.agent ?? job?.worker;
   const savedCheck = recall(bid.check_hash);
   const savedReference = recall(bid.reference_hash);
+  const deliveredHash = bid.job?.deliverable_hash ?? null;
+  const [resend, setResend] = useState("");
+  const canResend =
+    role === "worker" && !!deliveredHash && bid.job?.state === "Delivered";
 
   const act = (current: Step) =>
     run(current.label, async () => {
@@ -63,24 +74,41 @@ export function JobWorkspace({
 
   const needsPrivate =
     step?.id === "challenge" && (!savedCheck || !savedReference);
-  const note =
-    step?.id === "review"
-      ? "An automated review of the public brief. It can only keep a bid off the board and never decides payment. It costs you nothing."
-      : step?.id === "fund"
-        ? `Funding sends ${showNear(bid.amount)} to ${market.escrow}. Only the fixed check controls settlement. An unfair check can reject honest work.`
-        : step?.id === "challenge" || step?.id === "verify"
-          ? `This call attaches 0.1 ${COIN} plus gas to ${market.escrow}. Unused compute deposit returns; failed runs may need recovery. The relay can read private texts.`
-          : step?.id === "claim"
-            ? `Applying reserves this claim with 0.005 ${COIN} storage plus gas. Wait for buyer funding before working.`
-            : step?.id === "register"
-              ? `Registration attaches 0.02 ${COIN} storage plus gas. This does not prove a unique person or agent.`
-              : step?.id === "create_job"
-                ? `Creates an escrow job with 0.02 ${COIN} storage plus gas. Recipient: ${market.escrow}.`
-                : "Review the recipient and action in your wallet before confirming.";
+  const note = step ? noteFor(step, role, market.escrow, bid.amount) : "";
+  const resendBox = canResend ? (
+    <details className="job-resend">
+      <summary>Didn’t finish handing over your work? Send it again</summary>
+      <textarea
+        rows={5}
+        value={resend || recall(deliveredHash!) || ""}
+        onChange={(event) => setResend(event.target.value)}
+        spellCheck={false}
+        aria-label="The exact work you delivered"
+      />
+      <button
+        type="button"
+        className="button button-secondary"
+        disabled={busy || !wallet}
+        onClick={() =>
+          void run("Send my work again", () =>
+            resendDelivery(
+              wallet,
+              bid.job!.id ?? bid.claim!.job_id!,
+              resend || recall(deliveredHash!) || "",
+              deliveredHash!,
+            ),
+          )
+        }
+      >
+        Send my work again
+      </button>
+    </details>
+  ) : null;
   const actionCard = !step ? null : step.id === "wait" ? (
     <div className="job-action job-action-wait">
       <span className="job-action-kicker">Now</span>
       <p>{step.label}</p>
+      {resendBox}
     </div>
   ) : (
     <div className="job-action">
@@ -126,6 +154,7 @@ export function JobWorkspace({
       </button>
       {wallet ? null : <p className="post-hint">Connect a wallet first.</p>}
       <p className="post-hint">{note}</p>
+      {resendBox}
     </div>
   );
   return (
@@ -144,17 +173,23 @@ export function JobWorkspace({
           </span>
         </div>
       </header>
-      <ol className="job-progress" aria-label="Job progress">
-        {jobProgress(bid).map((stage) => (
-          <li
-            key={stage.label}
-            data-status={stage.status}
-            aria-current={stage.status === "current" ? "step" : undefined}
-          >
-            <span aria-hidden="true" />
-            {stage.label}
-          </li>
-        ))}
+      <ol
+        className="job-progress"
+        data-steps={role === "worker" ? 5 : 8}
+        aria-label="Job progress"
+      >
+        {(role === "worker" ? workerProgress(bid) : jobProgress(bid)).map(
+          (stage) => (
+            <li
+              key={stage.label}
+              data-status={stage.status}
+              aria-current={stage.status === "current" ? "step" : undefined}
+            >
+              <span aria-hidden="true" />
+              {stage.label}
+            </li>
+          ),
+        )}
       </ol>
       {actionCard}
       <div className="workspace-tabs" aria-label="Job sections">

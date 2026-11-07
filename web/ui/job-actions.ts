@@ -1,6 +1,6 @@
 import type { MarketBid, Step } from "./market-steps.ts";
 import { NEAR, TGAS, type Market, type Wallet } from "./market-types.ts";
-import { api, sha256, signed } from "./market-client.ts";
+import { api, remember, sha256, signed } from "./market-client.ts";
 
 interface ActionContext {
   market: Market;
@@ -134,7 +134,16 @@ async function requestCompute(current: ComputeStep, context: SignedContext) {
           reference: referenceText,
         }
       : { action: "pin_verification", job_id: current.jobId };
-  await api("/api/market/relay", await signed(wallet, request, current.jobId));
+  await api(
+    "/api/market/relay",
+    await signed(wallet, request, current.jobId),
+  ).catch((error: Error) => {
+    throw new Error(
+      current.id === "verify"
+        ? "The relay refused this. It may not have the worker’s work yet: the worker can send it again from this page. Nothing was charged."
+        : error.message,
+    );
+  });
   await escrowCall(
     context,
     current.id === "challenge" ? "request_challenge" : "request_verification",
@@ -154,21 +163,49 @@ async function deliver(
   } catch {
     throw new Error("Your delivery must be valid JSON. Nothing was submitted.");
   }
+  const hash = await sha256(delivery);
+  // Kept in this browser first, so the work can be handed over again if the second step fails.
+  remember(hash, delivery);
   await escrowCall(
     context,
     "deliver",
-    { job_id: current.jobId, deliverable_hash: await sha256(delivery) },
+    { job_id: current.jobId, deliverable_hash: hash },
     0n,
     15n * TGAS,
   );
+  try {
+    await handOver(wallet, current.jobId, delivery);
+  } catch {
+    throw new Error(
+      "Your work is recorded on the chain, but it did not reach the relay. Press “Send my work again” on this page.",
+    );
+  }
+}
+
+async function handOver(wallet: Wallet, jobId: number, delivery: string) {
   await api(
     "/api/market/relay",
     await signed(
       wallet,
-      { action: "deliver", job_id: current.jobId, deliverable: delivery },
-      current.jobId,
+      { action: "deliver", job_id: jobId, deliverable: delivery },
+      jobId,
     ),
   );
+}
+
+/** Hands recorded work to the relay again. It must match the hash already on the chain. */
+export async function resendDelivery(
+  wallet: Wallet | null,
+  jobId: number,
+  delivery: string,
+  expectedHash: string,
+) {
+  if (!wallet) throw new Error("Connect the worker's wallet first.");
+  if ((await sha256(delivery)) !== expectedHash)
+    throw new Error(
+      "This is not the work recorded on the chain. Paste exactly what you delivered.",
+    );
+  await handOver(wallet, jobId, delivery);
 }
 
 async function escrowAction(current: EscrowStep, context: SignedContext) {

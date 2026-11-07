@@ -51,15 +51,28 @@ export function jobProgress(bid: MarketBid): ProgressStage[] {
         : job?.state === "Failed" || job?.state === "Refunded"
           ? 6
           : -1;
+  // A refund or an expiry ends the job, but it is not a success, so it is never shown in green.
+  const unpaid = job?.state === "Refunded" || job?.state === "Expired";
   return labels.map((label, index) => ({
     label,
     status:
-      index === failedAt
+      index === failedAt || (unpaid && index === 7)
         ? "failed"
         : index < reached
           ? "done"
           : index === reached
             ? "current"
             : "todo",
+  }));
+}
+
+/** The worker's shorter path: from applying to being paid. */
+export function workerProgress(bid: MarketBid): ProgressStage[] {
+  const full = jobProgress(bid);
+  const pick = [2, 4, 5, 6, 7];
+  const labels = ["Applied", "Funded", "Delivered", "Verdict"];
+  return pick.map((index, at) => ({
+    label: labels[at] ?? full[index]!.label,
+    status: full[index]!.status,
   }));
 }

@@ -402,7 +402,10 @@ test("failed relay pinning prevents either paid compute request", async (t) => {
   for (const id of ["challenge", "verify"] as const) {
     await assert.rejects(
       performJobAction({ id, label: "Compute", jobId: JOB_ID }, f.context),
-      /Relay unavailable/,
+      // Verification explains that the worker may need to hand the work over again.
+      id === "verify"
+        ? /relay refused this.*send it again/
+        : /Relay unavailable/,
     );
   }
   assert.equal(f.calls.length, 0);

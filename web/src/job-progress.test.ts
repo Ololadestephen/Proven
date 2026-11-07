@@ -37,5 +37,6 @@ test("a refund and a blocked bid are shown as failures, never as passing", () =>
   const refunded = jobProgress(bid({ last_job: { state: "Refunded" } }));
   assert.equal(refunded[6]?.status, "failed");
   assert.equal(refunded[7]?.label, "Refunded");
+  assert.equal(refunded[7]?.status, "failed");
   assert.equal(jobProgress(bid({ state: "Blocked" }))[1]?.status, "failed");
 });
