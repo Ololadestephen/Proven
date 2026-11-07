@@ -687,7 +687,9 @@ async function upgradeOneSignature(escrowWasm: string, boardWasm: string) {
           receiverId: plan.id,
           actions: [
             actions.deployContract(plan.code),
-            actions.functionCall("migrate", args, 40_000_000_000_000n, 0n),
+            // Attached gas is held at a high price until it finishes: 40 Tgas left the code 0.0047 NEAR
+            // short. The same migration of more jobs used about 20 Tgas in all on testnet, mostly the deploy.
+            actions.functionCall("migrate", args, 15_000_000_000_000n, 0n),
           ],
         }),
       );
