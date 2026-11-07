@@ -105,6 +105,17 @@ export function useMarket(bidId?: number) {
     );
     return () => clearInterval(timer);
   }, [refresh]);
+  // A confirmation is news for a moment. It should not stay on the page and look like a waiting state.
+  useEffect(() => {
+    if (!notice) return;
+    if (!pending && notice.startsWith("Submitted")) {
+      setNotice("Confirmed on the board.");
+      return;
+    }
+    if (pending) return;
+    const timer = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(timer);
+  }, [notice, pending]);
   const run: Run = async (label, task) => {
     if (!gate.current.enter()) return;
     if (pendingRef.current) {
@@ -133,12 +144,14 @@ export function useMarket(bidId?: number) {
           createdAt: Date.now(),
         };
       await task();
+      await refresh();
       setNotice(
         readOnly
           ? "The delivery is ready below."
-          : "Submitted. Waiting for the board to confirm the change.",
+          : pendingRef.current
+            ? "Submitted. Waiting for the board to confirm."
+            : `${label}: done.`,
       );
-      await refresh();
     } catch (reason) {
       setError(
         reason instanceof Error

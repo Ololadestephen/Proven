@@ -8,6 +8,7 @@ import {
 import type { Market, Wallet, Run } from "./market-types.ts";
 import { recall, short } from "./market-client.ts";
 import { performJobAction } from "./job-actions.ts";
+import { jobProgress } from "./job-progress.ts";
 import { COIN, IS_MAINNET, OUTLAYER_API } from "./network.ts";
 export function JobWorkspace({
   bid,
@@ -62,15 +63,100 @@ export function JobWorkspace({
 
   const needsPrivate =
     step?.id === "challenge" && (!savedCheck || !savedReference);
+  const note =
+    step?.id === "review"
+      ? "An automated review of the public brief. It can only keep a bid off the board and never decides payment. It costs you nothing."
+      : step?.id === "fund"
+        ? `Funding sends ${showNear(bid.amount)} to ${market.escrow}. Only the fixed check controls settlement. An unfair check can reject honest work.`
+        : step?.id === "challenge" || step?.id === "verify"
+          ? `This call attaches 0.1 ${COIN} plus gas to ${market.escrow}. Unused compute deposit returns; failed runs may need recovery. The relay can read private texts.`
+          : step?.id === "claim"
+            ? `Applying reserves this claim with 0.005 ${COIN} storage plus gas. Wait for buyer funding before working.`
+            : step?.id === "register"
+              ? `Registration attaches 0.02 ${COIN} storage plus gas. This does not prove a unique person or agent.`
+              : step?.id === "create_job"
+                ? `Creates an escrow job with 0.02 ${COIN} storage plus gas. Recipient: ${market.escrow}.`
+                : "Review the recipient and action in your wallet before confirming.";
+  const actionCard = !step ? null : step.id === "wait" ? (
+    <div className="job-action job-action-wait">
+      <span className="job-action-kicker">Now</span>
+      <p>{step.label}</p>
+    </div>
+  ) : (
+    <div className="job-action">
+      <span className="job-action-kicker">Your next step</span>
+      {step.id === "deliver" ? (
+        <label>
+          Your work, as one JSON object
+          <textarea
+            rows={7}
+            value={delivery}
+            onChange={(e) => setDelivery(e.target.value)}
+            spellCheck={false}
+          />
+        </label>
+      ) : null}
+      {needsPrivate ? (
+        <div className="market-two">
+          <label>
+            Check used for this bid
+            <textarea
+              rows={4}
+              value={check}
+              onChange={(e) => setCheck(e.target.value)}
+            />
+          </label>
+          <label>
+            Reference used for this bid
+            <textarea
+              rows={4}
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+            />
+          </label>
+        </div>
+      ) : null}
+      <button
+        type="button"
+        className="button button-primary"
+        disabled={busy || !wallet}
+        onClick={() => void act(step)}
+      >
+        {busy ? "Working…" : step.label}
+      </button>
+      {wallet ? null : <p className="post-hint">Connect a wallet first.</p>}
+      <p className="post-hint">{note}</p>
+    </div>
+  );
   return (
     <article className="market-bid" data-state={bid.state}>
-      <header>
-        <span className="market-id">Bid {bid.id}</span>
-        <span className={`market-pill market-${bid.state.toLowerCase()}`}>
-          {bid.state}
-        </span>
-        <strong>{showNear(bid.amount)}</strong>
+      <header className="job-head">
+        <div>
+          <span className="job-meta">
+            <a href="/app/jobs">My jobs</a> · Bid {bid.id}
+          </span>
+          <h2>{bid.description.split("\n")[0]}</h2>
+        </div>
+        <div className="job-head-side">
+          <strong>{showNear(bid.amount)}</strong>
+          <span className={`market-pill market-${bid.state.toLowerCase()}`}>
+            {bid.state}
+          </span>
+        </div>
       </header>
+      <ol className="job-progress" aria-label="Job progress">
+        {jobProgress(bid).map((stage) => (
+          <li
+            key={stage.label}
+            data-status={stage.status}
+            aria-current={stage.status === "current" ? "step" : undefined}
+          >
+            <span aria-hidden="true" />
+            {stage.label}
+          </li>
+        ))}
+      </ol>
+      {actionCard}
       <div className="workspace-tabs" aria-label="Job sections">
         {["brief", "delivery", "evidence"].map((value) => (
           <button
@@ -85,9 +171,8 @@ export function JobWorkspace({
       </div>
       {tab === "brief" ? (
         <>
-          <h2>{bid.description.split("\n")[0]}</h2>
           <p className="market-description">{bid.description}</p>
-          <details open>
+          <details>
             <summary>Public format: every field a check may look at</summary>
             <pre className="market-pre">{bid.format}</pre>
           </details>
@@ -107,21 +192,30 @@ export function JobWorkspace({
             Buyer: {bid.buyer}.{" "}
             {worker ? `Worker: ${worker}.` : "No worker has claimed this job."}
           </p>
-          <p>
-            <strong>What a worker is protected from.</strong> A check cannot use
-            a field outside this format. Proven never gives the buyer rejected
-            work. If well-formed work fails a rule, you keep the 0.015 NEAR
-            attempt fee. The check is published when the bid closes, so unfair
-            ones can be seen.
-          </p>
-          <p>
-            <strong>What a worker is not protected from.</strong> A buyer can
-            still write an unfair check using only published fields. Then you
-            get the fee, not the full payment, and there is no dispute process.
-            The relay’s operator can read your work, and could withhold a check.
-            Reuse is blocked only for the exact same check hash. Do not start
-            work before funding.
-          </p>
+          <details>
+            <summary>What each side is protected from</summary>
+            <p>
+              <strong>What a worker is protected from.</strong> A check cannot
+              use a field outside this format. Proven never gives the buyer
+              rejected work. If well-formed work fails a rule, you keep the
+              0.015 NEAR attempt fee. The check is published when the bid
+              closes, so unfair ones can be seen.
+            </p>
+            <p>
+              <strong>What a worker is not protected from.</strong> A buyer can
+              still write an unfair check using only published fields. Then you
+              get the fee, not the full payment, and there is no dispute
+              process. The relay’s operator can read your work, and could
+              withhold a check. Reuse is blocked only for the exact same check
+              hash. Do not start work before funding.
+            </p>
+            <p>
+              <strong>What a buyer is not protected from.</strong> A worker who
+              never delivers uses up a funded attempt, and your money is locked
+              until the deadline. On an open bid, junk that fits the format can
+              take the fee. Listing allowed workers avoids both.
+            </p>
+          </details>
           {revealed}
         </>
       ) : null}
@@ -222,73 +316,6 @@ export function JobWorkspace({
             ? "A delivery hash is recorded. Private delivery text is available only through the authorised collection flow."
             : "No delivery has been recorded yet."}
         </p>
-      ) : null}
-      {step?.id === "deliver" ? (
-        <label>
-          Your work, as one JSON object. The task text is the description above;
-          show it in full below.
-          <textarea
-            rows={7}
-            value={delivery}
-            onChange={(e) => setDelivery(e.target.value)}
-            spellCheck={false}
-          />
-        </label>
-      ) : null}
-      {step?.id === "deliver" || step?.id === "claim" ? (
-        <details>
-          <summary>Full task</summary>
-          <pre className="market-pre">{bid.description}</pre>
-        </details>
-      ) : null}
-      {needsPrivate ? (
-        <div className="market-two">
-          <label>
-            Check used for this bid
-            <textarea
-              rows={4}
-              value={check}
-              onChange={(e) => setCheck(e.target.value)}
-            />
-          </label>
-          <label>
-            Reference used for this bid
-            <textarea
-              rows={4}
-              value={reference}
-              onChange={(e) => setReference(e.target.value)}
-            />
-          </label>
-        </div>
-      ) : null}
-      {step && step.id !== "wait" ? (
-        <p className="market-note">
-          {step.id === "fund"
-            ? `Funding sends ${showNear(bid.amount)} to ${market.escrow}. Only the fixed check controls settlement. An unfair check can reject honest work.`
-            : step.id === "challenge" || step.id === "verify"
-              ? `This call attaches 0.1 ${COIN} plus gas to ${market.escrow}. Unused compute deposit returns; failed runs may need recovery. The relay can read private texts.`
-              : step.id === "claim"
-                ? `Applying reserves this claim with 0.005 ${COIN} storage plus gas. Wait for buyer funding before working.`
-                : step.id === "register"
-                  ? `Registration attaches 0.02 ${COIN} storage plus gas. This does not prove a unique person or agent.`
-                  : step.id === "create_job"
-                    ? `Creates an escrow job with 0.02 ${COIN} storage plus gas. Recipient: ${market.escrow}.`
-                    : "Review the recipient and action in your wallet before confirming."}
-        </p>
-      ) : null}
-      {step ? (
-        step.id === "wait" ? (
-          <p className="market-wait">{step.label}</p>
-        ) : (
-          <button
-            type="button"
-            className="button button-primary"
-            disabled={busy || !wallet}
-            onClick={() => void act(step)}
-          >
-            {step.label}
-          </button>
-        )
       ) : null}
       {collected !== null ? (
         <div className="market-collected">

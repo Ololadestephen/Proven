@@ -29,15 +29,15 @@ export function appRoute(path: string, hash = ""): AppRoute {
     return {
       section: "jobs",
       title: "My jobs",
-      subtitle: "The work you are buying and delivering.",
+      subtitle: "",
     };
   const bid = /^\/app\/bids\/([0-9]{1,10})$/.exec(path);
   if (bid)
     return {
       section: "jobs",
       bidId: Number(bid[1]),
-      title: `Job workspace`,
-      subtitle: `Board bid ${bid[1]}`,
+      title: "Job",
+      subtitle: "",
     };
   return {
     section: "workspace",

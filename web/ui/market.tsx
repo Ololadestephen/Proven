@@ -47,7 +47,8 @@ function App() {
           {busy}… review any request in your wallet.
         </p>
       ) : null}
-      {notice ? (
+      {/* The post page has its own success screen. */}
+      {notice && route.section !== "post" ? (
         <p className="market-notice" role="status">
           {notice}
         </p>
