@@ -46,6 +46,7 @@ fn context(who: AccountId, deposit: NearToken, at: u64) -> VMContextBuilder {
         .predecessor_account_id(who)
         .attached_deposit(deposit)
         .block_timestamp(at)
+        .storage_usage(1_000_000)
         .prepaid_gas(Gas::from_tgas(300));
     builder
 }
@@ -1531,4 +1532,101 @@ fn a_worker_from_an_earlier_attempt_cannot_deliver_again() {
     call(stranger(), zero(), DEADLINE + 1);
     let _ = escrow.expire(id);
     deliver(&mut escrow, id, DEADLINE + 2);
+}
+
+fn refunded_job() -> (Escrow, JobId) {
+    let mut escrow = escrow();
+    let id = create(&mut escrow);
+    call(buyer(), zero(), START);
+    let _ = escrow.close(id);
+    assert!(paid(ok(), &mut escrow, id, false));
+    assert_eq!(state(&escrow, id), JobState::Refunded);
+    (escrow, id)
+}
+
+#[test]
+fn an_ended_job_gives_back_the_storage_it_no_longer_uses_once() {
+    let (mut escrow, id) = refunded_job();
+    let paid_for = escrow.get_job(id).unwrap().storage_deposit;
+    call(stranger(), zero(), START);
+    let _ = escrow.finish_storage(id);
+    let sent = transfers();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, buyer().to_string());
+    let back = sent[0].1;
+    assert!(back > 0 && back < paid_for.as_yoctonear());
+    let kept = escrow.get_job(id).unwrap();
+    // What stays covers the record that stays, and the record is still there as evidence.
+    assert_eq!(
+        kept.storage_deposit.as_yoctonear(),
+        paid_for.as_yoctonear() - back
+    );
+    assert_eq!(kept.state, JobState::Refunded);
+    assert_eq!(kept.spec_hash, SPEC);
+}
+
+#[test]
+#[should_panic(expected = "no storage is left to return")]
+fn storage_cannot_be_returned_twice() {
+    let (mut escrow, id) = refunded_job();
+    call(stranger(), zero(), START);
+    let _ = escrow.finish_storage(id);
+    call(stranger(), zero(), START);
+    let _ = escrow.finish_storage(id);
+}
+
+#[test]
+#[should_panic(expected = "only a job that has ended")]
+fn a_job_under_way_keeps_its_storage() {
+    let (mut escrow, id) = funded();
+    call(stranger(), zero(), START);
+    let _ = escrow.finish_storage(id);
+}
+
+#[test]
+fn a_failed_storage_return_can_be_retried() {
+    let (mut escrow, id) = refunded_job();
+    let paid_for = escrow.get_job(id).unwrap().storage_deposit;
+    call(stranger(), zero(), START);
+    let _ = escrow.finish_storage(id);
+    let back = transfers()[0].1;
+    callback_context(PromiseResult::Failed, START);
+    assert!(!escrow.on_storage_returned(id, U128(back)));
+    assert_eq!(escrow.get_job(id).unwrap().storage_deposit, paid_for);
+    call(stranger(), zero(), START);
+    let _ = escrow.finish_storage(id);
+    assert_eq!(transfers()[0].1, back);
+}
+
+#[test]
+fn ownership_moves_only_when_the_new_owner_accepts() {
+    let mut escrow = escrow();
+    call(owner(), zero(), START);
+    escrow.propose_owner(Some(stranger()));
+    assert_eq!(escrow.get_config().owner, owner());
+    assert_eq!(escrow.get_config().pending_owner, Some(stranger()));
+    call(stranger(), zero(), START);
+    escrow.accept_owner();
+    assert_eq!(escrow.get_config().owner, stranger());
+    assert_eq!(escrow.get_config().pending_owner, None);
+    call(stranger(), zero(), START);
+    escrow.set_paused(true);
+}
+
+#[test]
+#[should_panic(expected = "only the proposed owner can accept")]
+fn nobody_else_can_take_the_contract() {
+    let mut escrow = escrow();
+    call(owner(), zero(), START);
+    escrow.propose_owner(Some(stranger()));
+    call(worker(), zero(), START);
+    escrow.accept_owner();
+}
+
+#[test]
+#[should_panic(expected = "only the owner can do this")]
+fn only_the_owner_proposes_a_new_owner() {
+    let mut escrow = escrow();
+    call(stranger(), zero(), START);
+    escrow.propose_owner(Some(stranger()));
 }

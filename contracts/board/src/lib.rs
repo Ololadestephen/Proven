@@ -57,6 +57,11 @@ const CALLBACK_GAS: Gas = Gas::from_tgas(25);
 /// A sync may pay up to three fees, each with its own callback.
 const SYNC_CALLBACK_GAS: Gas = Gas::from_tgas(80);
 const FEE_PAID_GAS: Gas = Gas::from_tgas(10);
+const STORAGE_RETURNED_GAS: Gas = Gas::from_tgas(10);
+/// What stays of a finished bid's description: its first line, at most this long.
+const MAX_TITLE_BYTES: usize = 120;
+/// Buyers the owner can list while the market is closed.
+const MAX_LISTED_BUYERS: usize = 100;
 
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,6 +145,35 @@ pub struct Bid {
     pub allowed_workers: Option<Vec<AccountId>>,
     /// Everything the buyer attached when posting, returned in full if the escrow refuses the job.
     pub paid: U128,
+    /// What the buyer paid this board for the bid's storage and later records, less what has
+    /// already gone back. `finish_bid` returns what the finished record no longer needs.
+    pub storage_paid: U128,
+    /// Attempts from the escrow's history already counted in their agents' records.
+    pub recorded_attempts: u32,
+    /// The description is cut to its first line and the format text removed. Both stay readable in
+    /// the posting transaction; the hashes stay here.
+    pub finished: bool,
+}
+
+/// What one agent's attempts came to, counted once each from the escrow's history.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentRecord {
+    pub paid: u32,
+    /// Well-formed work that failed a rule of the check.
+    pub failed: u32,
+    /// Work that did not fit the public format.
+    pub failed_format: u32,
+    pub no_delivery: u32,
+    pub no_verdict: u32,
+}
+
+/// Who may post bids.
+#[near(serializers = [json])]
+#[derive(Clone, Debug)]
+pub struct Access {
+    pub open: bool,
+    pub buyers: Vec<AccountId>,
 }
 
 #[near(serializers = [json, borsh])]
@@ -173,6 +207,8 @@ pub enum Attempt {
 pub struct Config {
     pub escrow: AccountId,
     pub reviewer: AccountId,
+    pub owner: AccountId,
+    pub pending_owner: Option<AccountId>,
 }
 
 /// One attempt as the escrow records it.
@@ -217,6 +253,7 @@ enum Key {
     UsedChecks,
     /// Used only by bids made before this version.
     Fees,
+    AgentRecords,
 }
 
 #[near(contract_state)]
@@ -232,6 +269,34 @@ pub struct Board {
     /// A check's hash can be on one bid only. Changing one character gets past this, so it only stops
     /// the exact same check being reused after its reveal.
     used_checks: LookupSet<String>,
+    /// Can change the reviewer and who may post, and hand the board over. It cannot touch money.
+    owner: AccountId,
+    pending_owner: Option<AccountId>,
+    /// When false, only `buyers` can post.
+    market_open: bool,
+    buyers: Vec<AccountId>,
+    agent_records: LookupMap<AccountId, AgentRecord>,
+}
+
+/// Logs a NEP-297 event, so agents and indexers can follow the board without polling it.
+fn emit(event: &str, data: near_sdk::serde_json::Value) {
+    let log = json!({
+        "standard": "proven-board",
+        "version": "1.0.0",
+        "event": event,
+        "data": [data],
+    });
+    env::log_str(&format!("EVENT_JSON:{log}"));
+}
+
+/// The description's first line, cut to at most `MAX_TITLE_BYTES` on a character boundary.
+pub fn title_of(description: &str) -> String {
+    let line = description.lines().next().unwrap_or("").trim();
+    let mut end = line.len().min(MAX_TITLE_BYTES);
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    line[..end].to_string()
 }
 
 fn require_hash(value: &str, name: &str) {
@@ -279,8 +344,13 @@ fn read_job() -> Result<Option<JobView>, ()> {
 #[near]
 impl Board {
     #[init]
-    pub fn new(escrow: AccountId, reviewer: AccountId) -> Self {
+    pub fn new(escrow: AccountId, reviewer: AccountId, owner: AccountId) -> Self {
         Self {
+            owner,
+            pending_owner: None,
+            market_open: true,
+            buyers: Vec::new(),
+            agent_records: LookupMap::new(Key::AgentRecords),
             escrow,
             reviewer,
             next_bid: 0,
@@ -314,6 +384,11 @@ impl Board {
         allowed_workers: Option<Vec<AccountId>>,
     ) -> Promise {
         let before = env::storage_usage();
+        let buyer = env::predecessor_account_id();
+        require!(
+            self.market_open || self.buyers.contains(&buyer),
+            "the market is closed to this account"
+        );
         require!(
             !description.is_empty() && description.len() <= MAX_DESCRIPTION_BYTES,
             "description must be 1 to 2048 bytes"
@@ -354,7 +429,6 @@ impl Board {
                 "allowed_workers must list 1 to 20 accounts"
             );
         }
-        let buyer = env::predecessor_account_id();
         let attached = env::attached_deposit();
         let id = self.next_bid;
         self.next_bid += 1;
@@ -381,6 +455,9 @@ impl Board {
                 fees: vec![FeeState::Held; max_attempts as usize],
                 allowed_workers,
                 paid: U128(attached.as_yoctonear()),
+                storage_paid: U128(0),
+                recorded_attempts: 0,
+                finished: false,
             },
         );
         self.bids.flush();
@@ -389,16 +466,20 @@ impl Board {
         let fees = ATTEMPT_FEE
             .saturating_add(FEE_RECORD_DEPOSIT)
             .saturating_mul(u128::from(max_attempts));
-        let kept = env::storage_byte_cost()
+        let storage = env::storage_byte_cost()
             .saturating_mul(u128::from(written))
-            .saturating_add(POST_RESERVE)
-            .saturating_add(fees);
+            .saturating_add(POST_RESERVE);
+        self.bid_mut(id).storage_paid = U128(storage.as_yoctonear());
+        let kept = storage.saturating_add(fees);
         require!(
             attached > kept.saturating_add(NearToken::from_yoctonear(amount.0)),
             "attach the payment, the escrow's budget and storage, and the fees"
         );
         let forwarded = attached.saturating_sub(kept);
-        env::log_str(&format!("bid_posted {id}"));
+        emit(
+            "bid_posted",
+            json!({ "bid_id": id, "buyer": buyer, "amount": amount, "max_attempts": max_attempts }),
+        );
         Promise::new(self.escrow.clone())
             .function_call(
                 "create_open_job".to_string(),
@@ -433,7 +514,10 @@ impl Board {
             Some(job_id) => {
                 bid.job_id = Some(job_id);
                 bid.state = BidState::Unreviewed;
-                env::log_str(&format!("bid_job_created {bid_id} {job_id}"));
+                emit(
+                    "bid_job_created",
+                    json!({ "bid_id": bid_id, "job_id": job_id }),
+                );
                 true
             }
             None => {
@@ -445,7 +529,7 @@ impl Board {
                 self.bids.remove(&bid_id);
                 self.used_checks.remove(&check);
                 Promise::new(buyer).transfer(paid).detach();
-                env::log_str(&format!("bid_refused {bid_id}"));
+                emit("bid_refused", json!({ "bid_id": bid_id }));
                 false
             }
         }
@@ -484,7 +568,7 @@ impl Board {
             model,
             chat_id,
         });
-        env::log_str(&format!("bid_reviewed {bid_id} allow={allow}"));
+        emit("bid_reviewed", json!({ "bid_id": bid_id, "allow": allow }));
         // A blocked bid can never run, so its buyer is refunded at once and its money stops counting
         // against the caps.
         if !allow {
@@ -535,7 +619,7 @@ impl Board {
         if !rest.is_zero() {
             Promise::new(wallet.clone()).transfer(rest).detach();
         }
-        env::log_str(&format!("agent_registered {wallet}"));
+        emit("agent_registered", json!({ "wallet": wallet }));
     }
 
     /// Signed by a registered agent's wallet. The escrow gives the job to this agent straight away:
@@ -591,7 +675,10 @@ impl Board {
         if !rest.is_zero() {
             Promise::new(agent.clone()).transfer(rest).detach();
         }
-        env::log_str(&format!("bid_claimed {bid_id} {agent} claim={number}"));
+        emit(
+            "bid_claimed",
+            json!({ "bid_id": bid_id, "agent": agent, "claim": number }),
+        );
         Promise::new(self.escrow.clone())
             .function_call(
                 "assign".to_string(),
@@ -620,7 +707,10 @@ impl Board {
         };
         if assigned {
             bid.state = BidState::Claimed;
-            env::log_str(&format!("bid_assigned {bid_id} {}", claim.agent));
+            emit(
+                "bid_assigned",
+                json!({ "bid_id": bid_id, "agent": claim.agent, "claim": claim_number }),
+            );
             return true;
         }
         bid.claim = None;
@@ -629,7 +719,10 @@ impl Board {
         Promise::new(claim.agent.clone())
             .transfer(CLAIM_DEPOSIT)
             .detach();
-        env::log_str(&format!("assign_refused {bid_id} {}", claim.agent));
+        emit(
+            "assign_refused",
+            json!({ "bid_id": bid_id, "agent": claim.agent, "claim": claim_number }),
+        );
         false
     }
 
@@ -696,7 +789,16 @@ impl Board {
             ) {
                 bid.state = state;
                 bid.claim = None;
+                emit("bid_ended", json!({ "bid_id": bid_id, "state": state }));
             }
+        }
+        // Each recorded attempt counts once in its agent's record.
+        let counted = self.bid(bid_id).recorded_attempts as usize;
+        for (index, attempt) in job.history.iter().enumerate().skip(counted) {
+            self.record_attempt(bid_id, index, attempt);
+        }
+        if job.history.len() > counted {
+            self.bid_mut(bid_id).recorded_attempts = job.history.len() as u32;
         }
         // Each recorded attempt's fee, once, by its own outcome.
         for (index, attempt) in job.history.iter().enumerate() {
@@ -727,12 +829,13 @@ impl Board {
         self.bid(bid_id).state
     }
 
-    /// One-time upgrade from the version where buyers funded each worker themselves. Only this
-    /// contract's own account can call it, as part of deploying the new code. Earlier bids are kept
-    /// readable; none of them can be claimed again.
+    /// One-time upgrade from the version without an owner, market access, storage return or agent
+    /// records. Only this contract's own account can call it, as part of deploying the new code.
+    /// The market starts closed to all but `buyers`. Bids under way carry on.
     #[init(ignore_state)]
     #[private]
-    pub fn migrate() -> Self {
+    pub fn migrate(owner: AccountId, buyers: Vec<AccountId>) -> Self {
+        require!(buyers.len() <= MAX_LISTED_BUYERS, "too many buyers");
         let old: migration::OldBoard =
             env::state_read().unwrap_or_else(|| env::panic_str("no earlier state"));
         for id in 0..old.next_bid {
@@ -752,12 +855,132 @@ impl Board {
             reviewer: old.reviewer,
             next_bid: old.next_bid,
             bids: LookupMap::new(Key::Bids),
-            agents: LookupMap::new(Key::Agents),
+            agents: old.agents,
             // A list keeps its length in this state, so the old one is carried over, not recreated.
             agent_list: old.agent_list,
-            attempts: LookupMap::new(Key::Attempts),
-            used_checks: LookupSet::new(Key::UsedChecks),
+            attempts: old.attempts,
+            used_checks: old.used_checks,
+            owner,
+            pending_owner: None,
+            market_open: false,
+            buyers,
+            agent_records: LookupMap::new(Key::AgentRecords),
         }
+    }
+
+    // ---- Owner: the reviewer, who may post, and handing the board over. None of it moves money. ----
+
+    pub fn set_reviewer(&mut self, reviewer: AccountId) {
+        self.require_owner();
+        emit("reviewer_set", json!({ "reviewer": reviewer }));
+        self.reviewer = reviewer;
+    }
+
+    /// Opens posting to everyone, or closes it to all but the listed buyers.
+    pub fn set_market_open(&mut self, open: bool) {
+        self.require_owner();
+        self.market_open = open;
+        emit("market_access", json!({ "open": open }));
+    }
+
+    pub fn add_buyers(&mut self, buyers: Vec<AccountId>) {
+        self.require_owner();
+        for buyer in buyers {
+            if !self.buyers.contains(&buyer) {
+                self.buyers.push(buyer);
+            }
+        }
+        require!(self.buyers.len() <= MAX_LISTED_BUYERS, "too many buyers");
+        emit("market_access", json!({ "buyers": self.buyers }));
+    }
+
+    pub fn remove_buyers(&mut self, buyers: Vec<AccountId>) {
+        self.require_owner();
+        self.buyers.retain(|buyer| !buyers.contains(buyer));
+        emit("market_access", json!({ "buyers": self.buyers }));
+    }
+
+    /// Names the account that may take over as owner, or clears it with `null`.
+    pub fn propose_owner(&mut self, new_owner: Option<AccountId>) {
+        self.require_owner();
+        emit("owner_proposed", json!({ "new_owner": new_owner }));
+        self.pending_owner = new_owner;
+    }
+
+    /// Called by the proposed account to become the owner.
+    pub fn accept_owner(&mut self) {
+        let caller = env::predecessor_account_id();
+        require!(
+            self.pending_owner.as_ref() == Some(&caller),
+            "only the proposed owner can accept"
+        );
+        self.owner = caller;
+        self.pending_owner = None;
+        emit("owner_accepted", json!({ "owner": self.owner }));
+    }
+
+    // ---- Anyone: give back storage once a bid has ended ----
+
+    /// Once a bid has ended and every fee is settled, cuts its description to its first line,
+    /// removes its format text, and returns to its buyer what the buyer paid for storage beyond
+    /// what the shortened record and the check's reuse entry still use. Both texts stay readable
+    /// in the posting transaction. Never more than was paid; a second call finds nothing left.
+    pub fn finish_bid(&mut self, bid_id: BidId) -> Promise {
+        let bid = self.bid(bid_id).clone();
+        require!(
+            matches!(
+                bid.state,
+                BidState::Done | BidState::Closed | BidState::Cancelled
+            ),
+            "only a bid that has ended can give back storage"
+        );
+        require!(
+            bid.fees
+                .iter()
+                .all(|fee| matches!(fee, FeeState::PaidToWorker | FeeState::ReturnedToBuyer)),
+            "every attempt fee must be settled first: call sync"
+        );
+        // Measure what stays by taking the record and the check entry out, then putting them back.
+        self.bids.flush();
+        let check = bid.check_hash.clone();
+        self.bids.remove(&bid_id);
+        self.used_checks.remove(&check);
+        self.bids.flush();
+        let empty = env::storage_usage();
+        let mut bid = bid;
+        bid.description = title_of(&bid.description);
+        bid.format = String::new();
+        bid.finished = true;
+        let buyer = bid.buyer.clone();
+        let paid = NearToken::from_yoctonear(bid.storage_paid.0);
+        self.bids.insert(bid_id, bid);
+        self.used_checks.insert(check);
+        self.bids.flush();
+        let still_used = env::storage_byte_cost()
+            .saturating_mul(u128::from(env::storage_usage().saturating_sub(empty)));
+        let back = paid.saturating_sub(still_used);
+        require!(!back.is_zero(), "no storage is left to return");
+        self.bid_mut(bid_id).storage_paid = U128(paid.saturating_sub(back).as_yoctonear());
+        emit(
+            "bid_finished",
+            json!({ "bid_id": bid_id, "returned": U128(back.as_yoctonear()) }),
+        );
+        Promise::new(buyer).transfer(back).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(STORAGE_RETURNED_GAS)
+                .on_storage_returned(bid_id, U128(back.as_yoctonear())),
+        )
+    }
+
+    /// Puts the amount back on the bid if the transfer failed, so `finish_bid` can be retried.
+    #[private]
+    pub fn on_storage_returned(&mut self, bid_id: BidId, amount: U128) -> bool {
+        let sent = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
+        if !sent {
+            let bid = self.bid_mut(bid_id);
+            bid.storage_paid = U128(bid.storage_paid.0.saturating_add(amount.0));
+        }
+        sent
     }
 
     #[private]
@@ -771,9 +994,10 @@ impl Board {
                 (true, false) => FeeState::ReturnedToBuyer,
             };
         }
-        env::log_str(&format!(
-            "fee_settled {bid_id} {index} paid={paid} to_worker={to_worker}"
-        ));
+        emit(
+            "fee_settled",
+            json!({ "bid_id": bid_id, "index": index, "paid": paid, "to_worker": to_worker }),
+        );
         paid
     }
 
@@ -830,7 +1054,21 @@ impl Board {
         Config {
             escrow: self.escrow.clone(),
             reviewer: self.reviewer.clone(),
+            owner: self.owner.clone(),
+            pending_owner: self.pending_owner.clone(),
         }
+    }
+
+    pub fn get_access(&self) -> Access {
+        Access {
+            open: self.market_open,
+            buyers: self.buyers.clone(),
+        }
+    }
+
+    /// What this agent's attempts came to, from the escrow's history. Zero until a sync counts one.
+    pub fn get_agent_record(&self, wallet: AccountId) -> AgentRecord {
+        self.agent_records.get(&wallet).cloned().unwrap_or_default()
     }
 
     /// What the board keeps from a posting with this many attempts, apart from the bid's own
@@ -847,6 +1085,39 @@ impl Board {
 }
 
 impl Board {
+    fn require_owner(&self) {
+        require!(
+            env::predecessor_account_id() == self.owner,
+            "only the owner can do this"
+        );
+    }
+
+    /// Counts one attempt from the escrow's history in its agent's record, and logs it.
+    fn record_attempt(&mut self, bid_id: BidId, index: usize, attempt: &AttemptView) {
+        let mut record = self
+            .agent_records
+            .get(&attempt.worker)
+            .cloned()
+            .unwrap_or_default();
+        let format_failure = attempt.failed_rule.as_deref() == Some(FORMAT_RULE);
+        match attempt.outcome.as_str() {
+            "Paid" => record.paid += 1,
+            "Failed" if format_failure => record.failed_format += 1,
+            "Failed" => record.failed += 1,
+            "NoDelivery" => record.no_delivery += 1,
+            _ => record.no_verdict += 1,
+        }
+        self.agent_records.insert(attempt.worker.clone(), record);
+        emit(
+            "attempt_settled",
+            json!({
+                "bid_id": bid_id, "index": index, "worker": attempt.worker,
+                "outcome": attempt.outcome, "failed_rule": attempt.failed_rule,
+                "verdict_request_id": attempt.verdict_request_id,
+            }),
+        );
+    }
+
     fn bid(&self, bid_id: BidId) -> &Bid {
         self.bids
             .get(&bid_id)
@@ -861,9 +1132,10 @@ impl Board {
 
     fn pay_fee(&mut self, bid_id: BidId, index: usize, receiver: AccountId, to_worker: bool) {
         self.bid_mut(bid_id).fees[index] = FeeState::Paying;
-        env::log_str(&format!(
-            "fee_paying {bid_id} {index} to_worker={to_worker}"
-        ));
+        emit(
+            "fee_paying",
+            json!({ "bid_id": bid_id, "index": index, "to_worker": to_worker }),
+        );
         Promise::new(receiver)
             .transfer(ATTEMPT_FEE)
             .then(
@@ -879,7 +1151,7 @@ impl Board {
             .bid(bid_id)
             .job_id
             .unwrap_or_else(|| env::panic_str("this bid has no job"));
-        env::log_str(&format!("bid_closing {bid_id} {job_id}"));
+        emit("bid_closing", json!({ "bid_id": bid_id, "job_id": job_id }));
         Promise::new(self.escrow.clone()).function_call(
             "close".to_string(),
             json!({ "job_id": job_id }).to_string().into_bytes(),

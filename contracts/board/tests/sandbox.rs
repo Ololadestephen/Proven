@@ -37,6 +37,7 @@ struct Env {
     board: Contract,
     escrow: Contract,
     outlayer: Contract,
+    owner: Account,
     reviewer: Account,
     buyer: Account,
     agent: Account,
@@ -78,7 +79,7 @@ async fn setup() -> anyhow::Result<Env> {
         .into_result()?;
     board
         .call("new")
-        .args_json(json!({ "escrow": escrow.id(), "reviewer": reviewer.id() }))
+        .args_json(json!({ "escrow": escrow.id(), "reviewer": reviewer.id(), "owner": owner.id() }))
         .transact()
         .await?
         .into_result()?;
@@ -87,6 +88,7 @@ async fn setup() -> anyhow::Result<Env> {
         board,
         escrow,
         outlayer,
+        owner,
         reviewer,
         buyer,
         agent,
@@ -618,13 +620,14 @@ async fn the_same_check_cannot_be_on_two_bids_and_a_buyer_must_agree_to_the_reve
 /// Upgrades a copy of the real mainnet board, with its real state, to this code. Needs the fixtures
 /// written by reading the chain; skipped without them.
 #[tokio::test]
-async fn the_deployed_mainnet_board_upgrades_with_its_bid_intact() -> anyhow::Result<()> {
-    let Ok(old) = std::fs::read("tests/fixtures/mainnet-board.wasm") else {
+async fn the_deployed_mainnet_board_upgrades_with_its_bids_intact() -> anyhow::Result<()> {
+    let Ok(old) = std::fs::read("tests/fixtures/mainnet-board-v1.wasm") else {
         eprintln!("skipped: no mainnet fixture");
         return Ok(());
     };
-    let values: Vec<Value> =
-        serde_json::from_slice(&std::fs::read("tests/fixtures/mainnet-board-state.json")?)?;
+    let values: Vec<Value> = serde_json::from_slice(&std::fs::read(
+        "tests/fixtures/mainnet-board-state-v1.json",
+    )?)?;
     let sandbox = near_workspaces::sandbox().await?;
     let board = sandbox.dev_deploy(&old).await?;
     use base64::Engine;
@@ -638,43 +641,254 @@ async fn the_deployed_mainnet_board_upgrades_with_its_bid_intact() -> anyhow::Re
             )
             .await?;
     }
+    let before_bids: Vec<(u64, Value)> = board
+        .view("get_bids")
+        .args_json(json!({ "from_id": 0, "limit": 50 }))
+        .await?
+        .json()?;
+    let before_agents: Vec<Value> = board
+        .view("get_agents")
+        .args_json(json!({ "from_index": 0, "limit": 50 }))
+        .await?
+        .json()?;
+    let before_config: Value = board.view("get_config").await?.json()?;
     let account = board.as_account().clone();
     let upgraded = account
         .deploy(&std::fs::read("target/near/proven_board.wasm")?)
         .await?
         .into_result()?;
+    let args = json!({ "owner": "proven-ops.near", "buyers": ["hectormain.near"] });
     let stranger = sandbox.dev_create_account().await?;
     assert!(stranger
         .call(upgraded.id(), "migrate")
+        .args_json(args.clone())
         .max_gas()
         .transact()
         .await?
         .is_failure());
     upgraded
         .call("migrate")
+        .args_json(args.clone())
         .max_gas()
         .transact()
         .await?
         .into_result()?;
-    let bid: Value = upgraded
-        .view("get_bid")
-        .args_json(json!({ "bid_id": 0 }))
+    let bids: Vec<(u64, Value)> = upgraded
+        .view("get_bids")
+        .args_json(json!({ "from_id": 0, "limit": 50 }))
         .await?
         .json()?;
-    assert_eq!(bid["state"], "Done");
-    assert_eq!(bid["buyer"], "hectormain.near");
-    assert_eq!(bid["job_id"], 3);
+    assert_eq!(bids.len(), before_bids.len());
+    for ((id, now), (_, was)) in bids.iter().zip(&before_bids) {
+        for (key, value) in was.as_object().unwrap() {
+            assert_eq!(&now[key], value, "bid {id} field {key}");
+        }
+        assert_eq!(now["storage_paid"], "0");
+        assert_eq!(now["recorded_attempts"], 0);
+        assert_eq!(now["finished"], false);
+    }
     let agents: Vec<Value> = upgraded
         .view("get_agents")
-        .args_json(json!({ "from_index": 0, "limit": 10 }))
+        .args_json(json!({ "from_index": 0, "limit": 50 }))
         .await?
         .json()?;
-    assert_eq!(agents[0]["wallet"], "proven-ops.near");
+    assert_eq!(agents, before_agents);
+    let config: Value = upgraded.view("get_config").await?.json()?;
+    assert_eq!(config["escrow"], before_config["escrow"]);
+    assert_eq!(config["reviewer"], before_config["reviewer"]);
+    assert_eq!(config["owner"], "proven-ops.near");
+    let access: Value = upgraded.view("get_access").await?.json()?;
+    assert_eq!(
+        access,
+        json!({ "open": false, "buyers": ["hectormain.near"] })
+    );
+    // The checks already used stay used.
+    let refused_post = stranger
+        .call(upgraded.id(), "post_bid")
+        .args_json(json!({}))
+        .max_gas()
+        .transact()
+        .await?;
+    assert!(refused_post.is_failure());
     assert!(upgraded
         .call("migrate")
+        .args_json(args)
         .max_gas()
         .transact()
         .await?
         .is_failure());
+    Ok(())
+}
+
+#[tokio::test]
+async fn one_sync_settles_three_fees_and_ends_the_bid_within_its_gas() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let (bid, job) = open_bid(&env, 3).await?;
+    claim(&env, &env.agent, bid).await?.into_result()?;
+    judged(&env, &env.agent, job, "pass").await?;
+    let outcome = on(
+        &env.board,
+        &env.stranger,
+        "sync",
+        json!({ "bid_id": bid }),
+        NONE,
+    )
+    .await?
+    .into_result()?;
+    let mut most = 0;
+    for receipt in outcome.receipt_outcomes() {
+        if receipt.executor_id == *env.board.id() {
+            most = most.max(receipt.gas_burnt.as_gas());
+        }
+    }
+    println!(
+        "largest board receipt in a three-fee sync: {:.1} Tgas",
+        most as f64 / 1e12
+    );
+    // The callback has 80 Tgas; keep at least half of it spare.
+    assert!(most < 40_000_000_000_000);
+    let now = bid_of(&env, bid).await?;
+    assert_eq!(now["state"], "Done");
+    let fees: Vec<String> = serde_json::from_value(now["fees"].clone())?;
+    assert_eq!(fees, vec!["ReturnedToBuyer"; 3]);
+    let record: Value = env
+        .board
+        .view("get_agent_record")
+        .args_json(json!({ "wallet": env.agent.id() }))
+        .await?
+        .json()?;
+    assert_eq!(record["paid"], 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finished_bid_and_its_job_give_back_their_storage_to_the_buyer() -> anyhow::Result<()> {
+    let env = setup().await?;
+    let (bid, job) = open_bid(&env, 3).await?;
+    claim(&env, &env.agent, bid).await?.into_result()?;
+    judged(&env, &env.agent, job, "fail").await?;
+    sync(&env, bid).await?;
+    // Too early: the bid is still open.
+    refused(
+        &on(
+            &env.board,
+            &env.stranger,
+            "finish_bid",
+            json!({ "bid_id": bid }),
+            NONE,
+        )
+        .await?,
+        "only a bid that has ended",
+    );
+    on(
+        &env.board,
+        &env.buyer,
+        "close_bid",
+        json!({ "bid_id": bid }),
+        NONE,
+    )
+    .await?
+    .into_result()?;
+    assert_eq!(sync(&env, bid).await?, "Closed");
+
+    let paid: u128 = bid_of(&env, bid).await?["storage_paid"]
+        .as_str()
+        .unwrap()
+        .parse()?;
+    let before = balance(&env.buyer).await?;
+    on(
+        &env.board,
+        &env.stranger,
+        "finish_bid",
+        json!({ "bid_id": bid }),
+        NONE,
+    )
+    .await?
+    .into_result()?;
+    let from_board = balance(&env.buyer).await? - before;
+    let after = bid_of(&env, bid).await?;
+    assert_eq!(after["description"], "Convert these invoices");
+    assert_eq!(after["format"], "");
+    assert_eq!(after["finished"], true);
+    let kept: u128 = after["storage_paid"].as_str().unwrap().parse()?;
+    assert_eq!(from_board + kept, paid);
+    refused(
+        &on(
+            &env.board,
+            &env.stranger,
+            "finish_bid",
+            json!({ "bid_id": bid }),
+            NONE,
+        )
+        .await?,
+        "no storage is left to return",
+    );
+
+    let before = balance(&env.buyer).await?;
+    on(
+        &env.escrow,
+        &env.stranger,
+        "finish_storage",
+        json!({ "job_id": job }),
+        NONE,
+    )
+    .await?
+    .into_result()?;
+    let from_escrow = balance(&env.buyer).await? - before;
+    println!(
+        "three-attempt bid: board returned {from_board} of {paid}, escrow returned {from_escrow}"
+    );
+    assert!(from_board > 0 && from_escrow > 0);
+    let record: Value = env
+        .board
+        .view("get_agent_record")
+        .args_json(json!({ "wallet": env.agent.id() }))
+        .await?
+        .json()?;
+    assert_eq!(record["failed"], 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_closed_market_refuses_unlisted_buyers_until_the_owner_lists_them() -> anyhow::Result<()>
+{
+    let env = setup().await?;
+    refused(
+        &on(
+            &env.board,
+            &env.buyer,
+            "set_market_open",
+            json!({ "open": false }),
+            NONE,
+        )
+        .await?,
+        "only the owner can do this",
+    );
+    on(
+        &env.board,
+        &env.owner,
+        "set_market_open",
+        json!({ "open": false }),
+        NONE,
+    )
+    .await?
+    .into_result()?;
+    let before = balance(&env.buyer).await?;
+    refused(
+        &post_with(&env, ONE_NEAR, 1, None).await?,
+        "the market is closed to this account",
+    );
+    // A refused posting keeps nothing but gas.
+    assert!(before - balance(&env.buyer).await? < 10 * MILLI);
+    on(
+        &env.board,
+        &env.owner,
+        "add_buyers",
+        json!({ "buyers": [env.buyer.id()] }),
+        NONE,
+    )
+    .await?
+    .into_result()?;
+    post_with(&env, ONE_NEAR, 1, None).await?.into_result()?;
     Ok(())
 }

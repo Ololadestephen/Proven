@@ -801,16 +801,17 @@ async fn caps_refuse_money_coming_in_and_never_trap_money_going_out() -> anyhow:
     Ok(())
 }
 
-/// Upgrades a copy of the real mainnet escrow, with its real state, to this code. Needs the fixtures
-/// written by reading the chain; skipped without them.
+/// Upgrades a copy of the real mainnet escrow, with its real state, to this code, then returns the
+/// unused storage of its finished jobs. Needs the fixtures written by reading the chain; skipped
+/// without them.
 #[tokio::test]
-async fn the_deployed_mainnet_escrow_upgrades_with_its_jobs_intact() -> anyhow::Result<()> {
-    let Ok(old) = std::fs::read("tests/fixtures/mainnet-escrow-v5.wasm") else {
+async fn the_deployed_mainnet_escrow_upgrades_and_returns_storage() -> anyhow::Result<()> {
+    let Ok(old) = std::fs::read("tests/fixtures/mainnet-escrow-v6.wasm") else {
         eprintln!("skipped: no mainnet fixture");
         return Ok(());
     };
     let values: Vec<serde_json::Value> =
-        serde_json::from_slice(&std::fs::read("tests/fixtures/mainnet-state-v5.json")?)?;
+        serde_json::from_slice(&std::fs::read("tests/fixtures/mainnet-state-v6.json")?)?;
     let sandbox = near_workspaces::sandbox().await?;
     let escrow = sandbox.dev_deploy(&old).await?;
     use base64::Engine;
@@ -824,80 +825,95 @@ async fn the_deployed_mainnet_escrow_upgrades_with_its_jobs_intact() -> anyhow::
             )
             .await?;
     }
-    let before: serde_json::Value = escrow
-        .view("get_job")
-        .args_json(json!({ "job_id": 3 }))
-        .await?
-        .json()?;
-    assert_eq!(before["state"], "Released");
+    let before_config: serde_json::Value = escrow.view("get_config").await?.json()?;
+    let mut before_jobs = Vec::new();
+    for id in 0..before_config["next_job_id"].as_u64().unwrap() {
+        let job: serde_json::Value = escrow
+            .view("get_job")
+            .args_json(json!({ "job_id": id }))
+            .await?
+            .json()?;
+        before_jobs.push(job);
+    }
     let new = std::fs::read("target/near/proven_escrow.wasm")?;
     let account = escrow.as_account().clone();
     let upgraded = account.deploy(&new).await?.into_result()?;
-    // The new code cannot read the old state until the migration has run.
     assert!(upgraded.view("get_config").await.is_err());
-    let args = json!({ "board": "proven-board.near", "run_deposit": RUN_DEPOSIT.as_yoctonear().to_string() });
-    // Nobody else can run it.
     let stranger = sandbox.dev_create_account().await?;
     let refused = stranger
         .call(upgraded.id(), "migrate")
-        .args_json(args.clone())
+        .args_json(json!({}))
         .max_gas()
         .transact()
         .await?;
     assert!(refused.is_failure());
     upgraded
         .call("migrate")
-        .args_json(args.clone())
+        .args_json(json!({}))
         .max_gas()
         .transact()
         .await?
         .into_result()?;
     let config: serde_json::Value = upgraded.view("get_config").await?.json()?;
-    assert_eq!(config["owner"], "proven-ops.near");
-    assert_eq!(config["board"], "proven-board.near");
-    assert_eq!(config["next_job_id"], 4);
-    assert_eq!(
-        config["caps"][0]["max_job"],
-        NearToken::from_millinear(100).as_yoctonear().to_string()
-    );
-    assert_eq!(
-        config["caps"][0]["max_held"],
-        NearToken::from_near(1).as_yoctonear().to_string()
-    );
-    assert_eq!(config["caps"][0]["held"], "0");
-    assert_eq!(
-        config["caps"][0]["max_held_per_buyer"],
-        NearToken::from_millinear(200).as_yoctonear().to_string()
-    );
-    for (id, state) in [(0, "Released"), (1, "Refunded"), (3, "Released")] {
-        let job: serde_json::Value = upgraded
+    assert_eq!(config["owner"], before_config["owner"]);
+    assert_eq!(config["board"], before_config["board"]);
+    assert_eq!(config["caps"], before_config["caps"]);
+    assert_eq!(config["run_deposit"], before_config["run_deposit"]);
+    assert_eq!(config["next_job_id"], before_config["next_job_id"]);
+    assert!(config["pending_owner"].is_null());
+    // Every job reads exactly as before.
+    for (id, job) in before_jobs.iter().enumerate() {
+        let now: serde_json::Value = upgraded
             .view("get_job")
             .args_json(json!({ "job_id": id }))
             .await?
             .json()?;
-        assert_eq!(job["state"], state);
-        assert_eq!(job["max_attempts"], 1);
-        assert!(job["worker"].is_string());
-        assert_eq!(job["compute_budget"], "0");
+        assert_eq!(&now, job, "job {id}");
     }
-    let three: serde_json::Value = upgraded
-        .view("get_job")
-        .args_json(json!({ "job_id": 3 }))
-        .await?
-        .json()?;
-    assert_eq!(three["verdict_request_id"], "2861");
-    assert_eq!(
-        three["deliverable_hash"],
-        "d45d7caed7e6f5359ba40a44dd85ae8bfd43662b23e2bc9718a8df16b8032f51"
-    );
     // A second run of the migration cannot work: the state is already in the new layout.
     let again = upgraded
         .call("migrate")
-        .args_json(args)
+        .args_json(json!({}))
         .max_gas()
         .transact()
         .await?;
     assert!(again.is_failure());
+
+    // Each finished job gives back its unused storage to its buyer, once, and keeps its record.
+    let mut returned = 0;
+    for (id, job) in before_jobs.iter().enumerate() {
+        if job.is_null() {
+            continue;
+        }
+        let outcome = stranger
+            .call(upgraded.id(), "finish_storage")
+            .args_json(json!({ "job_id": id }))
+            .max_gas()
+            .transact()
+            .await?;
+        if outcome.is_failure() {
+            continue; // Nothing left to return on this one.
+        }
+        returned += 1;
+        let after: serde_json::Value = upgraded
+            .view("get_job")
+            .args_json(json!({ "job_id": id }))
+            .await?
+            .json()?;
+        // A buyer that does not exist in the sandbox makes the transfer fail; the amount then goes
+        // back on the job, ready to be retried. Otherwise the job keeps less than it was paid.
+        let sent: bool = outcome.json()?;
+        let paid: u128 = job["storage_deposit"].as_str().unwrap().parse()?;
+        let kept: u128 = after["storage_deposit"].as_str().unwrap().parse()?;
+        eprintln!("job {id}: sent {sent}, storage paid {paid}, kept {kept}");
+        if sent {
+            assert!(kept < paid);
+        } else {
+            assert_eq!(kept, paid);
+        }
+        assert_eq!(after["state"], job["state"]);
+    }
+    assert!(returned > 0, "no finished job had storage to give back");
     Ok(())
 }
 
@@ -1036,6 +1052,42 @@ async fn closing_an_open_job_returns_the_payment_and_the_rest_of_the_budget() ->
     assert_eq!(near_balance(&env.buyer).await? - before, one + left);
     assert_eq!(state(&env, id).await?, "Refunded");
     assert_eq!(near_cap(&env).await?["held"], "0");
+
+    // Anyone can then give back the storage the finished record no longer uses, once. The buyer
+    // gets exactly that, and the contract keeps enough to cover what stays.
+    let paid: u128 = job(&env, id).await?["storage_deposit"]
+        .as_str()
+        .unwrap()
+        .parse()?;
+    let before = near_balance(&env.buyer).await?;
+    call(
+        &env,
+        &env.stranger,
+        "finish_storage",
+        json!({ "job_id": id }),
+        NO_DEPOSIT,
+    )
+    .await?
+    .into_result()?;
+    let back = near_balance(&env.buyer).await? - before;
+    let kept: u128 = job(&env, id).await?["storage_deposit"]
+        .as_str()
+        .unwrap()
+        .parse()?;
+    assert!(back > 0);
+    assert_eq!(back + kept, paid);
+    println!("storage paid {paid}, returned {back}, kept {kept} (job {id}, three attempts)");
+    assert_refused(
+        &call(
+            &env,
+            &env.stranger,
+            "finish_storage",
+            json!({ "job_id": id }),
+            NO_DEPOSIT,
+        )
+        .await?,
+        "no storage is left to return",
+    );
     Ok(())
 }
 

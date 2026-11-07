@@ -20,6 +20,9 @@ fn reviewer() -> AccountId {
 fn escrow() -> AccountId {
     accounts(5)
 }
+fn board_owner() -> AccountId {
+    "owner.near".parse().unwrap()
+}
 fn this() -> AccountId {
     "board.near".parse().unwrap()
 }
@@ -30,6 +33,7 @@ fn builder(who: AccountId, deposit: NearToken) -> VMContextBuilder {
         .predecessor_account_id(who)
         .attached_deposit(deposit)
         .block_timestamp(START)
+        .storage_usage(1_000_000)
         .prepaid_gas(Gas::from_tgas(300));
     b
 }
@@ -74,7 +78,7 @@ fn json_result(value: near_sdk::serde_json::Value) -> PromiseResult {
 /// A bid whose escrow job is 7, reviewed and open, with two registered agents.
 fn open_board(attempts: u32) -> (Board, BidId) {
     context(buyer(), NearToken::from_yoctonear(0));
-    let mut board = Board::new(escrow(), reviewer());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
     let id = posted(&mut board, attempts, HASH);
     callback(json_result(json!(7)));
     assert!(board.on_job_created(id));
@@ -176,7 +180,7 @@ fn an_attempt_fee_follows_only_the_recorded_outcome() {
 #[test]
 fn posting_keeps_the_fees_and_forwards_the_rest_to_the_escrow() {
     context(buyer(), NearToken::from_yoctonear(0));
-    let mut board = Board::new(escrow(), reviewer());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
     let id = posted(&mut board, 3, HASH);
     let receipt = get_created_receipts()
         .into_iter()
@@ -213,7 +217,7 @@ fn posting_keeps_the_fees_and_forwards_the_rest_to_the_escrow() {
 #[test]
 fn a_refused_job_removes_the_bid_and_returns_everything() {
     context(buyer(), NearToken::from_yoctonear(0));
-    let mut board = Board::new(escrow(), reviewer());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
     let id = posted(&mut board, 1, HASH);
     callback(PromiseResult::Failed);
     assert!(!board.on_job_created(id));
@@ -237,7 +241,7 @@ fn the_same_check_cannot_be_on_two_bids() {
 #[should_panic(expected = "only the reviewer can record a review")]
 fn only_the_reviewer_reviews() {
     context(buyer(), NearToken::from_yoctonear(0));
-    let mut board = Board::new(escrow(), reviewer());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
     let id = posted(&mut board, 1, HASH);
     callback(json_result(json!(7)));
     board.on_job_created(id);
@@ -249,7 +253,7 @@ fn only_the_reviewer_reviews() {
 #[should_panic(expected = "this bid cannot be claimed now")]
 fn an_unreviewed_bid_cannot_be_claimed() {
     context(buyer(), NearToken::from_yoctonear(0));
-    let mut board = Board::new(escrow(), reviewer());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
     let id = posted(&mut board, 1, HASH);
     callback(json_result(json!(7)));
     board.on_job_created(id);
@@ -484,7 +488,7 @@ fn a_stale_sync_cannot_end_a_newer_claim() {
 #[test]
 fn a_blocked_review_asks_the_escrow_to_refund_the_buyer() {
     context(buyer(), NearToken::from_yoctonear(0));
-    let mut board = Board::new(escrow(), reviewer());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
     let id = posted(&mut board, 1, HASH);
     callback(json_result(json!(7)));
     board.on_job_created(id);
@@ -501,10 +505,244 @@ fn a_blocked_review_asks_the_escrow_to_refund_the_buyer() {
 #[test]
 fn closing_a_bid_before_its_review_still_ends_it() {
     context(buyer(), NearToken::from_yoctonear(0));
-    let mut board = Board::new(escrow(), reviewer());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
     let id = posted(&mut board, 1, HASH);
     callback(json_result(json!(7)));
     board.on_job_created(id);
     callback(job("Refunded", None, json!([])));
     assert_eq!(board.on_sync(id, None), BidState::Closed);
+}
+
+fn none() -> NearToken {
+    NearToken::from_yoctonear(0)
+}
+
+/// A one-attempt bid whose worker failed a real rule: the job was refunded and the fee paid.
+fn ended_and_settled() -> (Board, BidId) {
+    let (mut board, id) = claimed(1);
+    callback(job(
+        "Refunded",
+        None,
+        json!([attempt(agent(), "Failed", Some("totals"), true)]),
+    ));
+    assert_eq!(board.on_sync(id, Some(1)), BidState::Closed);
+    callback(PromiseResult::Successful(vec![]));
+    assert!(board.on_fee_paid(id, 0, true));
+    (board, id)
+}
+
+#[test]
+fn a_closed_market_takes_bids_only_from_listed_buyers() {
+    context(buyer(), none());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
+    context(board_owner(), none());
+    board.set_market_open(false);
+    board.add_buyers(vec![buyer()]);
+    posted(&mut board, 1, HASH);
+    assert_eq!(board.get_access().buyers, vec![buyer()]);
+    assert!(!board.get_access().open);
+}
+
+#[test]
+#[should_panic(expected = "the market is closed to this account")]
+fn a_closed_market_refuses_an_unlisted_buyer() {
+    context(buyer(), none());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
+    context(board_owner(), none());
+    board.set_market_open(false);
+    posted(&mut board, 1, HASH);
+}
+
+#[test]
+#[should_panic(expected = "only the owner can do this")]
+fn only_the_owner_changes_who_may_post() {
+    context(buyer(), none());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
+    context(buyer(), none());
+    board.set_market_open(true);
+}
+
+#[test]
+#[should_panic(expected = "only the owner can do this")]
+fn only_the_owner_changes_the_reviewer() {
+    context(buyer(), none());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
+    context(reviewer(), none());
+    board.set_reviewer(buyer());
+}
+
+#[test]
+fn the_owner_changes_the_reviewer_and_hands_the_board_over_in_two_steps() {
+    context(buyer(), none());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
+    context(board_owner(), none());
+    board.set_reviewer(second());
+    assert_eq!(board.get_config().reviewer, second());
+    board.propose_owner(Some(agent()));
+    assert_eq!(board.get_config().owner, board_owner());
+    context(agent(), none());
+    board.accept_owner();
+    assert_eq!(board.get_config().owner, agent());
+    assert_eq!(board.get_config().pending_owner, None);
+}
+
+#[test]
+#[should_panic(expected = "only the proposed owner can accept")]
+fn nobody_else_can_take_the_board() {
+    context(buyer(), none());
+    let mut board = Board::new(escrow(), reviewer(), board_owner());
+    context(board_owner(), none());
+    board.propose_owner(Some(agent()));
+    context(second(), none());
+    board.accept_owner();
+}
+
+#[test]
+fn each_attempt_counts_once_in_its_agents_record() {
+    let (mut board, id) = claimed(3);
+    let history = json!([attempt(agent(), "Failed", Some("totals"), true)]);
+    callback(job("Open", None, history.clone()));
+    board.on_sync(id, Some(1));
+    // A second sync of the same history counts nothing more.
+    callback(job("Open", None, history));
+    board.on_sync(id, None);
+    assert_eq!(
+        board.get_agent_record(agent()),
+        AgentRecord {
+            failed: 1,
+            ..Default::default()
+        }
+    );
+    context(second(), CLAIM_DEPOSIT);
+    let _ = board.claim(id);
+    callback(PromiseResult::Successful(vec![]));
+    assert!(board.on_assigned(id, 2));
+    callback(job(
+        "Open",
+        None,
+        json!([
+            attempt(agent(), "Failed", Some("totals"), true),
+            attempt(second(), "Failed", Some("format"), true),
+        ]),
+    ));
+    board.on_sync(id, Some(2));
+    assert_eq!(
+        board.get_agent_record(agent()),
+        AgentRecord {
+            failed: 1,
+            ..Default::default()
+        }
+    );
+    assert_eq!(
+        board.get_agent_record(second()),
+        AgentRecord {
+            failed_format: 1,
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
+fn every_outcome_has_its_own_count() {
+    let (mut board, id) = claimed(3);
+    callback(job(
+        "Released",
+        Some(agent()),
+        json!([
+            attempt(agent(), "NoDelivery", None, false),
+            attempt(agent(), "NoVerdict", None, false),
+            attempt(agent(), "Paid", None, true),
+        ]),
+    ));
+    board.on_sync(id, Some(1));
+    assert_eq!(
+        board.get_agent_record(agent()),
+        AgentRecord {
+            paid: 1,
+            no_delivery: 1,
+            no_verdict: 1,
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
+fn a_finished_bid_keeps_its_hashes_and_a_title_and_gives_back_storage_once() {
+    let (mut board, id) = ended_and_settled();
+    let before = board.get_bid(id).unwrap();
+    context(second(), none());
+    let _ = board.finish_bid(id);
+    let sent = transfers();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, buyer().to_string());
+    assert!(sent[0].1 > 0 && sent[0].1 < before.storage_paid.0);
+    let after = board.get_bid(id).unwrap();
+    assert!(after.finished);
+    assert_eq!(after.description, "Convert these invoices");
+    assert_eq!(after.format, "");
+    assert_eq!(after.check_hash, before.check_hash);
+    assert_eq!(after.format_hash, before.format_hash);
+    assert_eq!(after.storage_paid.0, before.storage_paid.0 - sent[0].1);
+    // The check still cannot be used again.
+    context(buyer(), NearToken::from_near(2));
+    let reused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        posted(&mut board, 1, HASH);
+    }));
+    assert!(reused.is_err());
+}
+
+#[test]
+#[should_panic(expected = "no storage is left to return")]
+fn a_bid_gives_back_storage_only_once() {
+    let (mut board, id) = ended_and_settled();
+    context(second(), none());
+    let _ = board.finish_bid(id);
+    context(second(), none());
+    let _ = board.finish_bid(id);
+}
+
+#[test]
+fn a_failed_storage_return_can_be_retried() {
+    let (mut board, id) = ended_and_settled();
+    let paid = board.get_bid(id).unwrap().storage_paid;
+    context(second(), none());
+    let _ = board.finish_bid(id);
+    let back = transfers()[0].1;
+    callback(PromiseResult::Failed);
+    assert!(!board.on_storage_returned(id, U128(back)));
+    assert_eq!(board.get_bid(id).unwrap().storage_paid, paid);
+    context(second(), none());
+    let _ = board.finish_bid(id);
+    assert_eq!(transfers()[0].1, back);
+}
+
+#[test]
+#[should_panic(expected = "every attempt fee must be settled first")]
+fn a_bid_with_a_fee_in_flight_keeps_its_storage() {
+    let (mut board, id) = claimed(1);
+    callback(job(
+        "Refunded",
+        None,
+        json!([attempt(agent(), "Failed", Some("totals"), true)]),
+    ));
+    board.on_sync(id, Some(1));
+    context(second(), none());
+    let _ = board.finish_bid(id);
+}
+
+#[test]
+#[should_panic(expected = "only a bid that has ended can give back storage")]
+fn an_open_bid_keeps_its_storage() {
+    let (mut board, id) = open_board(1);
+    context(second(), none());
+    let _ = board.finish_bid(id);
+}
+
+#[test]
+fn a_title_is_the_first_line_cut_on_a_character() {
+    assert_eq!(title_of("Fix the build\nDetails here"), "Fix the build");
+    let long = "é".repeat(100);
+    let title = title_of(&long);
+    assert!(title.len() <= 120);
+    assert!(title.chars().all(|c| c == 'é'));
 }

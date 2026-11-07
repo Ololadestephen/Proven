@@ -214,6 +214,16 @@ pub struct Job {
 }
 
 impl Job {
+    /// True once nothing more can happen to the job's money: paid with its budget returned, or
+    /// refunded.
+    pub fn is_finished(&self) -> bool {
+        match self.state {
+            JobState::Released => self.compute_budget.0 == 0,
+            JobState::Refunded | JobState::Expired => true,
+            _ => false,
+        }
+    }
+
     /// The same job with every optional field filled, used to charge storage at its largest.
     fn at_full_size(&self) -> Self {
         let full = Some(FULL_HASH.to_string());
@@ -406,6 +416,7 @@ struct VerifyOutput {
 #[near(serializers = [json])]
 pub struct Config {
     pub owner: AccountId,
+    pub pending_owner: Option<AccountId>,
     pub outlayer: AccountId,
     pub board: Option<AccountId>,
     pub verifier_url: String,
@@ -459,6 +470,8 @@ pub struct Escrow {
     caps: Vec<AssetCap>,
     /// What each buyer has held now. An entry goes when it reaches zero, so this stays small.
     held_by_buyer: LookupMap<(AccountId, Option<AccountId>), u128>,
+    /// The account the owner has offered the contract to, until it accepts.
+    pending_owner: Option<AccountId>,
 }
 
 fn is_hash(value: &str) -> bool {
@@ -552,58 +565,55 @@ impl Escrow {
                 max_held_per_buyer,
             }],
             held_by_buyer: LookupMap::new(StorageKey::HeldByBuyer),
+            pending_owner: None,
         }
     }
 
-    /// One-time upgrade from the version that funded jobs per worker. Only this contract's own
-    /// account can call it, as part of deploying the new code, and only while no money is held.
-    /// Earlier jobs are finished, and are kept readable as they were.
+    /// One-time upgrade from the version without storage return or owner handover. Only this
+    /// contract's own account can call it, as part of deploying the new code. Jobs keep their
+    /// layout, so none is rewritten and jobs under way carry on.
     #[init(ignore_state)]
     #[private]
-    pub fn migrate(board: AccountId, run_deposit: U128) -> Self {
+    pub fn migrate() -> Self {
         let old: migration::OldEscrow =
             env::state_read().unwrap_or_else(|| env::panic_str("no earlier state"));
-        let run_deposit = NearToken::from_yoctonear(run_deposit.0);
-        require_run_deposit(run_deposit);
-        for cap in &old.caps {
-            require!(cap.held.0 == 0, "no money may be held during this upgrade");
-        }
-        // Only finished jobs come across: an unfinished one could be closed and refunded from money
-        // this contract never held for it.
-        for id in 0..old.next_id {
-            let key = migration::job_key(id);
-            let Some(bytes) = env::storage_read(&key) else {
-                continue; // A cancelled job.
-            };
-            let old_job = near_sdk::borsh::from_slice::<migration::OldJob>(&bytes)
-                .unwrap_or_else(|_| env::panic_str("could not read an earlier job"));
-            require!(
-                old_job.is_finished(),
-                "every earlier job must be finished before this upgrade"
-            );
-            let job = old_job.upgraded();
-            let bytes = near_sdk::borsh::to_vec(&job)
-                .unwrap_or_else(|_| env::panic_str("could not write an upgraded job"));
-            env::storage_write(&key, &bytes);
-        }
         Self {
             owner: old.owner,
             outlayer: old.outlayer,
-            board: Some(board),
+            board: old.board,
             verifier_url: old.verifier_url,
             verifier_hash: old.verifier_hash,
             secrets_owner: old.secrets_owner,
-            jobs: LookupMap::new(StorageKey::Jobs),
+            jobs: old.jobs,
             next_id: old.next_id,
             paused: old.paused,
-            run_deposit,
-            caps: old
-                .caps
-                .into_iter()
-                .filter(|cap| cap.token.is_none())
-                .collect(),
-            held_by_buyer: LookupMap::new(StorageKey::HeldByBuyer),
+            run_deposit: old.run_deposit,
+            caps: old.caps,
+            held_by_buyer: old.held_by_buyer,
+            pending_owner: None,
         }
+    }
+
+    // ---- Owner: hand the contract to another account, in two steps ----
+
+    /// Names the account that may take over as owner, or clears it with `null`. Nothing changes
+    /// until that account accepts.
+    pub fn propose_owner(&mut self, new_owner: Option<AccountId>) {
+        self.require_owner();
+        self.pending_owner = new_owner;
+        env::log_str(&format!("owner proposed: {:?}", self.pending_owner));
+    }
+
+    /// Called by the proposed account to become the owner.
+    pub fn accept_owner(&mut self) {
+        let caller = env::predecessor_account_id();
+        require!(
+            self.pending_owner.as_ref() == Some(&caller),
+            "only the proposed owner can accept"
+        );
+        self.owner = caller;
+        self.pending_owner = None;
+        env::log_str(&format!("owner is now {}", self.owner));
     }
 
     // ---- Owner: settings for future jobs. Existing jobs keep what they were created with. ----
@@ -1069,6 +1079,51 @@ impl Escrow {
         sent
     }
 
+    /// Once a job has ended, returns to its buyer what the buyer paid for storage beyond what the
+    /// finished record still uses. The job was charged at its largest when it was created; the
+    /// record stays, as evidence. Anyone can call it. It never returns more than was paid, and a
+    /// second call finds nothing left.
+    pub fn finish_storage(&mut self, job_id: JobId) -> Promise {
+        let job = self.job(job_id).clone();
+        require!(
+            job.is_finished(),
+            "only a job that has ended, with its budget returned, can give back storage"
+        );
+        // Measure what the record uses now by taking it out and putting it back.
+        self.jobs.flush();
+        let before = env::storage_usage();
+        self.jobs.remove(&job_id);
+        self.jobs.flush();
+        let record_bytes = before.saturating_sub(env::storage_usage());
+        let still_used = env::storage_byte_cost().saturating_mul(u128::from(record_bytes));
+        let back = job.storage_deposit.saturating_sub(still_used);
+        require!(!back.is_zero(), "no storage is left to return");
+        let buyer = job.buyer.clone();
+        let mut job = job;
+        job.storage_deposit = job.storage_deposit.saturating_sub(back);
+        self.jobs.insert(job_id, job);
+        self.jobs.flush();
+        emit("storage_returned", job_id);
+        Promise::new(buyer).transfer(back).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_PAYOUT_CALLBACK)
+                .on_storage_returned(job_id, U128(back.as_yoctonear())),
+        )
+    }
+
+    /// Puts the amount back on the job if the transfer failed, so `finish_storage` can be retried.
+    #[private]
+    pub fn on_storage_returned(&mut self, job_id: JobId, amount: U128) -> bool {
+        let sent = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
+        if !sent {
+            let job = self.job_mut(job_id);
+            job.storage_deposit = job
+                .storage_deposit
+                .saturating_add(NearToken::from_yoctonear(amount.0));
+        }
+        sent
+    }
+
     // ---- Views ----
 
     pub fn get_job(&self, job_id: JobId) -> Option<Job> {
@@ -1096,6 +1151,7 @@ impl Escrow {
     pub fn get_config(&self) -> Config {
         Config {
             owner: self.owner.clone(),
+            pending_owner: self.pending_owner.clone(),
             outlayer: self.outlayer.clone(),
             board: self.board.clone(),
             verifier_url: self.verifier_url.clone(),
