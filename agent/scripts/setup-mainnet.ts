@@ -396,7 +396,8 @@ async function upgradeEscrow(wasmPath: string) {
           actions.functionCall(
             "migrate",
             { max_held_per_buyer: MAX_HELD_PER_BUYER.toString() },
-            100_000_000_000_000n,
+            // Attached gas is held at a high price, and 100 Tgas left the new code 0.0355 NEAR short.
+            40_000_000_000_000n,
             0n,
           ),
         ],
