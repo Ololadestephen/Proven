@@ -60,8 +60,11 @@ const mainnet = {
   PROVEN_STAGE2_APPROVED: "yes",
   MAINNET_ESCROW_ACCOUNT_ID: need("MAINNET_ESCROW_ACCOUNT_ID"),
   PROVEN_BOARD: need("MAINNET_BOARD_ACCOUNT_ID"),
-  // One listed buyer. "open" here is the owner's decision alone.
-  PROVEN_MARKET_ACCESS: need("MAINNET_BUYER_ACCOUNT_ID"),
+  // Listed buyers only. "open" here is the owner's decision alone.
+  PROVEN_MARKET_ACCESS: [
+    need("MAINNET_BUYER_ACCOUNT_ID"),
+    ...(env.MAINNET_EXTRA_BUYERS ?? "").split(",").filter(Boolean),
+  ].join(","),
 };
 const mainnetRelay = {
   ...mainnet,
