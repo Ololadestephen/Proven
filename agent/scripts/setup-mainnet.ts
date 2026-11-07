@@ -6,6 +6,9 @@
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts wallet
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts workers
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts verify-config
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts upgrade <wasm>
+//   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts board <wasm>
+// Add --dry-run to read the chain and print the writes without sending any.
 // Each one-time step is recorded before it runs, and an unknown outcome stops rather than repeats.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
@@ -23,8 +26,10 @@ import { networkSettings } from "../src/network.ts";
 
 const MAX_JOB = 10n ** 23n; // 0.1 NEAR, enforced by the contract.
 const MAX_HELD = 10n ** 24n; // 1 NEAR, enforced by the contract.
-// The owner approved 4 NEAR but funds 3.45, and using the extra needs showing why first.
-const BUDGET = 35n * 10n ** 23n; // Stop above 3.5 NEAR across the new accounts.
+const MAX_HELD_PER_BUYER = 2n * 10n ** 23n; // 0.2 NEAR, enforced by the contract.
+const BUDGET = 66n * 10n ** 23n; // The owner's limit: stop above 6.6 NEAR across the new accounts.
+const YOCTO_PER_BYTE = 10n ** 19n;
+const STATE_ROOM_BYTES = 10_000n; // Room for the contract's records on top of its code.
 const MAX_POLICY_STORAGE = 5n * 10n ** 22n;
 const WORKER_KEY_ALLOWANCE = 2n * 10n ** 22n;
 /** Deploy and init stay in one transaction, so nobody can initialise the contract between them. NEAR
@@ -117,7 +122,7 @@ const settled = (result: {
 async function balances() {
   let total = 0n;
   const rows: Record<string, string> = {};
-  const ids = ["ESCROW", "OPS", "WORKER_A", "WORKER_B", "BUYER"]
+  const ids = ["ESCROW", "OPS", "WORKER_A", "WORKER_B", "BUYER", "BOARD", "RELAY"]
     .map((prefix) => env[`MAINNET_${prefix}_ACCOUNT_ID`])
     .filter((id): id is string => Boolean(id));
   for (const id of ids) {
@@ -252,7 +257,19 @@ async function setupWallet() {
     allowed: true,
     allowed_recipients: ["proven-relay"],
   };
-  await once("buyer_policy", async () => {
+  await storeBuyerPolicy("buyer_policy", stored, key, escrow);
+  console.log(
+    `Fund this buyer wallet with 0.45 NEAR: ${env.MAINNET_BUYER_ACCOUNT_ID}`,
+  );
+}
+
+async function storeBuyerPolicy(
+  step: string,
+  stored: Record<string, unknown>,
+  key: string,
+  escrow: string,
+) {
+  await once(step, async () => {
     const owner = account("MAINNET_OPS");
     const encrypted = await post(
       "/wallet/v1/encrypt-policy",
@@ -309,8 +326,157 @@ async function setupWallet() {
     );
     return hash;
   });
-  console.log(
-    `Fund this buyer wallet with 0.45 NEAR: ${env.MAINNET_BUYER_ACCOUNT_ID}`,
+}
+
+/** Pause, new code and its migration, new verifier, then unpause, in that order. Stops at the first failure,
+ * which leaves the escrow paused: refunds, deliveries and payouts keep working while paused. */
+async function upgradeEscrow(wasmPath: string) {
+  const id = env.MAINNET_ESCROW_ACCOUNT_ID;
+  const hash = env.MAINNET_VERIFIER_HASH;
+  const url = env.MAINNET_VERIFIER_URL;
+  if (!id || !wasmPath) throw new PublicError("Name the escrow and its wasm.");
+  if (!url || !hash)
+    throw new PublicError("Publish the verifier first and set its URL and hash.");
+  const code = readFileSync(wasmPath);
+  const config = (await provider.callFunction({
+    contractId: id,
+    method: "get_config",
+    args: {},
+  })) as {
+    owner: string;
+    caps: Array<{ token: string | null; held: string }>;
+    verifier_hash: string;
+    paused: boolean;
+  };
+  if (config.owner !== env.MAINNET_OPS_ACCOUNT_ID)
+    throw new PublicError("The escrow's owner is not the ops account.");
+  if (config.caps.some((cap) => BigInt(cap.held) !== 0n))
+    throw new PublicError("The escrow holds money. Upgrade only when it holds none.");
+  const view = await provider.viewAccount({ accountId: id });
+  const needed = (BigInt(code.length) + STATE_ROOM_BYTES) * YOCTO_PER_BYTE;
+  const short = needed - BigInt(view.amount);
+  if (dry)
+    console.log(
+      JSON.stringify({
+        escrow: id,
+        current_code_hash: view.code_hash,
+        current_verifier: config.verifier_hash,
+        new_code_bytes: code.length,
+        balance_near: Number(view.amount) / 1e24,
+        needs_near_for_storage: Number(needed) / 1e24,
+        add_near_first: short > 0n ? Number(short) / 1e24 : 0,
+        writes_in_order: [
+          "set_paused true (ops)",
+          `deploy and migrate in one transaction (escrow), max_held_per_buyer ${MAX_HELD_PER_BUYER}`,
+          `set_verifier ${hash} (ops)`,
+          "set_paused false (ops)",
+        ],
+      }),
+    );
+  else if (short > 0n)
+    throw new PublicError("The escrow needs more NEAR for its new code.");
+  const ops = dry ? null : account("MAINNET_OPS");
+  const escrow = dry ? null : account("MAINNET_ESCROW");
+  const owner = (method: string, args: Record<string, unknown>) =>
+    ops!.callFunctionRaw({
+      contractId: id,
+      methodName: method,
+      args,
+      gas: 30_000_000_000_000n,
+    });
+  await once("upgrade_pause", async () =>
+    settled(await owner("set_paused", { paused: true })),
+  );
+  await once("upgrade_code", async () =>
+    settled(
+      await escrow!.signAndSendTransaction({
+        receiverId: id,
+        actions: [
+          actions.deployContract(code),
+          actions.functionCall(
+            "migrate",
+            { max_held_per_buyer: MAX_HELD_PER_BUYER.toString() },
+            100_000_000_000_000n,
+            0n,
+          ),
+        ],
+      }),
+    ),
+  );
+  await once("upgrade_verifier", async () =>
+    settled(
+      await owner("set_verifier", { verifier_url: url, verifier_hash: hash }),
+    ),
+  );
+  await once("upgrade_unpause", async () =>
+    settled(await owner("set_paused", { paused: false })),
+  );
+}
+
+/** A new board, deployed and initialised in one transaction, then the buyer wallet may call it. */
+async function deployBoard(wasmPath: string) {
+  const id = env.MAINNET_BOARD_ACCOUNT_ID;
+  const escrowId = env.MAINNET_ESCROW_ACCOUNT_ID;
+  const reviewer = env.MAINNET_RELAY_ACCOUNT_ID;
+  if (!wasmPath || !escrowId) throw new PublicError("Name the wasm and escrow.");
+  const code = readFileSync(wasmPath);
+  const needed = (BigInt(code.length) + STATE_ROOM_BYTES) * YOCTO_PER_BYTE;
+  if (dry) {
+    const view = id
+      ? await provider.viewAccount({ accountId: id }).catch(() => null)
+      : null;
+    console.log(
+      JSON.stringify({
+        would_deploy: id ?? "the owner has not set MAINNET_BOARD_ACCOUNT_ID",
+        account_exists: Boolean(view),
+        balance_near: view ? Number(view.amount) / 1e24 : 0,
+        code_bytes: code.length,
+        needs_near_for_storage: Number(needed) / 1e24,
+        escrow: escrowId,
+        reviewer: reviewer ?? "the owner has not set MAINNET_RELAY_ACCOUNT_ID",
+        then: "add the board to the buyer wallet's policy",
+      }),
+    );
+    return;
+  }
+  if (!id || !reviewer)
+    throw new PublicError("Set the board and relay accounts in .env first.");
+  const board = account("MAINNET_BOARD");
+  const view = await provider.viewAccount({ accountId: id });
+  if (BigInt(view.amount) < needed)
+    throw new PublicError("The board needs more NEAR for its code.");
+  await once("board_deploy", async () =>
+    settled(
+      await board.signAndSendTransaction({
+        receiverId: id,
+        actions: [
+          actions.deployContract(code),
+          actions.functionCall(
+            "new",
+            { escrow: escrowId, reviewer },
+            INIT_GAS,
+            0n,
+          ),
+        ],
+      }),
+    ),
+  );
+  const stored = JSON.parse(
+    readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+  ) as {
+    rules: { addresses: { list: string[] } };
+    capabilities: Record<string, unknown>;
+  };
+  stored.rules.addresses.list = [escrowId, id];
+  stored.capabilities.sign_message = {
+    allowed: true,
+    allowed_recipients: ["proven-relay"],
+  };
+  await storeBuyerPolicy(
+    "buyer_policy_board",
+    stored,
+    env.MAINNET_BUYER_CUSTODY_KEY!,
+    escrowId,
   );
 }
 
@@ -368,6 +534,8 @@ async function main() {
   if (command === "escrow") return deployEscrow(argument);
   if (command === "wallet") return setupWallet();
   if (command === "workers") return setupWorkers();
+  if (command === "upgrade") return upgradeEscrow(argument);
+  if (command === "board") return deployBoard(argument);
   if (command === "verify-config") {
     if (dry) {
       console.log("would read get_config from the escrow");
