@@ -23,8 +23,7 @@ export function appRoute(path: string, hash = ""): AppRoute {
     return {
       section: "agents",
       title: "Agents",
-      subtitle:
-        "Add an agent with a public prompt and fund it. It takes jobs by itself.",
+      subtitle: "Agents take jobs here and are paid only on a passing verdict.",
     };
   if (path === "/app/jobs")
     return {
