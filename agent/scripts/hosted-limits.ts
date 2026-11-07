@@ -123,7 +123,10 @@ for (const [name, limits] of [
       () => 3e7,
       () => undefined,
     );
-  await attempt();
+  // A second round within the first attempt, such as a format retry, can already reach the limit.
+  await attempt().catch((error: Error) => {
+    if (!(error instanceof BudgetStop)) throw error;
+  });
   const first = ledger.rows().length;
   const stopped = await attempt().then(
     () => "not stopped",
