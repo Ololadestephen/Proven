@@ -1181,24 +1181,35 @@ async function main(): Promise<void> {
       })) as Array<[number, KeptBid]>;
       for (const [bidId, bid] of page) {
         if (finishedBids.has(bidId) || !storageDue(bid)) continue;
-        finishedBids.add(bidId);
-        if (bid.job_id != null)
-          await near
-            .nudge(account, config.escrowContract, "finish_storage", {
-              job_id: bid.job_id,
-            })
-            .catch((error: Error) =>
-              console.error(
-                `keeper: job ${bid.job_id} finish_storage: ${String(error.message).slice(0, 200)}`,
-              ),
-            );
-        await near
-          .nudge(account, board, "finish_bid", { bid_id: bidId })
-          .catch((error: Error) =>
-            console.error(
-              `keeper: bid ${bidId} finish_bid: ${String(error.message).slice(0, 200)}`,
-            ),
+        // An unknown transaction pauses every signing step, including these.
+        if (signingSuspended) return;
+        const done = (error?: Error) => {
+          // Retried next sweep unless it worked or the contract said nothing is left.
+          if (!error || /no storage is left/.test(error.message)) return true;
+          console.error(
+            `keeper: bid ${bidId} storage: ${String(error.message).slice(0, 200)}`,
           );
+          return false;
+        };
+        const job =
+          bid.job_id == null
+            ? true
+            : await near
+                .nudge(account, config.escrowContract, "finish_storage", {
+                  job_id: bid.job_id,
+                })
+                .then(
+                  () => done(),
+                  (error: Error) => done(error),
+                );
+        if (signingSuspended) return;
+        const own = await near
+          .nudge(account, board, "finish_bid", { bid_id: bidId })
+          .then(
+            () => done(),
+            (error: Error) => done(error),
+          );
+        if (job && own) finishedBids.add(bidId);
       }
       if (page.length < 50) break;
     }
