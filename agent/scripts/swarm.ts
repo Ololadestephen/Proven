@@ -12,7 +12,11 @@ import { attempt, postBid, runReview } from "../src/swarm.ts";
 const [command, first, second, third, fourth] = process.argv.slice(2);
 
 async function main() {
-  if (command === "post") return postBid(first);
+  if (command === "post") {
+    // The check stays private until the bid ends, so it is not printed here.
+    const { check: _check, ...posted } = await postBid(first);
+    return posted;
+  }
   if (command === "review")
     return runReview(Number(first), second ?? "NEARAI_KEY_REVIEW");
   if (command === "attempt") {

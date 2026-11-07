@@ -120,6 +120,7 @@ await refused("stranger-raises-caps", stranger, "set_caps", {
   token: null,
   max_job: "1",
   max_held: "1",
+  max_held_per_buyer: "1",
 });
 await refused("stranger-changes-verifier", stranger, "set_verifier", {
   verifier_url: "https://example.test/x.wasm",

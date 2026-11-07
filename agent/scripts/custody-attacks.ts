@@ -150,6 +150,10 @@ await attack("policy-store-from-non-controller", async () => {
       encrypted_data: encrypted.json.encrypted_base64,
       storage_refund_to: null,
       wallet_signature: signed.json.signature_hex,
+      // Newer OutLayer contracts need these, exactly as the keystore signed them.
+      version: signed.json.version,
+      locked: signed.json.locked,
+      valid_until: signed.json.valid_until,
     },
     deposit: 50n * MILLI,
     gas: 100000000000000n,

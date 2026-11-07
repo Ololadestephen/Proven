@@ -13,7 +13,7 @@ import { parseEnv } from "node:util";
 import { JsonRpcProvider } from "near-api-js";
 import { loadConfig, ROOT } from "../src/config.ts";
 import { custodySignForRelay, RELAY_RECIPIENT } from "../src/custody.ts";
-import { handoff } from "../src/handoff.ts";
+import { handoff, handoffOverWeb } from "../src/handoff.ts";
 import { relayMessage } from "../src/relay-auth.ts";
 import { executeTool } from "../src/service.ts";
 import type { Job } from "../src/types.ts";
@@ -47,7 +47,9 @@ const buyerAuth = async (id: number) => {
   return { ...signed, message };
 };
 const raw = (id: number, auth: unknown) =>
-  handoff(config.socket, { action: "collect", job_id: id, auth });
+  config.relayUrl
+    ? handoffOverWeb(config.relayUrl, { action: "collect", job_id: id, auth })
+    : handoff(config.socket, { action: "collect", job_id: id, auth });
 
 const released = await job(releasedId);
 const refunded = await job(refundedId);
@@ -121,14 +123,16 @@ results.other_account_with_valid_signature = await outcome(() =>
   }),
 );
 
-// 4. Another real wallet: its policy will not sign for the relay at all.
-results.agent_wallet_signing = await outcome(() =>
-  custodySignForRelay(
+// 4. An agent wallet may sign for the relay, since it delivers there, but the relay gives work only to its buyer.
+results.agent_wallet_collecting = await outcome(async () => {
+  const message = relayMessage({ action: "collect", job_id: releasedId });
+  const signed = await custodySignForRelay(
     config.custodyApi,
     env.PROVEN_AGENT_B_CUSTODY_KEY!,
-    relayMessage({ action: "collect", job_id: releasedId }),
-  ),
-);
+    message,
+  );
+  return raw(releasedId, { ...signed, message });
+});
 
 // 5. The buyer's own wallet cannot sign for a different recipient.
 const elsewhere = await fetch(`${config.custodyApi}/wallet/v1/sign-message`, {
