@@ -8,7 +8,7 @@ import {
 import type { Market, Wallet, Run } from "./market-types.ts";
 import { recall, short } from "./market-client.ts";
 import { performJobAction } from "./job-actions.ts";
-import { COIN, OUTLAYER_API } from "./network.ts";
+import { COIN, IS_MAINNET, OUTLAYER_API } from "./network.ts";
 export function JobWorkspace({
   bid,
   market,
@@ -204,13 +204,16 @@ export function JobWorkspace({
             </dl>
           </details>
           <a href="/trust">How verification is trusted</a>{" "}
-          <a
-            href={
-              job?.id !== undefined ? `/evidence#job-${job.id}` : "/evidence"
-            }
-          >
-            Open the escrow evidence reader
-          </a>
+          {/* The evidence reader reads recorded testnet jobs only. Mainnet links its attestation above. */}
+          {IS_MAINNET ? null : (
+            <a
+              href={
+                job?.id !== undefined ? `/evidence#job-${job.id}` : "/evidence"
+              }
+            >
+              Open the escrow evidence reader
+            </a>
+          )}
         </section>
       ) : null}
       {tab === "delivery" ? (

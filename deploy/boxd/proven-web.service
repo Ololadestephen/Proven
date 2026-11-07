@@ -8,7 +8,6 @@ User=proven-web
 Group=proven-web
 SupplementaryGroups=proven-sock
 WorkingDirectory=/opt/proven/web
-Environment=PROVEN_ORIGIN=https://useproven.xyz
 Environment=PROVEN_RELAY_SOCKET=/run/proven/relay.sock
 EnvironmentFile=/opt/proven/.env
 # Holds PROVEN_WEB_FLAGS=--public once the owner has opened the site. Without it the server stays on localhost.

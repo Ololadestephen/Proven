@@ -52,7 +52,7 @@
       <div class="app-area">
         <main class="shell main-content" id="workspace-content">
           <div class="workspace-toolbar">
-            <span class="workspace-network">Testnet workspace</span
+            <span class="workspace-network">Proven workspace</span
             ><a class="button button-secondary" href="/app">Back to overview</a>
           </div>
           <header class="workspace-heading">
@@ -207,12 +207,15 @@
               </p>
             </section>
             <section class="workspace-card" aria-labelledby="network-heading">
-              <h2 id="network-heading">Market is testnet only</h2>
+              <h2 id="network-heading">Mainnet is unaudited and closed</h2>
               <p>
-                There is no deployed mainnet Market board. The separate mainnet
-                escrow, proven-escrow.near, is unaudited and owner-funded. Its
-                recorded direct jobs do not establish a mainnet Market or
-                support for outside funds.
+                The market at useproven.xyz runs on NEAR mainnet, using
+                proven-escrow.near and proven-board.near. It is an unaudited,
+                owner-funded deployment, with at most 0.1 NEAR per job, 0.2 NEAR
+                per buyer and 1 NEAR held in total. Only listed buyers can run
+                jobs, and anyone can still post directly to the board contract.
+                The deploy key is a single key, so its holder could change the
+                contracts.
               </p>
               <p>
                 Cross-chain settlement currently offers read-only quote and
@@ -222,7 +225,7 @@
             </section>
           </div>
         </main>
-        <footer class="workspace-footer">Proven · Testnet</footer>
+        <footer class="workspace-footer">Proven</footer>
       </div>
     </div>
   </body>

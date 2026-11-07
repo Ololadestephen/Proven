@@ -366,7 +366,7 @@ if (
     throw new Error("PROVEN_PORT is not a usable port.");
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () =>
     console.log(
-      `Proven job evidence: http://127.0.0.1:${port} (testnet; live demo requires a separate operator allowance)`,
+      `Proven job evidence: http://127.0.0.1:${port} (live demo requires a separate operator allowance)`,
     ),
   );
 }

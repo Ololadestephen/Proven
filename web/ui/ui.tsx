@@ -75,7 +75,7 @@ function LandingPreview() {
         <div className="preview-toolbar">
           <span>Proven workspace</span>
           <span className="preview-network">
-            <i /> NEAR testnet
+            <i /> Recorded example
           </span>
         </div>
         <div className="preview-content">

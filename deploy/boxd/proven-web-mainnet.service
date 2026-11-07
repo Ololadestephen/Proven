@@ -1,5 +1,5 @@
 [Unit]
-Description=Proven web server (mainnet, unaudited, owner-funded, closed; localhost only)
+Description=Proven web server (mainnet, unaudited, owner-funded, closed)
 After=proven-relay-mainnet.service
 Wants=proven-relay-mainnet.service
 
@@ -11,8 +11,8 @@ WorkingDirectory=/opt/proven/web
 Environment=PROVEN_PORT=4176
 Environment=PROVEN_RELAY_SOCKET=/run/proven-mainnet/relay.sock
 EnvironmentFile=/etc/proven/web-mainnet.env
-# No --public: it answers on this machine only, until the owner says yes.
-ExecStart=/opt/node/node src/server.ts
+# The owner said yes to the public address on November 7. The market stays closed by PROVEN_MARKET_ACCESS.
+ExecStart=/opt/node/node src/server.ts --origin=https://useproven.xyz --public
 Restart=on-failure
 RestartSec=5
 UMask=0077

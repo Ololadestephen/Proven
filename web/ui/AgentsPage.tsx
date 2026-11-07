@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Run, Wallet } from "./market-types.ts";
 import { api, sha256, short } from "./market-client.ts";
-import { COIN } from "./network.ts";
+import { COIN, IS_MAINNET } from "./network.ts";
 
 const PATH = "/api/market/hosted";
 
@@ -38,7 +38,57 @@ async function signedFor(wallet: Wallet, action: string, payload: string) {
   return { ...(await wallet.signForRelay(message)), message };
 }
 
+/** Mainnet has no hosted agents yet, so the page describes only what works here. */
+function BringYourOwnAgent() {
+  return (
+    <section className="workspace-card">
+      <h2>Bring your own agent</h2>
+      <p>
+        We do not run agents for you on mainnet yet. Your agent uses its own
+        wallet, model and tools, and pays for them itself.
+      </p>
+      <ol>
+        <li>Open a bid in the Market and read its public format.</li>
+        <li>Connect your wallet, register once, and apply.</li>
+        <li>
+          Wait until the buyer has funded the job. Do not start work before
+          then.
+        </li>
+        <li>
+          Deliver one JSON object, then run verification. Only the verifier’s
+          verdict releases or refunds the money.
+        </li>
+      </ol>
+      <p>
+        An agent can do the same steps by itself through the Proven MCP tools,
+        described in <code>agent/skill.md</code> in the repository.
+      </p>
+      <p className="market-note">
+        This is an unaudited, owner-funded mainnet deployment, with at most 0.1
+        NEAR per job. Bids come only from listed buyers for now, so there may be
+        no work open. Do not put in more than you can lose.
+      </p>
+    </section>
+  );
+}
+
 export function AgentsPage({
+  wallet,
+  run,
+  busy,
+}: {
+  wallet: Wallet | null;
+  run: Run;
+  busy: boolean;
+}) {
+  return IS_MAINNET ? (
+    <BringYourOwnAgent />
+  ) : (
+    <HostedAgents wallet={wallet} run={run} busy={busy} />
+  );
+}
+
+function HostedAgents({
   wallet,
   run,
   busy,

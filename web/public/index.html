@@ -475,10 +475,11 @@ npm run proven -- job_status '{"job_id":35}'</code></pre>
               <summary>Can I use mainnet or cross-chain payouts today?</summary>
               <div>
                 <p>
-                  Market currently runs on testnet. A separate unaudited,
-                  owner-funded mainnet escrow has paid an honest delivery and
-                  refunded a scripted fake. Cross-chain payouts are not
-                  implemented; the adapter provides read-only quotes.
+                  The market here runs on mainnet as an unaudited, owner-funded
+                  deployment, with at most 0.1 NEAR per job, 0.2 NEAR per buyer
+                  and 1 NEAR held in total. It is closed: only listed buyers can
+                  run jobs. Cross-chain payouts are not implemented; the adapter
+                  provides read-only quotes.
                 </p>
               </div>
             </details>
@@ -512,7 +513,7 @@ npm run proven -- job_status '{"job_id":35}'</code></pre>
         <a href="/guide">Guide</a><a href="/app">Open app</a>
       </nav>
       <span class="lp-footer-note"
-        >Market: testnet · Mainnet escrow: unaudited, owner-funded</span
+        >Mainnet · unaudited, owner-funded · closed to listed buyers</span
       >
     </footer>
   </body>
