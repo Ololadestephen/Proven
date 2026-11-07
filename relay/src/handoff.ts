@@ -1202,14 +1202,15 @@ async function main(): Promise<void> {
                   () => done(),
                   (error: Error) => done(error),
                 );
-        if (signingSuspended) return;
+        // The board finishes only after its job has, or a finished bid would hide the job's storage.
+        if (!job || signingSuspended) continue;
         const own = await near
           .nudge(account, board, "finish_bid", { bid_id: bidId })
           .then(
             () => done(),
             (error: Error) => done(error),
           );
-        if (job && own) finishedBids.add(bidId);
+        if (own) finishedBids.add(bidId);
       }
       if (page.length < 50) break;
     }
