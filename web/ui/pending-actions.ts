@@ -68,3 +68,23 @@ export async function reconcilePending(
     }
   });
 }
+
+/** The person says they cancelled in their wallet. Only clears the mark after a fresh read shows the
+ * intended effect did not happen, and never for a different action than the one being looked at.
+ * If a signed transaction did still land, the contract refuses a repeat of it. */
+export async function releaseUnapplied(
+  env: Environment,
+  saved: PendingAction,
+  market: Market,
+): Promise<boolean> {
+  if (!env.locks || reconciled(saved, market)) return false;
+  let released = false;
+  await env.locks.request(PENDING_KEY, { ifAvailable: true }, (lock) => {
+    if (lock && env.storage.getItem(PENDING_KEY) === JSON.stringify(saved)) {
+      env.storage.removeItem(PENDING_KEY);
+      env.onPending(null);
+      released = true;
+    }
+  });
+  return released;
+}

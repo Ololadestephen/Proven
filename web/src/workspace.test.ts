@@ -238,3 +238,49 @@ test("malformed saved snapshots fail closed", () => {
   assert.equal(reconciled({ ...pending(), before: "invalid" }, market), false);
   assert.equal(reconciled({ ...pending(), before: "null" }, market), false);
 });
+
+test("a cancelled action clears only if the chain shows it did not happen", async () => {
+  const { releaseUnapplied } = await import("../ui/pending-actions.ts");
+  const market = {
+    agents: [],
+    bids: [{ id: 0, claim: null, job: null }],
+  } as unknown as Parameters<typeof releaseUnapplied>[2];
+  const saved = {
+    account: "w.near",
+    bidId: 0,
+    before: JSON.stringify({
+      registered: true,
+      value: { id: 0, claim: null, job: null },
+    }),
+    label: "Apply",
+    createdAt: 0,
+    call: { receiver: "b.near", method: "claim", args: { bid_id: 0 } },
+  };
+  const store = new Map([
+    ["proven-testnet-pending-action-v1", JSON.stringify(saved)],
+  ]);
+  const seen: unknown[] = [];
+  const env = {
+    locks: {
+      request: async (_: string, __: unknown, run: (lock: object) => unknown) =>
+        run({}),
+    } as unknown as LockManager,
+    storage: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    },
+    onPending: (value: unknown) => void seen.push(value),
+  };
+  // It landed: nothing is cleared by this route, so reconciliation records it instead.
+  const landed = {
+    ...market,
+    bids: [{ id: 0, claim: { agent: "w.near", number: 1 }, job: null }],
+  } as typeof market;
+  assert.equal(await releaseUnapplied(env, saved, landed), false);
+  assert.equal(store.size, 1);
+  // Nothing happened: the page is free again.
+  assert.equal(await releaseUnapplied(env, saved, market), true);
+  assert.equal(store.size, 0);
+  assert.deepEqual(seen, [null]);
+});

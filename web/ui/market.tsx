@@ -24,6 +24,7 @@ function App() {
     clock,
     run,
     refresh,
+    releasePending,
   } = state;
   return (
     <MarketLayout
@@ -59,26 +60,40 @@ function App() {
         </p>
       ) : null}
       {pending && !busy ? (
-        <section className="workspace-card">
-          <h2>Confirm the previous action</h2>
+        <section className="workspace-card job-pending">
+          <h2>Did that go through?</h2>
           <p>
-            {pending.label}. Further actions are paused until the board reflects
-            the expected change. A wallet error can still mean a transaction
-            reached the chain.
+            {pending.label}. We haven’t seen this on the chain yet, so other
+            actions are paused to stop it being sent twice.
           </p>
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() =>
-              void refresh().catch((reason) => setError(reason.message))
-            }
-          >
-            Check the board again
-          </button>
-          <p className="workspace-note">
-            If you rejected the request or it failed, check your wallet’s
-            transaction history before asking support to reconcile this
-            browser’s pending action. Nothing is resubmitted automatically.
+          <div className="market-actions">
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={clock - pending.createdAt < 15000}
+              onClick={() =>
+                void releasePending().catch((reason) =>
+                  setError(reason.message),
+                )
+              }
+            >
+              {clock - pending.createdAt < 15000
+                ? "Checking the chain…"
+                : "I cancelled it: check and continue"}
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() =>
+                void refresh().catch((reason) => setError(reason.message))
+              }
+            >
+              Check again
+            </button>
+          </div>
+          <p className="post-hint">
+            If you signed it, this clears by itself once it lands. Pressing
+            “check and continue” reads the chain first.
           </p>
         </section>
       ) : null}

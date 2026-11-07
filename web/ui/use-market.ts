@@ -8,7 +8,11 @@ import {
   PENDING_KEY,
   type PendingAction,
 } from "./action-guard.ts";
-import { guardedCall, reconcilePending } from "./pending-actions.ts";
+import {
+  guardedCall,
+  reconcilePending,
+  releaseUnapplied,
+} from "./pending-actions.ts";
 function readPending(): PendingAction | null {
   try {
     const value = localStorage.getItem(PENDING_KEY);
@@ -165,6 +169,29 @@ export function useMarket(bidId?: number) {
     }
   };
 
+  /** After a wallet cancel: read the chain again, and carry on only if nothing happened. */
+  const releasePending = async () => {
+    const saved = pendingRef.current;
+    if (!saved) return;
+    setError(null);
+    const fresh = await api<Market>("/api/market");
+    setMarket(fresh);
+    const released = await releaseUnapplied(
+      {
+        locks: navigator.locks,
+        storage: localStorage,
+        onPending: (value) => {
+          pendingRef.current = value;
+          setPending(value);
+        },
+      },
+      saved,
+      fresh,
+    );
+    if (released) setNotice("Nothing reached the chain. You can carry on.");
+    else await refresh();
+  };
+
   return {
     market,
     wallet,
@@ -180,5 +207,6 @@ export function useMarket(bidId?: number) {
     clock,
     run,
     refresh,
+    releasePending,
   };
 }

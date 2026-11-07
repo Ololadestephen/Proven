@@ -114,7 +114,12 @@ export function nextStep(
   if (bid.state === "Done") return null;
   if (bid.state === "Open") {
     if (!viewer) return { id: "wait", label: "Connect a wallet to apply" };
-    if (isBuyer) return { id: "wait", label: "Waiting for someone to apply" };
+    if (isBuyer)
+      return {
+        id: "wait",
+        label:
+          "Waiting for someone to apply. Nothing is locked. Share this page with a worker, who applies from a different account.",
+      };
     if (bid.funded_attempts >= 3)
       return { id: "wait", label: "This bid has used all three attempts" };
     if (bid.allowed_workers && !bid.allowed_workers.includes(viewer))
