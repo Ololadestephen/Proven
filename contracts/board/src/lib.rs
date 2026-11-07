@@ -1,17 +1,20 @@
-//! Proven bid board. Buyers post checkable work, a reviewer can only let a bid through or block it,
-//! and registered agents claim bids one at a time.
+//! Proven bid board. A buyer posts checkable work and pays for it once. A reviewer can only let a bid
+//! through or block it, and registered agents claim bids one at a time.
 //!
-//! The board holds NEAR storage deposits and attempt fees. Job money stays in the escrow, which does
-//! not know this contract exists. Every job payment still comes from the escrow's callback-recorded
-//! verdict. The board only reads `get_job`, so nothing here can move job money or set a verdict.
+//! Posting forwards the payment and a compute budget to the escrow, which holds them from then on
+//! and is the only place job money moves. Every job payment comes from the escrow's callback-recorded
+//! verdict. The board can only ask the escrow to create a job, to give an open job to the agent whose
+//! claim it accepted, and to close a job no one is on.
 //!
-//! The one payment made here is the attempt fee. The buyer pays it when linking a job, and it goes
-//! by the job's recorded outcome alone: to the worker if well-formed work failed a real rule, otherwise
-//! back to the buyer. It never depends on a model, a message or anything the board decides itself.
+//! The one payment made here is the attempt fee, prepaid at posting for each attempt. Each attempt's
+//! fee goes by that attempt's recorded outcome alone: to the worker if well-formed work failed a real
+//! rule, otherwise back to the buyer. Unused fees go back when the bid ends. Nothing here depends on
+//! a model, a message or anything the board decides itself.
 //!
 //! An agent's hashes record what its operator committed to, not proof of what actually ran.
 
 use near_sdk::json_types::{U128, U64};
+use near_sdk::serde_json::json;
 use near_sdk::store::{LookupMap, LookupSet, Vector};
 use near_sdk::{
     env, ext_contract, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault,
@@ -23,56 +26,61 @@ pub type JobId = u64;
 
 const MAX_DESCRIPTION_BYTES: usize = 2_048;
 const MAX_LABEL_BYTES: usize = 128;
-const MIN_CLAIM_WINDOW_SECS: u32 = 60;
-const MAX_CLAIM_WINDOW_SECS: u32 = 86_400;
 const NANOS: u64 = 1_000_000_000;
-/// Added to a bid's own storage cost: it pays for the review record that is written later.
+/// Added to a bid's own storage cost: it pays for the review, claim and fee records written later.
 const POST_RESERVE: NearToken = NearToken::from_millinear(10);
-/// Pays for what a claim writes: the attempt record and, later, the linked job id.
+/// Pays for what a claim writes: the attempt record.
 pub const CLAIM_DEPOSIT: NearToken = NearToken::from_millinear(5);
-/// A linked job must leave at least this long to run, so a buyer cannot use up an agent's one attempt
-/// with a job too short to finish.
-const MIN_JOB_TIME_LEFT_NANOS: u64 = 1_800 * NANOS;
-/// A linked claim lapses only this long after its window, well past the point the buyer's tool stops
-/// funding, so a fund and a sync almost never meet.
-const LINK_GRACE_NANOS: u64 = 120 * NANOS;
-const MAX_PAST_JOBS: usize = 20;
 const MAX_ALLOWED_WORKERS: usize = 20;
 const MAX_FORMAT_BYTES: usize = 2_048;
-/// Funded attempts per bid. With one attempt per account, this bounds what fees a bid can ever pay.
-pub const MAX_FUNDED_ATTEMPTS: u32 = 3;
-/// Paid by the buyer at linking. Roughly what a failed attempt costs a worker: inference plus a
-/// verification run.
+/// Attempts per bid. With one attempt per account, this bounds what fees a bid can ever pay.
+pub const MAX_ATTEMPTS: u32 = 3;
+/// Prepaid by the buyer for each attempt. Roughly what a failed attempt costs a worker.
 pub const ATTEMPT_FEE: NearToken = NearToken::from_millinear(15);
-/// Pays for the fee record, and is not returned.
+/// Pays for each attempt's fee record, and is not returned.
 pub const FEE_RECORD_DEPOSIT: NearToken = NearToken::from_millinear(2);
 /// A bid must end by this long after posting, so a buyer cannot avoid revealing its check.
 const MAX_BID_LIFE_NANOS: u64 = 7 * 24 * 3_600 * NANOS;
+const MIN_WINDOW_SECS: u32 = 30 * 60;
+const MAX_WINDOW_SECS: u32 = 24 * 60 * 60;
+/// How long verification can be triggered after each delivery.
+const VERDICT_WINDOW_SECS: u32 = 30 * 60;
 /// The verifier's reserved rule id for work that does not fit the public format.
 const FORMAT_RULE: &str = "format";
-const SETTLE_CALLBACK_GAS: Gas = Gas::from_tgas(40);
-const FEE_PAID_GAS: Gas = Gas::from_tgas(10);
 /// A job is far smaller than this. A larger answer is not a job.
 const MAX_JOB_VIEW_BYTES: usize = 16 * 1024;
+const CREATE_GAS: Gas = Gas::from_tgas(30);
+const ASSIGN_GAS: Gas = Gas::from_tgas(15);
+const CLOSE_GAS: Gas = Gas::from_tgas(60);
 const READ_GAS: Gas = Gas::from_tgas(15);
 const CALLBACK_GAS: Gas = Gas::from_tgas(25);
+/// A sync may pay up to three fees, each with its own callback.
+const SYNC_CALLBACK_GAS: Gas = Gas::from_tgas(80);
+const FEE_PAID_GAS: Gas = Gas::from_tgas(10);
 
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BidState {
+    /// The escrow is creating the job and holding the payment. If it refuses, the bid is removed and
+    /// everything goes back to the buyer.
+    Pending,
     /// No result from the reviewer yet. Nothing can claim it, and a failed review leaves it here.
     Unreviewed,
     Blocked,
     Open,
+    /// The escrow is giving the job to an agent.
+    Assigning,
     Claimed,
-    /// A linked job was released to its worker.
+    /// The job was paid to its worker.
     Done,
-    /// A linked job's check failed the challenge, so the buyer's check is what is wrong.
+    /// The job ended without a payment: its check was rejected, its attempts ran out, it ended, or
+    /// the buyer closed it. The buyer was refunded by the escrow.
     Closed,
+    /// Kept only for bids made before this version.
     Cancelled,
 }
 
-/// Where one attempt fee stands. `Paying` holds it while a transfer is in flight, so it can be claimed once.
+/// Where one attempt fee stands. `Paying` holds it while a transfer is in flight, so it can go once.
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeeState {
@@ -80,16 +88,6 @@ pub enum FeeState {
     Paying,
     PaidToWorker,
     ReturnedToBuyer,
-}
-
-#[near(serializers = [json, borsh])]
-#[derive(Clone, Debug)]
-pub struct AttemptFee {
-    pub bid_id: BidId,
-    pub buyer: AccountId,
-    pub worker: AccountId,
-    pub amount: NearToken,
-    pub state: FeeState,
 }
 
 #[near(serializers = [json, borsh])]
@@ -108,18 +106,6 @@ pub struct Claim {
     pub number: u32,
     pub agent: AccountId,
     pub claimed_at: U64,
-    pub expires_at: U64,
-    pub job_id: Option<JobId>,
-}
-
-/// A job that was linked to a claim on this bid and has finished with the bid.
-#[near(serializers = [json, borsh])]
-#[derive(Clone, Debug)]
-pub struct PastJob {
-    pub agent: AccountId,
-    pub job_id: JobId,
-    pub funded: bool,
-    pub bid_state_after: BidState,
 }
 
 #[near(serializers = [json, borsh])]
@@ -137,16 +123,23 @@ pub struct Bid {
     pub format_hash: String,
     /// After this, nobody can claim and anyone can close the bid.
     pub expires_at: U64,
-    pub claim_window_secs: u32,
+    /// How long each worker has to deliver once it has the job.
+    pub deliver_secs: u32,
+    pub max_attempts: u32,
+    /// The escrow job that holds this bid's money.
+    pub job_id: Option<JobId>,
     pub state: BidState,
     pub review: Option<Review>,
     pub claim: Option<Claim>,
     pub claims_made: u32,
+    /// Attempts that ended, as the escrow's history records them.
     pub funded_attempts: u32,
-    /// The latest jobs only. `funded_attempts` keeps the full count.
-    pub past_jobs: Vec<PastJob>,
+    /// One entry per attempt the buyer prepaid.
+    pub fees: Vec<FeeState>,
     /// `None` is open entry. Otherwise only these accounts can claim, fixed when the bid is posted.
     pub allowed_workers: Option<Vec<AccountId>>,
+    /// Everything the buyer attached when posting, returned in full if the escrow refuses the job.
+    pub paid: U128,
 }
 
 #[near(serializers = [json, borsh])]
@@ -167,12 +160,11 @@ pub struct Agent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Attempt {
     Active,
-    /// A claim the buyer never funded. It does not use up the attempt, but the account waits one
-    /// more window, so it cannot immediately take the bid back from everyone else.
+    /// Kept only for bids made before this version.
     Lapsed {
         retry_after: U64,
     },
-    /// A funded job ended without paying this account. This was its one attempt.
+    /// The account had the job. This was its one attempt.
     Used,
 }
 
@@ -183,29 +175,32 @@ pub struct Config {
     pub reviewer: AccountId,
 }
 
-/// The fields of the escrow's `Job` the board reads. Others are ignored.
+/// One attempt as the escrow records it.
 #[near(serializers = [json])]
 #[derive(Clone, Debug)]
-pub struct JobView {
-    pub buyer: AccountId,
+pub struct AttemptView {
     pub worker: AccountId,
-    pub token: Option<AccountId>,
-    pub amount: U128,
-    pub spec_hash: String,
-    pub fakes_hash: String,
-    pub verifier_hash: String,
-    pub state: String,
-    pub deadline: U64,
-    /// Missing on an escrow that has not been upgraded, and then no job matches a bid's format.
-    #[serde(default)]
-    pub format_hash: String,
+    pub outcome: String,
     #[serde(default)]
     pub failed_rule: Option<String>,
     #[serde(default)]
     pub verdict_request_id: Option<U64>,
 }
 
+/// The fields of the escrow's `Job` the board reads. Others are ignored.
+#[near(serializers = [json])]
+#[derive(Clone, Debug)]
+pub struct JobView {
+    pub buyer: AccountId,
+    #[serde(default)]
+    pub worker: Option<AccountId>,
+    pub state: String,
+    #[serde(default)]
+    pub history: Vec<AttemptView>,
+}
+
 #[ext_contract(ext_escrow)]
+#[allow(dead_code)]
 pub trait Escrow {
     fn get_job(&self, job_id: JobId) -> Option<JobView>;
 }
@@ -217,8 +212,10 @@ enum Key {
     Agents,
     AgentList,
     Attempts,
+    /// Used only by bids made before this version.
     LinkedJobs,
     UsedChecks,
+    /// Used only by bids made before this version.
     Fees,
 }
 
@@ -232,11 +229,9 @@ pub struct Board {
     agents: LookupMap<AccountId, Agent>,
     agent_list: Vector<AccountId>,
     attempts: LookupMap<(BidId, AccountId), Attempt>,
-    linked_jobs: LookupSet<JobId>,
     /// A check's hash can be on one bid only. Changing one character gets past this, so it only stops
     /// the exact same check being reused after its reveal.
     used_checks: LookupSet<String>,
-    fees: LookupMap<JobId, AttemptFee>,
 }
 
 fn require_hash(value: &str, name: &str) {
@@ -256,47 +251,29 @@ fn require_label(value: &str, name: &str) {
     );
 }
 
-/// Takes `extra` plus what the call wrote to storage from the deposit and returns the rest.
-fn charge(storage_before: u64, extra: NearToken) {
-    let written = env::storage_usage().saturating_sub(storage_before);
-    let cost = env::storage_byte_cost()
-        .saturating_mul(written as u128)
-        .saturating_add(extra);
-    let attached = env::attached_deposit();
-    require!(
-        attached >= cost,
-        format!("attach at least {} yoctoNEAR", cost.as_yoctonear())
-    );
-    let rest = attached.saturating_sub(cost);
-    if !rest.is_zero() {
-        let _ = Promise::new(env::predecessor_account_id()).transfer(rest);
-    }
-}
-
 /// Lowercase hex SHA-256.
 fn sha256_hex(bytes: &[u8]) -> String {
-    env::sha256(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    env::sha256(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
-/// Who an attempt fee belongs to, from the job's recorded outcome. `None` means no outcome yet.
-/// A job the escrow no longer has was cancelled, which it allows only for a job never funded.
-pub fn fee_goes_to_worker(job: Option<&JobView>) -> Option<bool> {
-    let Some(job) = job else {
-        return Some(false);
-    };
-    match job.state.as_str() {
-        "Passed" | "Released" | "Expired" | "CheckRejected" => Some(false),
-        "Failed" | "Refunded" => Some(
-            job.verdict_request_id.is_some()
-                && job.failed_rule.as_deref().is_some_and(|rule| rule != FORMAT_RULE),
-        ),
-        _ => None,
-    }
+/// Who an attempt's fee belongs to, from its recorded outcome alone.
+pub fn fee_goes_to_worker(attempt: &AttemptView) -> bool {
+    attempt.outcome == "Failed"
+        && attempt.verdict_request_id.is_some()
+        && attempt
+            .failed_rule
+            .as_deref()
+            .is_some_and(|rule| rule != FORMAT_RULE)
 }
 
-/// Before funding: leaving the job here means the claim can lapse without costing the agent its try.
-fn unfunded(state: &str) -> bool {
-    matches!(state, "Draft" | "Challenging" | "Challenged")
+/// Reads a job from a promise result by hand, never panicking on it.
+fn read_job() -> Result<Option<JobView>, ()> {
+    env::promise_result_checked(0, MAX_JOB_VIEW_BYTES)
+        .map_err(|_| ())
+        .and_then(|bytes| near_sdk::serde_json::from_slice(&bytes).map_err(|_| ()))
 }
 
 #[near]
@@ -311,14 +288,17 @@ impl Board {
             agents: LookupMap::new(Key::Agents),
             agent_list: Vector::new(Key::AgentList),
             attempts: LookupMap::new(Key::Attempts),
-            linked_jobs: LookupSet::new(Key::LinkedJobs),
             used_checks: LookupSet::new(Key::UsedChecks),
-            fees: LookupMap::new(Key::Fees),
         }
     }
 
-    /// The caller becomes the bid's buyer. Nothing can claim it until the reviewer allows it.
+    /// The caller becomes the bid's buyer and pays for everything at once: the payment, the escrow's
+    /// compute budget and job storage (see the escrow's `get_budget_for`), this bid's storage and a
+    /// fee for each attempt. The board keeps its part and forwards the rest to the escrow, which
+    /// returns any excess straight to the buyer. Nothing can claim the bid until the reviewer allows
+    /// it.
     #[payable]
+    #[allow(clippy::too_many_arguments)]
     pub fn post_bid(
         &mut self,
         description: String,
@@ -329,9 +309,10 @@ impl Board {
         format: String,
         expires_at: U64,
         reveal_agreed: bool,
-        claim_window_secs: u32,
+        deliver_secs: u32,
+        max_attempts: u32,
         allowed_workers: Option<Vec<AccountId>>,
-    ) -> BidId {
+    ) -> Promise {
         let before = env::storage_usage();
         require!(
             !description.is_empty() && description.len() <= MAX_DESCRIPTION_BYTES,
@@ -355,48 +336,119 @@ impl Board {
             "expires_at must be in the future and at most 7 days away"
         );
         require!(
+            (MIN_WINDOW_SECS..=MAX_WINDOW_SECS).contains(&deliver_secs),
+            "deliver_secs must be 1800 to 86400"
+        );
+        require!(
+            (1..=MAX_ATTEMPTS).contains(&max_attempts),
+            "max_attempts must be 1 to 3"
+        );
+        require!(
             self.used_checks.insert(check_hash.clone()),
             "this exact check was already used on a bid"
         );
         let format_hash = sha256_hex(format.as_bytes());
-        require!(
-            (MIN_CLAIM_WINDOW_SECS..=MAX_CLAIM_WINDOW_SECS).contains(&claim_window_secs),
-            "claim_window_secs must be 60 to 86400"
-        );
         if let Some(workers) = &allowed_workers {
             require!(
                 !workers.is_empty() && workers.len() <= MAX_ALLOWED_WORKERS,
                 "allowed_workers must list 1 to 20 accounts"
             );
         }
+        let buyer = env::predecessor_account_id();
+        let attached = env::attached_deposit();
         let id = self.next_bid;
         self.next_bid += 1;
         self.bids.insert(
             id,
             Bid {
-                buyer: env::predecessor_account_id(),
+                buyer: buyer.clone(),
                 description,
                 amount,
-                check_hash,
-                reference_hash,
-                verifier_hash,
+                check_hash: check_hash.clone(),
+                reference_hash: reference_hash.clone(),
+                verifier_hash: verifier_hash.clone(),
                 format,
-                format_hash,
+                format_hash: format_hash.clone(),
                 expires_at,
-                claim_window_secs,
-                state: BidState::Unreviewed,
+                deliver_secs,
+                max_attempts,
+                job_id: None,
+                state: BidState::Pending,
                 review: None,
                 claim: None,
                 claims_made: 0,
                 funded_attempts: 0,
-                past_jobs: Vec::new(),
+                fees: vec![FeeState::Held; max_attempts as usize],
                 allowed_workers,
+                paid: U128(attached.as_yoctonear()),
             },
         );
         self.bids.flush();
-        charge(before, POST_RESERVE);
+        // What the board keeps: this bid's storage, a reserve for later records and the fees.
+        let written = env::storage_usage().saturating_sub(before);
+        let fees = ATTEMPT_FEE
+            .saturating_add(FEE_RECORD_DEPOSIT)
+            .saturating_mul(u128::from(max_attempts));
+        let kept = env::storage_byte_cost()
+            .saturating_mul(u128::from(written))
+            .saturating_add(POST_RESERVE)
+            .saturating_add(fees);
+        require!(
+            attached > kept.saturating_add(NearToken::from_yoctonear(amount.0)),
+            "attach the payment, the escrow's budget and storage, and the fees"
+        );
+        let forwarded = attached.saturating_sub(kept);
         env::log_str(&format!("bid_posted {id}"));
-        id
+        Promise::new(self.escrow.clone())
+            .function_call(
+                "create_open_job".to_string(),
+                json!({
+                    "buyer": buyer, "spec_hash": check_hash, "fakes_hash": reference_hash,
+                    "format_hash": format_hash, "amount": amount, "verifier_hash": verifier_hash,
+                    "expires_at": expires_at, "deliver_secs": deliver_secs,
+                    "verdict_window_secs": VERDICT_WINDOW_SECS, "max_attempts": max_attempts,
+                })
+                .to_string()
+                .into_bytes(),
+                forwarded,
+                CREATE_GAS,
+            )
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(CALLBACK_GAS)
+                    .on_job_created(id),
+            )
+    }
+
+    /// Records the escrow's job, or removes the bid and returns everything if the escrow refused.
+    /// When a call fails, NEAR returns its attached deposit to this contract, so the buyer can be
+    /// paid back in full from here.
+    #[private]
+    pub fn on_job_created(&mut self, bid_id: BidId) -> bool {
+        let created: Option<JobId> = env::promise_result_checked(0, 64)
+            .ok()
+            .and_then(|bytes| near_sdk::serde_json::from_slice(&bytes).ok());
+        let bid = self.bid_mut(bid_id);
+        match created {
+            Some(job_id) => {
+                bid.job_id = Some(job_id);
+                bid.state = BidState::Unreviewed;
+                env::log_str(&format!("bid_job_created {bid_id} {job_id}"));
+                true
+            }
+            None => {
+                let (buyer, paid, check) = (
+                    bid.buyer.clone(),
+                    NearToken::from_yoctonear(bid.paid.0),
+                    bid.check_hash.clone(),
+                );
+                self.bids.remove(&bid_id);
+                self.used_checks.remove(&check);
+                Promise::new(buyer).transfer(paid).detach();
+                env::log_str(&format!("bid_refused {bid_id}"));
+                false
+            }
+        }
     }
 
     /// The reviewer lets a bid through or blocks it, once. This touches no money. An allow only lets
@@ -467,13 +519,24 @@ impl Board {
         self.agent_list.push(wallet.clone());
         self.agents.flush();
         self.agent_list.flush();
-        charge(before, NearToken::from_yoctonear(0));
+        let written = env::storage_usage().saturating_sub(before);
+        let cost = env::storage_byte_cost().saturating_mul(u128::from(written));
+        let attached = env::attached_deposit();
+        require!(
+            attached >= cost,
+            format!("attach at least {} yoctoNEAR", cost.as_yoctonear())
+        );
+        let rest = attached.saturating_sub(cost);
+        if !rest.is_zero() {
+            Promise::new(wallet.clone()).transfer(rest).detach();
+        }
         env::log_str(&format!("agent_registered {wallet}"));
     }
 
-    /// Signed by a registered agent's wallet. One claim at a time per bid.
+    /// Signed by a registered agent's wallet. The escrow gives the job to this agent straight away:
+    /// the money is already held, so the agent can start as soon as the claim is confirmed.
     #[payable]
-    pub fn claim(&mut self, bid_id: BidId) -> u32 {
+    pub fn claim(&mut self, bid_id: BidId) -> Promise {
         require!(
             env::attached_deposit() >= CLAIM_DEPOSIT,
             "attach the claim deposit"
@@ -484,7 +547,6 @@ impl Board {
             "only a registered agent can claim"
         );
         let now = env::block_timestamp();
-        self.lapse_if_due(bid_id, now);
         let bid = self.bid(bid_id);
         require!(
             bid.state == BidState::Open,
@@ -492,7 +554,7 @@ impl Board {
         );
         require!(now < bid.expires_at.0, "this bid has expired");
         require!(
-            bid.funded_attempts < MAX_FUNDED_ATTEMPTS,
+            bid.funded_attempts < bid.max_attempts,
             "this bid has used all its attempts"
         );
         require!(bid.buyer != agent, "a buyer cannot claim its own bid");
@@ -502,231 +564,207 @@ impl Board {
                 "this bid does not allow this worker"
             );
         }
-        let window = bid.claim_window_secs as u64;
-        match self.attempts.get(&(bid_id, agent.clone())) {
-            None => {}
-            Some(Attempt::Lapsed { retry_after }) => {
-                require!(
-                    now >= retry_after.0,
-                    "this account must wait to claim again"
-                )
-            }
-            Some(_) => env::panic_str("this account has used its attempt on this bid"),
-        }
+        require!(
+            self.attempts.get(&(bid_id, agent.clone())).is_none(),
+            "this account has used its attempt on this bid"
+        );
+        let job_id = bid
+            .job_id
+            .unwrap_or_else(|| env::panic_str("this bid has no job"));
         let bid = self.bid_mut(bid_id);
         bid.claims_made += 1;
         let number = bid.claims_made;
-        bid.state = BidState::Claimed;
+        bid.state = BidState::Assigning;
         bid.claim = Some(Claim {
             number,
             agent: agent.clone(),
             claimed_at: U64(now),
-            expires_at: U64(now + window * NANOS),
-            job_id: None,
         });
         self.attempts
             .insert((bid_id, agent.clone()), Attempt::Active);
         let rest = env::attached_deposit().saturating_sub(CLAIM_DEPOSIT);
         if !rest.is_zero() {
-            let _ = Promise::new(agent.clone()).transfer(rest);
+            Promise::new(agent.clone()).transfer(rest).detach();
         }
         env::log_str(&format!("bid_claimed {bid_id} {agent} claim={number}"));
-        number
-    }
-
-    /// The buyer ties the active claim to an escrow job, paying the attempt fee. If the job turns out
-    /// not to fit, everything attached goes back.
-    #[payable]
-    pub fn link_job(&mut self, bid_id: BidId, job_id: JobId) -> Promise {
-        let claim = self.active_unlinked_claim(bid_id, job_id);
-        let payer = env::predecessor_account_id();
-        require!(
-            payer == self.bid(bid_id).buyer,
-            "only the bid's buyer can link a job"
-        );
-        let attached = env::attached_deposit();
-        require!(
-            attached >= ATTEMPT_FEE.saturating_add(FEE_RECORD_DEPOSIT),
-            "attach the attempt fee and the fee record deposit"
-        );
-        ext_escrow::ext(self.escrow.clone())
-            .with_static_gas(READ_GAS)
-            .get_job(job_id)
+        Promise::new(self.escrow.clone())
+            .function_call(
+                "assign".to_string(),
+                json!({ "job_id": job_id, "worker": agent })
+                    .to_string()
+                    .into_bytes(),
+                NearToken::from_yoctonear(0),
+                ASSIGN_GAS,
+            )
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(CALLBACK_GAS)
-                    .on_link(bid_id, claim.number, job_id, payer, U128(attached.as_yoctonear())),
+                    .on_assigned(bid_id, number),
             )
     }
 
-    /// Reads the result by hand and never panics on it, because a failed callback would strand what
-    /// was attached.
+    /// Confirms the claim if the escrow gave the job to the agent. If it did not (the check has not
+    /// passed its challenge yet, the job is paused or has ended), the claim is undone, the attempt is
+    /// not used, and the claim deposit goes back.
     #[private]
-    pub fn on_link(
-        &mut self,
-        bid_id: BidId,
-        claim_number: u32,
-        job_id: JobId,
-        payer: AccountId,
-        attached: U128,
-    ) -> bool {
-        let job: Result<Option<JobView>, ()> = env::promise_result_checked(0, MAX_JOB_VIEW_BYTES)
-            .map_err(|_| ())
-            .and_then(|bytes| near_sdk::serde_json::from_slice(&bytes).map_err(|_| ()));
-        let attached = NearToken::from_yoctonear(attached.0);
-        match self.link_problem(bid_id, claim_number, job_id, &job) {
-            Some(problem) => {
-                env::log_str(&format!("link_refused {bid_id} {job_id}: {problem}"));
-                let _ = Promise::new(payer).transfer(attached);
-                false
-            }
-            None => {
-                let worker = job
-                    .ok()
-                    .flatten()
-                    .map(|job| job.worker)
-                    .unwrap_or_else(|| env::panic_str("the job has gone"));
-                self.fees.insert(
-                    job_id,
-                    AttemptFee {
-                        bid_id,
-                        buyer: payer.clone(),
-                        worker,
-                        amount: ATTEMPT_FEE,
-                        state: FeeState::Held,
-                    },
-                );
-                self.linked_jobs.insert(job_id);
-                let linked = self.bid_mut(bid_id);
-                if let Some(active) = linked.claim.as_mut() {
-                    active.job_id = Some(job_id);
-                }
-                let rest = attached
-                    .saturating_sub(ATTEMPT_FEE)
-                    .saturating_sub(FEE_RECORD_DEPOSIT);
-                if !rest.is_zero() {
-                    let _ = Promise::new(payer).transfer(rest);
-                }
-                env::log_str(&format!("job_linked {bid_id} {job_id}"));
-                true
-            }
-        }
-    }
-
-    /// Anyone. Sends an attempt fee where the job's recorded outcome says it goes. A failed read or
-    /// a job with no outcome yet changes nothing, and a failed transfer can be tried again.
-    pub fn settle_fee(&mut self, job_id: JobId) -> Promise {
-        let fee = self.fee(job_id);
-        require!(fee.state == FeeState::Held, "this fee is not waiting to be settled");
-        ext_escrow::ext(self.escrow.clone())
-            .with_static_gas(READ_GAS)
-            .get_job(job_id)
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(SETTLE_CALLBACK_GAS)
-                    .on_settle_read(job_id),
-            )
-    }
-
-    #[private]
-    pub fn on_settle_read(
-        &mut self,
-        job_id: JobId,
-        #[callback_result] job: Result<Option<JobView>, PromiseError>,
-    ) -> Promise {
-        let job = job.unwrap_or_else(|_| env::panic_str("could not read the job"));
-        let to_worker = fee_goes_to_worker(job.as_ref())
-            .unwrap_or_else(|| env::panic_str("the job has no outcome yet"));
-        // Read again: another settlement may have started while this read was running.
-        let fee = self.fee(job_id);
-        require!(fee.state == FeeState::Held, "this fee is not waiting to be settled");
-        let receiver = if to_worker { fee.worker.clone() } else { fee.buyer.clone() };
-        let amount = fee.amount;
-        self.fee_mut(job_id).state = FeeState::Paying;
-        env::log_str(&format!("fee_paying {job_id} to_worker={to_worker}"));
-        Promise::new(receiver).transfer(amount).then(
-            Self::ext(env::current_account_id())
-                .with_static_gas(FEE_PAID_GAS)
-                .on_fee_paid(job_id, to_worker),
-        )
-    }
-
-    #[private]
-    pub fn on_fee_paid(&mut self, job_id: JobId, to_worker: bool) -> bool {
-        let paid = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
-        self.fee_mut(job_id).state = match (paid, to_worker) {
-            (false, _) => FeeState::Held,
-            (true, true) => FeeState::PaidToWorker,
-            (true, false) => FeeState::ReturnedToBuyer,
+    pub fn on_assigned(&mut self, bid_id: BidId, claim_number: u32) -> bool {
+        let assigned = env::promise_result_checked(0, 0).is_ok();
+        let bid = self.bid_mut(bid_id);
+        let Some(claim) = bid.claim.clone().filter(|c| c.number == claim_number) else {
+            return false;
         };
-        env::log_str(&format!("fee_settled {job_id} paid={paid} to_worker={to_worker}"));
-        paid
+        if assigned {
+            bid.state = BidState::Claimed;
+            env::log_str(&format!("bid_assigned {bid_id} {}", claim.agent));
+            return true;
+        }
+        bid.claim = None;
+        bid.state = BidState::Open;
+        self.attempts.remove(&(bid_id, claim.agent.clone()));
+        Promise::new(claim.agent.clone())
+            .transfer(CLAIM_DEPOSIT)
+            .detach();
+        env::log_str(&format!("assign_refused {bid_id} {}", claim.agent));
+        false
     }
 
-    /// Anyone. Brings the bid in line with its linked job, or lapses a claim nobody linked in time.
-    /// A failed read changes nothing.
+    /// Anyone. Brings the bid in line with its escrow job: ends a finished attempt, settles the fees
+    /// of every attempt the escrow has recorded, and returns unused fees once the job has ended. A
+    /// failed read changes nothing.
     pub fn sync(&mut self, bid_id: BidId) -> PromiseOrValue<BidState> {
-        let now = env::block_timestamp();
-        self.lapse_if_due(bid_id, now);
         let bid = self.bid(bid_id);
-        match bid.claim.as_ref().map(|claim| (claim.number, claim.job_id)) {
-            Some((number, Some(job_id))) => PromiseOrValue::Promise(
+        match bid.job_id {
+            Some(job_id) => PromiseOrValue::Promise(
                 ext_escrow::ext(self.escrow.clone())
                     .with_static_gas(READ_GAS)
                     .get_job(job_id)
                     .then(
                         Self::ext(env::current_account_id())
-                            .with_static_gas(CALLBACK_GAS)
-                            .on_sync(bid_id, number),
+                            .with_static_gas(SYNC_CALLBACK_GAS)
+                            .on_sync(bid_id),
                     ),
             ),
-            _ => PromiseOrValue::Value(bid.state),
+            None => PromiseOrValue::Value(bid.state),
         }
     }
 
     #[private]
-    pub fn on_sync(
-        &mut self,
-        bid_id: BidId,
-        claim_number: u32,
-        #[callback_result] job: Result<Option<JobView>, PromiseError>,
-    ) -> BidState {
-        let now = env::block_timestamp();
+    pub fn on_sync(&mut self, bid_id: BidId) -> BidState {
+        let Ok(Some(job)) = read_job() else {
+            return self.bid(bid_id).state;
+        };
+        // An attempt the escrow has finished frees the bid for the next agent.
         let bid = self.bid(bid_id);
-        let (agent, expires_at) = match bid.claim.as_ref() {
-            Some(claim) if claim.number == claim_number => {
-                (claim.agent.clone(), claim.expires_at.0)
-            }
-            _ => return bid.state,
+        let finished_claim = bid
+            .claim
+            .as_ref()
+            .filter(|_| bid.state == BidState::Claimed)
+            .filter(|claim| job.worker.as_ref() != Some(&claim.agent))
+            .map(|claim| claim.agent.clone());
+        if let Some(agent) = finished_claim {
+            self.attempts.insert((bid_id, agent), Attempt::Used);
+            let bid = self.bid_mut(bid_id);
+            bid.claim = None;
+            bid.state = BidState::Open;
+        }
+        let bid = self.bid_mut(bid_id);
+        bid.funded_attempts = job.history.len() as u32;
+        let ended = match job.state.as_str() {
+            "Released" => Some(BidState::Done),
+            "Refunded" => Some(BidState::Closed),
+            _ => None,
         };
-        let job = match job {
-            Err(_) => return bid.state,
-            Ok(job) => job,
-        };
-        match job.as_ref().map(|job| job.state.as_str()) {
-            // The escrow removes a cancelled job, and it can only cancel a job that was never funded.
-            None => self.lapse_claim(bid_id, &agent, now),
-            Some("Released") => {
-                self.end_claim(bid_id, &agent, BidState::Done, true);
+        if let Some(state) = ended {
+            if matches!(
+                bid.state,
+                BidState::Open | BidState::Claimed | BidState::Blocked
+            ) {
+                bid.state = state;
+                bid.claim = None;
             }
-            Some("Refunded") | Some("Expired") => {
-                self.end_claim(bid_id, &agent, BidState::Open, true);
+        }
+        // Each recorded attempt's fee, once, by its own outcome.
+        for (index, attempt) in job.history.iter().enumerate() {
+            if self.bid(bid_id).fees.get(index) == Some(&FeeState::Held) {
+                let to_worker = fee_goes_to_worker(attempt);
+                let receiver = if to_worker {
+                    attempt.worker.clone()
+                } else {
+                    self.bid(bid_id).buyer.clone()
+                };
+                self.pay_fee(bid_id, index, receiver, to_worker);
             }
-            Some("CheckRejected") => {
-                self.end_claim(bid_id, &agent, BidState::Closed, false);
+        }
+        // A job that has ended cannot use the rest, so their fees go back.
+        if ended.is_some() {
+            let buyer = self.bid(bid_id).buyer.clone();
+            let start = job.history.len();
+            for index in start..self.bid(bid_id).fees.len() {
+                if self.bid(bid_id).fees[index] == FeeState::Held {
+                    self.pay_fee(bid_id, index, buyer.clone(), false);
+                }
             }
-            Some(state) if unfunded(state) && now > expires_at.saturating_add(LINK_GRACE_NANOS) => {
-                self.lapse_claim(bid_id, &agent, now)
-            }
-            // Funded or running. A linked claim never lapses while its job can still finish.
-            Some(_) => {}
+        }
+        // A rejected check means the job can never run: ask the escrow to refund the buyer.
+        if job.state == "CheckRejected" {
+            self.close_job(bid_id).detach();
         }
         self.bid(bid_id).state
     }
 
-    /// The buyer takes a bid down, or anyone does once it has expired, unless a linked job has been
-    /// funded and has not ended.
-    pub fn close_bid(&mut self, bid_id: BidId) -> PromiseOrValue<BidState> {
+    /// One-time upgrade from the version where buyers funded each worker themselves. Only this
+    /// contract's own account can call it, as part of deploying the new code. Earlier bids are kept
+    /// readable; none of them can be claimed again.
+    #[init(ignore_state)]
+    #[private]
+    pub fn migrate() -> Self {
+        let old: migration::OldBoard =
+            env::state_read().unwrap_or_else(|| env::panic_str("no earlier state"));
+        for id in 0..old.next_bid {
+            let key = migration::bid_key(id);
+            let Some(bytes) = env::storage_read(&key) else {
+                continue;
+            };
+            let bid = near_sdk::borsh::from_slice::<migration::OldBid>(&bytes)
+                .unwrap_or_else(|_| env::panic_str("could not read an earlier bid"))
+                .upgraded();
+            let bytes = near_sdk::borsh::to_vec(&bid)
+                .unwrap_or_else(|_| env::panic_str("could not write an upgraded bid"));
+            env::storage_write(&key, &bytes);
+        }
+        Self {
+            escrow: old.escrow,
+            reviewer: old.reviewer,
+            next_bid: old.next_bid,
+            bids: LookupMap::new(Key::Bids),
+            agents: LookupMap::new(Key::Agents),
+            // A list keeps its length in this state, so the old one is carried over, not recreated.
+            agent_list: old.agent_list,
+            attempts: LookupMap::new(Key::Attempts),
+            used_checks: LookupSet::new(Key::UsedChecks),
+        }
+    }
+
+    #[private]
+    pub fn on_fee_paid(&mut self, bid_id: BidId, index: u32, to_worker: bool) -> bool {
+        let paid = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
+        let bid = self.bid_mut(bid_id);
+        if let Some(fee) = bid.fees.get_mut(index as usize) {
+            *fee = match (paid, to_worker) {
+                (false, _) => FeeState::Held,
+                (true, true) => FeeState::PaidToWorker,
+                (true, false) => FeeState::ReturnedToBuyer,
+            };
+        }
+        env::log_str(&format!(
+            "fee_settled {bid_id} {index} paid={paid} to_worker={to_worker}"
+        ));
+        paid
+    }
+
+    /// The buyer takes a bid down when no agent is on it, or anyone does once it has expired. The
+    /// escrow refunds the payment and what is left of the budget; a later `sync` returns the fees.
+    pub fn close_bid(&mut self, bid_id: BidId) -> Promise {
         let bid = self.bid(bid_id);
         require!(
             env::predecessor_account_id() == bid.buyer
@@ -736,59 +774,11 @@ impl Board {
         require!(
             matches!(
                 bid.state,
-                BidState::Unreviewed | BidState::Blocked | BidState::Open | BidState::Claimed
+                BidState::Unreviewed | BidState::Blocked | BidState::Open
             ),
-            "this bid has already ended"
+            "this bid cannot be closed now"
         );
-        match bid.claim.as_ref().and_then(|claim| claim.job_id) {
-            None => {
-                self.cancel_bid(bid_id);
-                PromiseOrValue::Value(BidState::Cancelled)
-            }
-            Some(job_id) => PromiseOrValue::Promise(
-                ext_escrow::ext(self.escrow.clone())
-                    .with_static_gas(READ_GAS)
-                    .get_job(job_id)
-                    .then(
-                        Self::ext(env::current_account_id())
-                            .with_static_gas(CALLBACK_GAS)
-                            .on_close(bid_id, job_id),
-                    ),
-            ),
-        }
-    }
-
-    #[private]
-    pub fn on_close(
-        &mut self,
-        bid_id: BidId,
-        job_id: JobId,
-        #[callback_result] job: Result<Option<JobView>, PromiseError>,
-    ) -> BidState {
-        let job = match job {
-            Ok(job) => job,
-            Err(_) => env::panic_str("could not read the linked job"),
-        };
-        let still_linked = self.bid(bid_id).claim.as_ref().and_then(|c| c.job_id) == Some(job_id);
-        require!(still_linked, "the claim changed, try again");
-        let closable = match job.as_ref().map(|job| job.state.as_str()) {
-            None => true,
-            Some(state) => {
-                unfunded(state) || matches!(state, "CheckRejected" | "Refunded" | "Expired")
-            }
-        };
-        require!(closable, "the linked job has been funded and has not ended");
-        // A job that was funded and ended stays on the record, whoever closes the bid first.
-        let finished = job
-            .as_ref()
-            .is_some_and(|job| matches!(job.state.as_str(), "Refunded" | "Expired"));
-        let agent = self.bid(bid_id).claim.as_ref().map(|claim| claim.agent.clone());
-        if let (true, Some(agent)) = (finished, agent) {
-            self.end_claim(bid_id, &agent, BidState::Cancelled, true);
-        } else {
-            self.cancel_bid(bid_id);
-        }
-        BidState::Cancelled
+        self.close_job(bid_id)
     }
 
     pub fn get_bid(&self, bid_id: BidId) -> Option<Bid> {
@@ -821,97 +811,27 @@ impl Board {
         self.attempts.get(&(bid_id, account)).copied()
     }
 
-    pub fn get_fee(&self, job_id: JobId) -> Option<AttemptFee> {
-        self.fees.get(&job_id).cloned()
-    }
-
     pub fn get_config(&self) -> Config {
         Config {
             escrow: self.escrow.clone(),
             reviewer: self.reviewer.clone(),
         }
     }
+
+    /// What the board keeps from a posting with this many attempts, apart from the bid's own
+    /// storage: the reserve and the fees.
+    pub fn get_post_charges(&self, max_attempts: u32) -> U128 {
+        U128(
+            ATTEMPT_FEE
+                .saturating_add(FEE_RECORD_DEPOSIT)
+                .saturating_mul(u128::from(max_attempts))
+                .saturating_add(POST_RESERVE)
+                .as_yoctonear(),
+        )
+    }
 }
 
 impl Board {
-    fn fee(&self, job_id: JobId) -> &AttemptFee {
-        self.fees
-            .get(&job_id)
-            .unwrap_or_else(|| env::panic_str("no fee for that job"))
-    }
-
-    fn fee_mut(&mut self, job_id: JobId) -> &mut AttemptFee {
-        self.fees
-            .get_mut(&job_id)
-            .unwrap_or_else(|| env::panic_str("no fee for that job"))
-    }
-
-    /// Why this job cannot be linked to this claim, or `None` if it can. Everything is checked here,
-    /// after the read: the claim may have changed while the read was running.
-    fn link_problem(
-        &self,
-        bid_id: BidId,
-        claim_number: u32,
-        job_id: JobId,
-        job: &Result<Option<JobView>, ()>,
-    ) -> Option<&'static str> {
-        let job = match job {
-            Ok(Some(job)) => job,
-            Ok(None) => return Some("that job does not exist"),
-            Err(_) => return Some("could not read that job"),
-        };
-        if self.linked_jobs.contains(&job_id) {
-            return Some("that job has already been linked to a claim");
-        }
-        let Some(bid) = self.bids.get(&bid_id) else {
-            return Some("no such bid");
-        };
-        let Some(claim) = bid.claim.as_ref().filter(|_| bid.state == BidState::Claimed) else {
-            return Some("this bid has no active claim");
-        };
-        if claim.number != claim_number {
-            return Some("that claim has ended");
-        }
-        if claim.job_id.is_some() {
-            return Some("this claim already has a job");
-        }
-        let now = env::block_timestamp();
-        if now > claim.expires_at.0 {
-            return Some("this claim has lapsed");
-        }
-        if job.buyer != bid.buyer {
-            return Some("the job has a different buyer");
-        }
-        if job.worker != claim.agent {
-            return Some("the job names a different worker");
-        }
-        if job.spec_hash != bid.check_hash {
-            return Some("the job has a different check");
-        }
-        if job.fakes_hash != bid.reference_hash {
-            return Some("the job has a different reference");
-        }
-        if job.verifier_hash != bid.verifier_hash {
-            return Some("the job has a different verifier");
-        }
-        if job.format_hash != bid.format_hash {
-            return Some("the job has a different format");
-        }
-        if job.amount != bid.amount {
-            return Some("the job has a different amount");
-        }
-        if job.token.is_some() {
-            return Some("the job must be paid in NEAR");
-        }
-        if job.deadline.0 < now.saturating_add(MIN_JOB_TIME_LEFT_NANOS) {
-            return Some("the job leaves too little time to finish");
-        }
-        if !(unfunded(&job.state) || job.state == "Funded") {
-            return Some("the job has gone past funding");
-        }
-        None
-    }
-
     fn bid(&self, bid_id: BidId) -> &Bid {
         self.bids
             .get(&bid_id)
@@ -924,294 +844,37 @@ impl Board {
             .unwrap_or_else(|| env::panic_str("no such bid"))
     }
 
-    fn active_unlinked_claim(&self, bid_id: BidId, job_id: JobId) -> Claim {
-        require!(
-            !self.linked_jobs.contains(&job_id),
-            "that job has already been linked to a claim"
-        );
-        let bid = self.bid(bid_id);
-        require!(
-            bid.state == BidState::Claimed,
-            "this bid has no active claim"
-        );
-        let claim = bid
-            .claim
-            .clone()
-            .unwrap_or_else(|| env::panic_str("this bid has no active claim"));
-        require!(claim.job_id.is_none(), "this claim already has a job");
-        require!(
-            env::block_timestamp() <= claim.expires_at.0,
-            "this claim has lapsed"
-        );
-        claim
+    fn pay_fee(&mut self, bid_id: BidId, index: usize, receiver: AccountId, to_worker: bool) {
+        self.bid_mut(bid_id).fees[index] = FeeState::Paying;
+        env::log_str(&format!(
+            "fee_paying {bid_id} {index} to_worker={to_worker}"
+        ));
+        Promise::new(receiver)
+            .transfer(ATTEMPT_FEE)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(FEE_PAID_GAS)
+                    .on_fee_paid(bid_id, index as u32, to_worker),
+            )
+            .detach();
     }
 
-    /// An unlinked claim past its window needs no read: no job can be running for it on this board.
-    fn lapse_if_due(&mut self, bid_id: BidId, now: u64) {
-        let bid = self.bid(bid_id);
-        if let Some(claim) = bid.claim.as_ref() {
-            if claim.job_id.is_none() && now > claim.expires_at.0 {
-                let agent = claim.agent.clone();
-                self.lapse_claim(bid_id, &agent, now);
-            }
-        }
-    }
-
-    fn lapse_claim(&mut self, bid_id: BidId, agent: &AccountId, now: u64) {
-        let window = self.bid(bid_id).claim_window_secs as u64;
-        self.attempts.insert(
-            (bid_id, agent.clone()),
-            Attempt::Lapsed {
-                retry_after: U64(now + window * NANOS),
-            },
-        );
-        let bid = self.bid_mut(bid_id);
-        Self::record_past_job(bid, agent, false, BidState::Open);
-        bid.claim = None;
-        bid.state = BidState::Open;
-        env::log_str(&format!("claim_lapsed {bid_id} {agent}"));
-    }
-
-    fn end_claim(&mut self, bid_id: BidId, agent: &AccountId, state: BidState, funded: bool) {
-        if funded {
-            self.attempts.insert((bid_id, agent.clone()), Attempt::Used);
-        }
-        let bid = self.bid_mut(bid_id);
-        if funded {
-            bid.funded_attempts += 1;
-        }
-        // The last attempt used: nothing more can happen on this bid.
-        let state = if state == BidState::Open && bid.funded_attempts >= MAX_FUNDED_ATTEMPTS {
-            BidState::Closed
-        } else {
-            state
-        };
-        Self::record_past_job(bid, agent, funded, state);
-        bid.claim = None;
-        bid.state = state;
-        env::log_str(&format!("claim_ended {bid_id} {agent} {state:?}"));
-    }
-
-    fn record_past_job(bid: &mut Bid, agent: &AccountId, funded: bool, after: BidState) {
-        if let Some(job_id) = bid.claim.as_ref().and_then(|claim| claim.job_id) {
-            bid.past_jobs.push(PastJob {
-                agent: agent.clone(),
-                job_id,
-                funded,
-                bid_state_after: after,
-            });
-            if bid.past_jobs.len() > MAX_PAST_JOBS {
-                bid.past_jobs.remove(0);
-            }
-        }
-    }
-
-    fn cancel_bid(&mut self, bid_id: BidId) {
-        let bid = self.bid_mut(bid_id);
-        if let Some(agent) = bid.claim.as_ref().map(|claim| claim.agent.clone()) {
-            Self::record_past_job(bid, &agent, false, BidState::Cancelled);
-        }
-        bid.claim = None;
-        bid.state = BidState::Cancelled;
-        env::log_str(&format!("bid_cancelled {bid_id}"));
+    fn close_job(&mut self, bid_id: BidId) -> Promise {
+        let job_id = self
+            .bid(bid_id)
+            .job_id
+            .unwrap_or_else(|| env::panic_str("this bid has no job"));
+        env::log_str(&format!("bid_closing {bid_id} {job_id}"));
+        Promise::new(self.escrow.clone()).function_call(
+            "close".to_string(),
+            json!({ "job_id": job_id }).to_string().into_bytes(),
+            NearToken::from_yoctonear(0),
+            CLOSE_GAS,
+        )
     }
 }
+
+mod migration;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use near_sdk::test_utils::{accounts, VMContextBuilder};
-    use near_sdk::testing_env;
-
-    const HASH: &str = "1111111111111111111111111111111111111111111111111111111111111111";
-
-    fn context(who: usize, deposit: NearToken, now: u64) {
-        testing_env!(VMContextBuilder::new()
-            .predecessor_account_id(accounts(who))
-            .attached_deposit(deposit)
-            .block_timestamp(now)
-            .build());
-    }
-
-    fn board_with_open_bid() -> Board {
-        context(0, NearToken::from_near(1), 1);
-        let mut board = Board::new(accounts(5), accounts(4));
-        let id = board.post_bid(
-            "Convert these invoices".to_string(),
-            U128(10),
-            HASH.to_string(),
-            HASH.to_string(),
-            HASH.to_string(),
-            "{}".to_string(),
-            U64(1 + 3_600 * NANOS),
-            true,
-            60,
-            None,
-        );
-        context(4, NearToken::from_yoctonear(0), 1);
-        board.record_review(
-            id,
-            true,
-            HASH.to_string(),
-            "model".to_string(),
-            "chat".to_string(),
-        );
-        for who in [1, 2] {
-            context(who, NearToken::from_near(1), 1);
-            board.register_agent(
-                HASH.to_string(),
-                HASH.to_string(),
-                HASH.to_string(),
-                "model".to_string(),
-                None,
-            );
-        }
-        board
-    }
-
-    fn job(state: &str, failed_rule: Option<&str>, verdict: bool) -> JobView {
-        JobView {
-            buyer: accounts(0),
-            worker: accounts(1),
-            token: None,
-            amount: U128(1),
-            spec_hash: HASH.to_string(),
-            fakes_hash: HASH.to_string(),
-            verifier_hash: HASH.to_string(),
-            state: state.to_string(),
-            deadline: U64(1),
-            format_hash: HASH.to_string(),
-            failed_rule: failed_rule.map(str::to_string),
-            verdict_request_id: verdict.then_some(U64(7)),
-        }
-    }
-
-    #[test]
-    fn an_attempt_fee_follows_only_the_recorded_outcome() {
-        let goes = |state, rule, verdict| fee_goes_to_worker(Some(&job(state, rule, verdict)));
-        // Well-formed work failed a real rule, by a recorded verdict.
-        assert_eq!(goes("Failed", Some("grand_total"), true), Some(true));
-        assert_eq!(goes("Refunded", Some("grand_total"), true), Some(true));
-        // Work that did not fit the published format earns nothing.
-        assert_eq!(goes("Failed", Some("format"), true), Some(false));
-        assert_eq!(goes("Refunded", Some("format"), true), Some(false));
-        // A failure with no recorded verdict or no rule cannot pay the worker.
-        assert_eq!(goes("Failed", Some("grand_total"), false), Some(false));
-        assert_eq!(goes("Refunded", None, true), Some(false));
-        // A pass, no delivery, or no verdict before the deadline returns it to the buyer.
-        for state in ["Passed", "Released", "Expired", "CheckRejected"] {
-            assert_eq!(goes(state, None, false), Some(false), "{state}");
-        }
-        assert_eq!(fee_goes_to_worker(None), Some(false));
-        // Nothing is decided while the job can still change, including a payout that could still revert.
-        for state in [
-            "Draft", "Challenging", "Challenged", "Funded", "Delivered", "Verifying", "Releasing", "Refunding",
-            "Expiring", "Anything else",
-        ] {
-            assert_eq!(goes(state, Some("grand_total"), true), None, "{state}");
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "only the reviewer")]
-    fn only_the_reviewer_reviews() {
-        let mut board = board_with_open_bid();
-        context(1, NearToken::from_yoctonear(0), 2);
-        board.record_review(
-            0,
-            true,
-            HASH.to_string(),
-            "model".to_string(),
-            "chat".to_string(),
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "must wait")]
-    fn a_lapsed_account_waits_one_window_before_claiming_again() {
-        let mut board = board_with_open_bid();
-        context(1, CLAIM_DEPOSIT, 2);
-        board.claim(0);
-        // 61 seconds later the claim has lapsed.
-        context(1, CLAIM_DEPOSIT, 2 + 61 * NANOS);
-        board.claim(0);
-    }
-
-    #[test]
-    fn a_lapsed_claim_does_not_use_up_the_attempt() {
-        let mut board = board_with_open_bid();
-        context(1, CLAIM_DEPOSIT, 2);
-        board.claim(0);
-        let lapsed_at = 2 + 61 * NANOS;
-        context(2, CLAIM_DEPOSIT, lapsed_at);
-        assert_eq!(board.claim(0), 2, "another agent can take a lapsed claim");
-        // That one lapses too, and the first can come back after its wait.
-        let later = lapsed_at + 61 * NANOS;
-        context(1, CLAIM_DEPOSIT, later);
-        assert_eq!(board.claim(0), 3);
-    }
-
-    #[test]
-    #[should_panic(expected = "cannot be claimed")]
-    fn one_claim_at_a_time() {
-        let mut board = board_with_open_bid();
-        context(1, CLAIM_DEPOSIT, 2);
-        board.claim(0);
-        context(2, CLAIM_DEPOSIT, 3);
-        board.claim(0);
-    }
-
-    #[test]
-    fn a_failed_read_changes_nothing() {
-        let mut board = board_with_open_bid();
-        context(1, CLAIM_DEPOSIT, 2);
-        board.claim(0);
-        if let Some(claim) = board.bid_mut(0).claim.as_mut() {
-            claim.job_id = Some(7);
-        }
-        testing_env!(
-            VMContextBuilder::new()
-                .predecessor_account_id(env::current_account_id())
-                .block_timestamp(u64::MAX / 2)
-                .build(),
-            near_sdk::test_vm_config(),
-            near_sdk::RuntimeFeesConfig::test(),
-            Default::default(),
-            vec![near_sdk::PromiseResult::Failed]
-        );
-        assert_eq!(
-            board.on_sync(0, 1, Err(PromiseError::Failed)),
-            BidState::Claimed
-        );
-        assert_eq!(board.bid(0).claim.as_ref().unwrap().job_id, Some(7));
-    }
-
-    #[test]
-    fn past_jobs_keep_only_the_latest_and_the_count_stays_true() {
-        let mut board = board_with_open_bid();
-        let agent = accounts(1);
-        for job in 0..(MAX_PAST_JOBS as u64 + 3) {
-            let bid = board.bid_mut(0);
-            bid.claim = Some(Claim {
-                number: 1,
-                agent: agent.clone(),
-                claimed_at: U64(0),
-                expires_at: U64(0),
-                job_id: Some(job),
-            });
-            board.end_claim(0, &agent, BidState::Open, true);
-        }
-        let bid = board.bid(0);
-        assert_eq!(bid.funded_attempts, MAX_PAST_JOBS as u32 + 3);
-        assert_eq!(bid.past_jobs.len(), MAX_PAST_JOBS);
-        assert_eq!(bid.past_jobs[0].job_id, 3);
-    }
-
-    #[test]
-    #[should_panic(expected = "registered agent")]
-    fn an_unregistered_account_cannot_claim() {
-        let mut board = board_with_open_bid();
-        context(3, CLAIM_DEPOSIT, 2);
-        board.claim(0);
-    }
-}
+mod tests;
