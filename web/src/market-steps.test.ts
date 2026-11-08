@@ -180,3 +180,228 @@ test("only the buyer collects, and only paid work", () => {
     "sync",
   );
 });
+
+test("only a connected buyer is offered collection, and only an actually Released current job", () => {
+  const paid = bid({ state: "Claimed", job: job("Released", { worker: "w" }) });
+  assert.equal(id(paid, "b"), "collect");
+  for (const viewer of ["w", "stranger", null])
+    assert.notEqual(id(paid, viewer), "collect");
+  for (const state of [
+    "Open",
+    "Funded",
+    "Delivered",
+    "Verifying",
+    "Passed",
+    "Failed",
+    "RefundDue",
+    "Refunding",
+    "Refunded",
+    "Releasing",
+    "Expiring",
+    "Unknown",
+  ]) {
+    const current = bid({
+      state: "Claimed",
+      job: job(state, {
+        worker: "w",
+        history: [
+          {
+            worker: "old-worker",
+            outcome: "Paid",
+            failed_rule: null,
+            verdict_request_id: "old-request",
+          },
+        ],
+      }),
+    });
+    for (const viewer of ["b", "w", "stranger", null])
+      assert.notEqual(id(current, viewer), "collect", `${state} / ${viewer}`);
+  }
+});
+
+test("job zero is usable, but a missing current job cannot borrow payment authority from last_job", () => {
+  assert.equal(
+    nextStep(
+      bid({ job_id: 0, job: job("Released", { id: 0 }) }),
+      "b",
+      true,
+      NOW,
+    )?.id,
+    "collect",
+  );
+  assert.equal(
+    (
+      nextStep(
+        bid({ job_id: null, job: job("Released", { id: 0 }) }),
+        "b",
+        true,
+        NOW,
+      ) as { jobId?: number }
+    )?.jobId,
+    0,
+  );
+  assert.equal(
+    (
+      nextStep(
+        bid({ job_id: 0, job: job("Released", { id: 7 }) }),
+        "b",
+        true,
+        NOW,
+      ) as { jobId?: number }
+    )?.jobId,
+    0,
+  );
+  assert.notEqual(
+    id(
+      bid({
+        job_id: null,
+        job: null,
+        last_job: job("Released"),
+        state: "Done",
+      }),
+      "b",
+    ),
+    "collect",
+  );
+  assert.notEqual(
+    id(
+      bid({ job: job("Funded", { worker: "w" }), last_job: job("Released") }),
+      "b",
+    ),
+    "collect",
+  );
+  assert.notEqual(
+    id(bid({ job_id: null, job: job("Released", { id: null }) }), "b"),
+    "collect",
+  );
+});
+
+test("bid expiry closes at the exact boundary without interrupting an assigned worker", () => {
+  const ending = bid({ expires_at: NS.toString() });
+  assert.equal(nextStep(ending, "w", true, NOW - 1)?.id, "claim");
+  assert.equal(nextStep(ending, "w", true, NOW)?.id, "close");
+  assert.equal(nextStep(ending, null, true, NOW)?.id, "wait");
+  const assigned = {
+    ...ending,
+    state: "Claimed",
+    job: job("Funded", {
+      worker: "w",
+      deadline: (NS + 60_000_000_000n).toString(),
+    }),
+  };
+  assert.equal(nextStep(assigned, "w", true, NOW)?.id, "deliver");
+  assert.notEqual(nextStep(assigned, "stranger", true, NOW)?.id, "close");
+});
+
+test("delivery and verdict deadlines expire only after their exact chain boundary", () => {
+  const funded = bid({
+    state: "Claimed",
+    job: job("Funded", { worker: "w", deadline: NS.toString() }),
+  });
+  assert.equal(nextStep(funded, "w", true, NOW)?.id, "deliver");
+  assert.equal(nextStep(funded, "stranger", true, NOW + 1)?.id, "expire");
+  const delivered = bid({
+    state: "Claimed",
+    job: job("Delivered", {
+      worker: "w",
+      delivered_at: (NS - 60_000_000_000n).toString(),
+      verdict_window_secs: 60,
+    }),
+  });
+  assert.equal(nextStep(delivered, "stranger", true, NOW)?.id, "verify");
+  assert.equal(nextStep(delivered, "stranger", true, NOW + 1)?.id, "expire");
+});
+
+test("an in-flight run needs both expired verdict time and a strictly stale run before expiry", () => {
+  const at = (
+    deliveredAgoSeconds: bigint,
+    windowSeconds: number,
+    runAgoSeconds: bigint,
+  ) =>
+    bid({
+      state: "Claimed",
+      job: job("Verifying", {
+        worker: "w",
+        delivered_at: (NS - deliveredAgoSeconds * 1_000_000_000n).toString(),
+        verdict_window_secs: windowSeconds,
+        run_started_at: (NS - runAgoSeconds * 1_000_000_000n).toString(),
+      }),
+    });
+  assert.equal(id(at(1000n, 1200, 901n), "stranger"), "wait");
+  assert.equal(id(at(1000n, 60, 899n), "stranger"), "wait");
+  assert.equal(id(at(1000n, 60, 900n), "stranger"), "wait");
+  assert.equal(id(at(1000n, 60, 901n), "stranger"), "expire");
+  assert.equal(
+    id(
+      bid({
+        job: job("Verifying", { delivered_at: null, run_started_at: "1" }),
+      }),
+      "stranger",
+    ),
+    "wait",
+  );
+  assert.equal(
+    id(
+      bid({
+        job: job("Verifying", { delivered_at: "1", run_started_at: null }),
+      }),
+      "stranger",
+    ),
+    "wait",
+  );
+});
+
+test("the relay gets the full stalled interval and the UI never releases a failed attempt", () => {
+  const boundary = (NS - 20n * 60n * 1_000_000_000n).toString();
+  for (const state of ["Passed", "Failed", "RefundDue"]) {
+    const current = bid({
+      state: "Claimed",
+      job: job(state, { delivered_at: boundary }),
+    });
+    assert.equal(nextStep(current, "stranger", true, NOW)?.id, "wait");
+    const after = nextStep(current, "stranger", true, NOW + 1);
+    assert.equal(after?.id, "settle");
+    assert.equal(
+      (after as { method?: string }).method,
+      state === "Passed" ? "release" : "refund",
+    );
+  }
+  assert.equal(
+    id(bid({ job: job("Passed", { delivered_at: null }) }), "stranger"),
+    "wait",
+  );
+});
+
+test("assignment and terminal bookkeeping cannot offer a second claim or payout", () => {
+  for (const viewer of ["b", "w", "stranger", null])
+    assert.equal(id(bid({ state: "Assigning" }), viewer), "wait");
+  assert.equal(id(bid({ max_attempts: 1, funded_attempts: 1 }), "w"), "wait");
+  assert.equal(id(bid({ max_attempts: 1, funded_attempts: 0 }), "w"), "claim");
+  for (const state of ["Done", "Closed", "Cancelled"]) {
+    const current = bid({
+      state,
+      job: job("Refunded"),
+      fees: ["ReturnedToBuyer"],
+    });
+    for (const viewer of ["b", "w", "stranger", null])
+      assert.equal(id(current, viewer), null);
+  }
+  assert.equal(
+    id(
+      bid({ state: "Cancelled", job: job("Refunded"), fees: ["Held"] }),
+      "stranger",
+    ),
+    "sync",
+  );
+  assert.equal(
+    id(bid({ state: "Cancelled", job: job("Refunded"), fees: ["Held"] }), null),
+    null,
+  );
+  assert.equal(
+    id(
+      bid({ state: "Closed", job: job("Refunded"), fees: ["Paying"] }),
+      "stranger",
+    ),
+    null,
+  );
+});

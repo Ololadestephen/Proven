@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { actions } from "near-api-js";
 import { loadConfig } from "./config.ts";
+import { verifierFromCheck } from "./json.ts";
 import { relayAccount } from "./near.ts";
 import { deleteSecret, storeSecret } from "./secret.ts";
 
@@ -19,18 +20,18 @@ const LIMITS = {
 };
 const ROOT = new URL("../../", import.meta.url).pathname;
 const dry = process.argv.includes("--dry-run");
+const check = readFileSync(`${ROOT}examples/swarm-job/check.json`, "utf8");
+const reference = readFileSync(
+  `${ROOT}examples/swarm-job/reference.json`,
+  "utf8",
+);
+const verifier = verifierFromCheck(check);
 const base = loadConfig();
 const onMainnet = base.outlayerContract === "outlayer.near";
 const account = relayAccount(base);
 // The secret may be read only by runs this account requests, since no escrow is involved here.
 const config = { ...base, escrowContract: account.accountId };
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-const check = readFileSync(`${ROOT}examples/swarm-job/check.json`, "utf8");
-const reference = readFileSync(
-  `${ROOT}examples/swarm-job/reference.json`,
-  "utf8",
-);
-const verifier = (JSON.parse(check) as { verifier: string }).verifier;
 const url = `https://${onMainnet ? "main" : "test"}.fastfs.io/${account.accountId}/${config.outlayerContract}/${verifier}.wasm`;
 const profile = `gate-${sha(reference).slice(0, 12)}`;
 const evidence: Record<string, unknown> = {

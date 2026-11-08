@@ -2,10 +2,15 @@
 import {
   boardBehind,
   nextNudge,
-  storageDue,
+  createStorageFinisher,
   type KeptBid,
   type KeptJob,
 } from "./keeper.ts";
+import {
+  configuredBoard,
+  legacyAccess,
+  readBoardAccess,
+} from "./market-access.ts";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -24,6 +29,12 @@ import type { Server, Socket } from "node:net";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { relayPayload, RelayVerifier, type RelayAuth } from "./buyer-auth.ts";
+import {
+  JsonInputError,
+  parseJson,
+  parseJsonObject,
+  verifierFromCheck,
+} from "./json.ts";
 import { isHash, sha256Hex } from "./hash.ts";
 import type { Job, RunKind } from "./near.ts";
 import type { TimingEvent, TimingSink } from "./timing.ts";
@@ -74,6 +85,8 @@ export interface HandoffDependencies {
   /** Set while the market is limited: only these buyers can start a job. Unset, anyone can. Nothing else
    * depends on it, so a job already running can always finish. */
   allowedBuyers?: Set<string>;
+  /** Re-read the board before each new challenge; an RPC failure never opens the market. */
+  getAllowedBuyers?: () => Promise<Set<string> | undefined>;
   /** The bid a check belongs to, for publishing a check once its bid has ended. */
   getBid?(bidId: number): Promise<RevealBid | null>;
   /** On for a relay reachable from the internet: every action needs the right account's signature. */
@@ -88,6 +101,73 @@ export interface HandoffDependencies {
   keep?(jobId: number, job: HandoffJob): Promise<void>;
   /** Returns unused storage of bids and jobs that have ended. Anyone may; nothing is decided. */
   finish?(): Promise<void>;
+}
+
+/** Re-read permission at the signing point, including keeper retries of pinned Draft jobs. */
+export async function triggerHandoffRun(
+  deps: Pick<HandoffDependencies, "allowedBuyers" | "getAllowedBuyers"> & {
+    trigger: NonNullable<HandoffDependencies["trigger"]>;
+  },
+  jobId: number,
+  job: Pick<HandoffJob, "buyer">,
+  kind: RunKind,
+): Promise<string> {
+  if (kind === "Challenge") await requireChallengeAccess(deps, job);
+  return deps.trigger(jobId, kind);
+}
+
+async function requireChallengeAccess(
+  deps: Pick<HandoffDependencies, "allowedBuyers" | "getAllowedBuyers">,
+  job: Pick<HandoffJob, "buyer">,
+): Promise<void> {
+  const allowed = deps.getAllowedBuyers
+    ? await deps.getAllowedBuyers()
+    : deps.allowedBuyers;
+  if (allowed)
+    requireSafe(typeof job.buyer === "string" && allowed.has(job.buyer));
+}
+
+interface PinRecord {
+  verifier_hash: string;
+  profile: string;
+  buyer: string;
+  at: number;
+  stored: boolean;
+}
+
+function parsePinRecord(text: string): PinRecord {
+  const record = parseJsonObject(text, "Private pin record");
+  if (
+    !isHash(record.verifier_hash) ||
+    typeof record.profile !== "string" ||
+    !/^[cv]\d+-[a-f0-9]{12}$/.test(record.profile) ||
+    typeof record.buyer !== "string" ||
+    !/^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/.test(record.buyer) ||
+    !Number.isSafeInteger(record.at) ||
+    (record.at as number) < 0 ||
+    typeof record.stored !== "boolean"
+  )
+    throw new JsonInputError(
+      "Private pin record has invalid fields. No signing was allowed.",
+    );
+  return record as unknown as PinRecord;
+}
+
+export function suspendedTransaction(text: string): {
+  hash: string;
+  at: number;
+} {
+  const record = parseJsonObject(text, "Suspended transaction record");
+  if (
+    typeof record.hash !== "string" ||
+    !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(record.hash) ||
+    !Number.isSafeInteger(record.at) ||
+    (record.at as number) < 0
+  )
+    throw new JsonInputError(
+      "Suspended transaction record has invalid fields. Signing remains paused.",
+    );
+  return { hash: record.hash, at: record.at as number };
 }
 
 /** What the reveal rule reads about a bid. */
@@ -245,8 +325,9 @@ async function readPrivate(path: string): Promise<string> {
         info.nlink === 1 &&
         info.size <= MAX_HANDOFF_BYTES * 2,
     );
-    const record: unknown = JSON.parse(
+    const record = parseJsonObject(
       new TextDecoder("utf-8", { fatal: true }).decode(await file.readFile()),
+      "Private file record",
     );
     requireSafe(
       object(record) &&
@@ -261,8 +342,7 @@ async function readPrivate(path: string): Promise<string> {
 
 function validateCheck(job: HandoffJob, check: string): void {
   requireSafe(sha256Hex(check) === job.spec_hash);
-  const parsed: unknown = JSON.parse(check);
-  requireSafe(object(parsed) && parsed.verifier === job.verifier_hash);
+  requireSafe(verifierFromCheck(check) === job.verifier_hash);
 }
 function profile(job: HandoffJob, jobId: number, kind: RunKind): string {
   return kind === "Challenge"
@@ -457,14 +537,9 @@ export async function createHandoffHandler(
     let count = 0;
     for (const name of await readdir(pins)) {
       if (!name.endsWith(".json")) continue;
-      try {
-        const record = JSON.parse(await readPrivate(join(pins, name))) as {
-          buyer?: string;
-        };
-        if (record.buyer === buyer) count += 1;
-      } catch {
-        /* An unreadable record must not block other buyers. */
-      }
+      // A corrupt record could conceal this buyer's locked deposit; never undercount it.
+      const record = parsePinRecord(await readPrivate(join(pins, name)));
+      if (record.buyer === buyer) count += 1;
     }
     return count;
   }
@@ -630,10 +705,7 @@ export async function createHandoffHandler(
     );
     const kind: RunKind = challenge ? "Challenge" : "Verify";
     const pinFile = pinPath(request.job_id, kind);
-    if (challenge && deps.allowedBuyers)
-      requireSafe(
-        typeof job.buyer === "string" && deps.allowedBuyers.has(job.buyer),
-      );
+    if (challenge) await requireChallengeAccess(deps, job);
     if (!internal && deps.requireSignatures) {
       if (challenge) {
         requireSafe(
@@ -660,9 +732,7 @@ export async function createHandoffHandler(
     if (!internal && deps.requireSignatures) {
       // The same texts are already pinned under this name: nothing to sign, and nothing to count.
       if (hadPin) {
-        const earlier = JSON.parse(await readPrivate(pinFile)) as {
-          stored?: boolean;
-        };
+        const earlier = parsePinRecord(await readPrivate(pinFile));
         if (earlier.stored === true) {
           pinned.add(`${request.job_id}:${kind}`);
           return reply("already-pinned", 0);
@@ -710,14 +780,19 @@ export async function createHandoffHandler(
     // The relay starts the challenge itself. A failed start is retried by the keeper's sweep.
     const run =
       challenge && deps.trigger
-        ? await wallet(() => deps.trigger!(request.job_id, "Challenge")).catch(
-            (error: Error) => {
-              console.error(
-                `relay: challenge for job ${request.job_id} did not start: ${String(error.message).slice(0, 200)}`,
-              );
-              return null;
-            },
-          )
+        ? await wallet(() =>
+            triggerHandoffRun(
+              { ...deps, trigger: deps.trigger! },
+              request.job_id,
+              job,
+              "Challenge",
+            ),
+          ).catch((error: Error) => {
+            console.error(
+              `relay: challenge for job ${request.job_id} did not start: ${String(error.message).slice(0, 200)}`,
+            );
+            return null;
+          })
         : undefined;
     return {
       ...reply(stored.transactionHash, stored.ciphertextBytes),
@@ -750,11 +825,7 @@ export async function createHandoffHandler(
       try {
         await inJobQueue(jobId, async () => {
           const file = join(pins, name);
-          const record = JSON.parse(await readPrivate(file)) as {
-            verifier_hash: string;
-            profile: string;
-            at: number;
-          };
+          const record = parsePinRecord(await readPrivate(file));
           const shouldExpire = (job: HandoffJob | null) => {
             if (!job) return true;
             if (
@@ -913,7 +984,7 @@ function connection(
       const text = new TextDecoder("utf-8", { fatal: true }).decode(
         Buffer.concat(chunks),
       );
-      respond(await handle(JSON.parse(text)));
+      respond(await handle(parseJson(text, "Handoff request")));
     } catch {
       respond(refused());
     }
@@ -1091,18 +1162,36 @@ async function main(): Promise<void> {
   let unknownTransaction: { hash: string; at: number } | null = null;
   if (await safeExistingFile(suspendedFile)) {
     try {
-      unknownTransaction = JSON.parse(await readPrivate(suspendedFile)) as {
-        hash: string;
-        at: number;
-      };
+      unknownTransaction = suspendedTransaction(
+        await readPrivate(suspendedFile),
+      );
     } catch {
       // Unreadable: stay paused for the full lifetime of any transaction it could have named.
+      console.error(
+        "relay: suspended transaction record is invalid or unreadable; signing remains paused.",
+      );
       unknownTransaction = { hash: "", at: Date.now() };
     }
   }
   let signingSuspended = unknownTransaction !== null;
   // The board's bids, by the job they hold, filled in as the keeper finds them.
-  const board = process.env.PROVEN_BOARD;
+  const board = configuredBoard(process.env.PROVEN_BOARD);
+  const getAllowedBuyers = async () => {
+    const access = await readBoardAccess(
+      () =>
+        account.provider.callFunction({
+          contractId: board,
+          method: "get_access",
+          args: {},
+        }),
+      () =>
+        legacyAccess(
+          process.env.PROVEN_MARKET_ACCESS,
+          process.env.NEAR_NETWORK,
+        ),
+    );
+    return access.open ? undefined : new Set(access.buyers);
+  };
   const bidForJob = new Map<number, number>();
   let scannedBids = 0;
   async function findBid(jobId: number): Promise<number | undefined> {
@@ -1146,9 +1235,15 @@ async function main(): Promise<void> {
         `keeper: job ${jobId} ${what} failed: ${String(error.message).slice(0, 200)}`,
       );
     if (step && "run" in step)
-      await near
-        .triggerRun(account, config, jobId, step.run)
-        .catch(failed(step.run));
+      await triggerHandoffRun(
+        {
+          getAllowedBuyers,
+          trigger: (id, kind) => near.triggerRun(account, config, id, kind),
+        },
+        jobId,
+        job,
+        step.run,
+      ).catch(failed(step.run));
     else if (step)
       await near
         .nudge(account, config.escrowContract, step.method, { job_id: jobId })
@@ -1167,54 +1262,27 @@ async function main(): Promise<void> {
         .catch(() => undefined);
   }
 
-  // Bids already handled, so each is asked about at most once per run of the relay.
-  const finishedBids = new Set<number>();
-  /** Gives back the storage of every ended bid and its job. Each call is one anyone could make, and
-   * the contract refuses it when nothing is due. */
-  async function finishEnded() {
-    if (!board || signingSuspended) return;
-    for (let from = 0; ; from += 50) {
-      const page = (await account.provider.callFunction({
-        contractId: board,
-        method: "get_bids",
-        args: { from_id: from, limit: 50 },
-      })) as Array<[number, KeptBid]>;
-      for (const [bidId, bid] of page) {
-        if (finishedBids.has(bidId) || !storageDue(bid)) continue;
-        // An unknown transaction pauses every signing step, including these.
-        if (signingSuspended) return;
-        const done = (error?: Error) => {
-          // Retried next sweep unless it worked or the contract said nothing is left.
-          if (!error || /no storage is left/.test(error.message)) return true;
-          console.error(
-            `keeper: bid ${bidId} storage: ${String(error.message).slice(0, 200)}`,
-          );
-          return false;
-        };
-        const job =
-          bid.job_id == null
-            ? true
-            : await near
-                .nudge(account, config.escrowContract, "finish_storage", {
-                  job_id: bid.job_id,
-                })
-                .then(
-                  () => done(),
-                  (error: Error) => done(error),
-                );
-        // The board finishes only after its job has, or a finished bid would hide the job's storage.
-        if (!job || signingSuspended) continue;
-        const own = await near
-          .nudge(account, board, "finish_bid", { bid_id: bidId })
-          .then(
-            () => done(),
-            (error: Error) => done(error),
-          );
-        if (own) finishedBids.add(bidId);
-      }
-      if (page.length < 50) break;
-    }
-  }
+  const finishEnded = createStorageFinisher({
+    readBids: (from, limit) =>
+      board
+        ? (account.provider.callFunction({
+            contractId: board,
+            method: "get_bids",
+            args: { from_id: from, limit },
+          }) as Promise<Array<[number, KeptBid]>>)
+        : Promise.resolve([]),
+    finishJob: (jobId) =>
+      near.nudge(account, config.escrowContract, "finish_storage", {
+        job_id: jobId,
+      }),
+    finishBid: (bidId) =>
+      near.nudge(account, board, "finish_bid", { bid_id: bidId }),
+    suspended: () => signingSuspended,
+    report: (bidId, error) =>
+      console.error(
+        `keeper: bid ${bidId} storage: ${String(error instanceof Error ? error.message : "request failed").slice(0, 200)}`,
+      ),
+  });
 
   async function signing<T>(call: () => Promise<T>): Promise<T> {
     inFlight = null;
@@ -1271,14 +1339,13 @@ async function main(): Promise<void> {
     );
     const check = await readFile(join(example, "check-strong.json"), "utf8");
     const reference = await readFile(join(example, "reference.json"), "utf8");
-    const parsed: unknown = JSON.parse(check);
-    requireSafe(object(parsed) && isHash(parsed.verifier));
+    const verifierHash = verifierFromCheck(check);
     demoCompute = {
       buyer,
       workers: workers as string[],
       specHash: sha256Hex(check),
       referenceHash: sha256Hex(reference),
-      verifierHash: parsed.verifier,
+      verifierHash,
       trigger: (id, kind, beforeBroadcast) =>
         near.submitDemoRun(
           account,
@@ -1335,7 +1402,7 @@ async function main(): Promise<void> {
       trigger: (jobId, kind) => near.triggerRun(account, config, jobId, kind),
       keep: (jobId, job) => keepOne(jobId, job),
       finish: () => finishEnded(),
-      allowedBuyers: marketAccess(process.env.PROVEN_MARKET_ACCESS),
+      getAllowedBuyers,
       isSigningSuspended: () => signingSuspended,
       reconcile,
       requireSignatures: process.env.PROVEN_RELAY_REQUIRE_SIGNATURES === "yes",

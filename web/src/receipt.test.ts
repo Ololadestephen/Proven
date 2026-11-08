@@ -274,3 +274,87 @@ test("many separate backticks cannot exhaust the receipt formatter's argument st
   const receipt = buildReceipt(bid, await paidJob(), text, "testnet", madeAt);
   assert.ok(receipt.includes("```text\n" + text + "\n```"));
 });
+
+test("stale paid history cannot turn a current failed, refunded, unknown or in-flight job into a paid receipt", async () => {
+  const paid = await paidJob();
+  for (const state of [
+    "Open",
+    "Funded",
+    "Delivered",
+    "Verifying",
+    "Passed",
+    "Failed",
+    "RefundDue",
+    "Refunding",
+    "Refunded",
+    "Releasing",
+    "Expiring",
+    "Unknown",
+  ]) {
+    const receipt = buildReceipt(
+      bid,
+      { ...paid, state },
+      original,
+      "testnet",
+      madeAt,
+    );
+    const metadata = receipt.split("## Delivered work")[0]!;
+    assert.ok(!metadata.includes("Result: Paid"), state);
+    if (state !== "Refunded")
+      assert.ok(!metadata.includes("Result: Refunded"), state);
+  }
+});
+
+test("a deliverable's claims about payment and payees cannot change receipt metadata", async () => {
+  const text = JSON.stringify({
+    state: "Released",
+    result: "Paid",
+    worker: "attacker.near",
+    amount: "500 NEAR",
+  });
+  const receipt = buildReceipt(
+    bid,
+    {
+      ...(await paidJob()),
+      state: "Refunded",
+      worker: "actual-worker.testnet",
+      history: [],
+    },
+    text,
+    "testnet",
+    madeAt,
+  );
+  const metadata = receipt.split("## Delivered work")[0]!;
+  assert.match(metadata, /Result: Refunded/);
+  assert.match(metadata, /Worker: ` actual-worker\.testnet `/);
+  assert.match(metadata, /Amount: 0\.01 NEAR/);
+  assert.ok(!metadata.includes("attacker.near"));
+  assert.ok(!metadata.includes("Result: Paid"));
+  assert.ok(receipt.includes(JSON.stringify(JSON.parse(text), null, 2)));
+});
+
+test("job id zero and null legacy IDs keep the correct exact-work filename without mutating chain inputs", async () => {
+  const job = { ...(await paidJob()), id: 0 };
+  const zero = { ...bid, id: 0, job_id: 0 };
+  assert.equal(
+    deliveryFilename(zero, job, original),
+    "bid-0-job-0-delivery.json",
+  );
+  assert.match(
+    buildReceipt(zero, job, original, "testnet", madeAt),
+    /Escrow job ID: ` 0 `/,
+  );
+  const legacy = { ...job, id: null };
+  assert.equal(
+    deliveryFilename(zero, legacy, original),
+    "bid-0-job-0-delivery.json",
+  );
+  const frozenBid = Object.freeze({ ...zero });
+  const frozenJob = Object.freeze({
+    ...job,
+    history: Object.freeze([...job.history!]),
+  }) as unknown as MarketJob;
+  const before = JSON.stringify({ bid: frozenBid, job: frozenJob });
+  buildReceipt(frozenBid, frozenJob, original, "mainnet", madeAt);
+  assert.equal(JSON.stringify({ bid: frozenBid, job: frozenJob }), before);
+});

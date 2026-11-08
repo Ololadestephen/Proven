@@ -25,6 +25,8 @@ import {
   COLLECT_RETENTION_MS,
   createHandoffHandler,
   marketAccess,
+  triggerHandoffRun,
+  suspendedTransaction,
   revealAllowed,
   deleteOnce,
   isDefiniteRefusal,
@@ -585,6 +587,12 @@ test("a deliverable goes only to its buyer, only once Released, and paid work su
       encoded = alphabet[Number(value % 58n)] + encoded;
       value /= 58n;
     }
+    encoded =
+      "1".repeat(
+        raw.findIndex((byte) => byte !== 0) < 0
+          ? raw.length
+          : raw.findIndex((byte) => byte !== 0),
+      ) + encoded;
     const signed = () => {
       const nonce = randomBytes(32);
       const message = relayMessage(
@@ -785,7 +793,8 @@ test("with signatures required, only the job's own parties can act", async () =>
         out = alphabet[Number(value % 58n)] + out;
         value /= 58n;
       }
-      return `ed25519:${out}`;
+      const zeros = bytes.findIndex((byte) => byte !== 0);
+      return `ed25519:${"1".repeat(zeros < 0 ? bytes.length : zeros)}${out}`;
     };
     const signed = (request: Record<string, unknown>, pair: typeof buyer) => {
       const nonce = randomBytes(32);
@@ -909,6 +918,8 @@ function signer() {
     encoded = alphabet[Number(value % 58n)] + encoded;
     value /= 58n;
   }
+  const zeros = bytes.findIndex((byte) => byte !== 0);
+  encoded = "1".repeat(zeros < 0 ? bytes.length : zeros) + encoded;
   return {
     account: bytes.toString("hex"),
     sign(request: Record<string, unknown>) {
@@ -1149,4 +1160,116 @@ test("the relay starts the challenge and the verification itself", async () => {
   } finally {
     await f.cleanup();
   }
+});
+
+test("keeper challenge retries freshly read buyer access, while verification remains available", async () => {
+  let access: Set<string> | undefined = new Set(["buyer.testnet"]);
+  let failed = false;
+  let reads = 0;
+  const sent: string[] = [];
+  const deps = {
+    getAllowedBuyers: async () => {
+      reads++;
+      if (failed) throw new Error("board unavailable");
+      return access;
+    },
+    trigger: async (id: number, kind: "Challenge" | "Verify") => {
+      sent.push(`${id}:${kind}`);
+      return "hash";
+    },
+  };
+  const job = { buyer: "buyer.testnet" };
+  await triggerHandoffRun(deps, 0, job, "Challenge");
+  access = new Set();
+  await assert.rejects(triggerHandoffRun(deps, 0, job, "Challenge"));
+  failed = true;
+  await assert.rejects(
+    triggerHandoffRun(deps, 0, job, "Challenge"),
+    /board unavailable/,
+  );
+  await triggerHandoffRun(deps, 0, job, "Verify");
+  assert.deepEqual(sent, ["0:Challenge", "0:Verify"]);
+  assert.equal(reads, 3);
+});
+
+test("a changing board policy is rechecked after pinning and before starting the challenge", async () => {
+  const f = await fixture();
+  try {
+    let reads = 0;
+    let triggers = 0;
+    const handle = await createHandoffHandler(
+      {
+        ...f.deps,
+        getAllowedBuyers: async () =>
+          ++reads === 1 ? new Set(["buyer.testnet"]) : new Set(),
+        trigger: async () => {
+          triggers++;
+          return "hash";
+        },
+      },
+      f.directory,
+    );
+    const reply = await handle(challenge());
+    assert.equal(reply.ok, true);
+    assert.equal(triggers, 0);
+    assert.equal(reads, 2);
+    assert.equal(f.stores.length, 1);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("corrupt pin records cannot hide deposits from the pin limit or authorize a deletion", async () => {
+  const f = await fixture();
+  try {
+    const handle = await createHandoffHandler(
+      { ...f.deps, requireSignatures: true },
+      f.directory,
+    );
+    assert.equal((await handle(challenge())).ok, true);
+    const pins = join(f.directory, `pins-${sha256Hex(f.deps.escrow)}`);
+    const file = join(pins, "1.Challenge.json");
+    for (const bad of [
+      "{PRIVATE",
+      "null",
+      "[]",
+      "{}",
+      JSON.stringify({
+        verifier_hash: verifier,
+        profile: "c1-" + f.job.fakes_hash.slice(0, 12),
+        buyer: "buyer.testnet",
+        at: -1,
+        stored: true,
+      }),
+    ]) {
+      await writeFile(file, JSON.stringify({ text: bad }), { mode: 0o600 });
+      assert.equal((await handle(challenge(2))).ok, false);
+      assert.equal(f.stores.length, 1);
+      f.job.state = "Expired";
+      await handle({ action: "expire_pins" }, true);
+      assert.equal(f.deletions.length, 0);
+      assert.ok(await lstat(file));
+      f.job.state = "Draft";
+    }
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("suspended transaction metadata must be valid before it can be reconciled", () => {
+  const valid = { hash: "A".repeat(44), at: 123 };
+  assert.deepEqual(suspendedTransaction(JSON.stringify(valid)), valid);
+  for (const text of [
+    "{PRIVATE",
+    "null",
+    "[]",
+    "{}",
+    JSON.stringify({ ...valid, hash: 17 }),
+    JSON.stringify({ ...valid, at: "0" }),
+    JSON.stringify({ ...valid, at: -1 }),
+  ])
+    assert.throws(
+      () => suspendedTransaction(text),
+      (error) => error instanceof Error && !error.message.includes("PRIVATE"),
+    );
 });

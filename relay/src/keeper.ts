@@ -3,6 +3,7 @@
 // only follows a verdict the escrow recorded in its own callback.
 
 export interface KeptJob {
+  buyer?: string;
   state: string;
   worker?: string | null;
   compute_budget?: string;
@@ -93,4 +94,56 @@ export function storageDue(bid: KeptBid): boolean {
       (fee) => fee === "PaidToWorker" || fee === "ReturnedToBuyer",
     )
   );
+}
+
+interface StorageFinisherDependencies {
+  readBids(from: number, limit: number): Promise<Array<[number, KeptBid]>>;
+  finishJob(jobId: number): Promise<unknown>;
+  finishBid(bidId: number): Promise<unknown>;
+  suspended(): boolean;
+  report(bidId: number, error: unknown): void;
+}
+
+/** Retry failures on the next sweep, and never hide job storage behind a finished board bid. */
+export function createStorageFinisher(
+  deps: StorageFinisherDependencies,
+): () => Promise<void> {
+  const finished = new Set<number>();
+  let running = false;
+  async function attempt(
+    id: number,
+    call: () => Promise<unknown>,
+  ): Promise<boolean> {
+    try {
+      await call();
+      return true;
+    } catch (error) {
+      if (error instanceof Error && /no storage is left/.test(error.message))
+        return true;
+      deps.report(id, error);
+      return false;
+    }
+  }
+  return async () => {
+    if (running || deps.suspended()) return;
+    running = true;
+    try {
+      for (let from = 0; ; from += 50) {
+        if (deps.suspended()) return;
+        const page = await deps.readBids(from, 50);
+        for (const [id, bid] of page) {
+          if (deps.suspended()) return;
+          if (finished.has(id) || !storageDue(bid)) continue;
+          const jobDone =
+            bid.job_id == null ||
+            (await attempt(id, () => deps.finishJob(bid.job_id!)));
+          if (!jobDone || deps.suspended()) continue;
+          if (await attempt(id, () => deps.finishBid(id))) finished.add(id);
+        }
+        if (page.length < 50) return;
+      }
+    } finally {
+      running = false;
+    }
+  };
 }

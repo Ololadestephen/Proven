@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-// Local routes behind the /market page. Testnet only. Reads come from the chain. The relay checks every
+// Local routes behind the Market page. Reads use the configured network. The relay checks every
 // private text against the job's hashes, so this only passes requests along to its local socket. This
 // server never decides a verdict and holds no wallet, except for the opt-in dev signer below.
 import { execFile } from "node:child_process";
@@ -20,6 +20,13 @@ import {
   type RelayAuth,
 } from "../../relay/src/buyer-auth.ts";
 import { FallbackRpcProvider } from "../../relay/src/rpc.ts";
+import { postedBidFromOutcome } from "../../relay/src/post-result.ts";
+import {
+  buyerAllowed,
+  configuredBoard,
+  legacyAccess,
+  readBoardAccess,
+} from "../../relay/src/market-access.ts";
 import { ReadError } from "./model.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
@@ -257,30 +264,31 @@ export function marketOpenTo(
   setting = process.env.PROVEN_MARKET_ACCESS,
   network: string = NETWORK,
 ): boolean {
-  if (setting === "open") return true;
-  if (setting === undefined && network !== "mainnet") return true;
-  return (setting ?? "")
-    .split(",")
-    .map((name) => name.trim())
-    .includes(buyer);
+  return buyerAllowed(legacyAccess(setting, network), buyer);
 }
 
+/** Legacy settings are used only when the board confirms get_access is not implemented. */
 export function marketConfig(setting = process.env.PROVEN_MARKET_ACCESS) {
-  const open =
-    setting === "open" || (setting === undefined && NETWORK !== "mainnet");
+  const access = legacyAccess(setting, NETWORK);
   return {
     network: NETWORK,
-    open,
-    // A closed market names its buyers, so nobody else pays a posting deposit for a job that cannot run.
-    ...(open
-      ? {}
-      : {
-          buyers: (setting ?? "")
-            .split(",")
-            .map((name) => name.trim())
-            .filter(Boolean),
-        }),
+    open: access.open,
+    ...(access.open ? {} : { buyers: access.buyers }),
   };
+}
+
+export function boardAccess() {
+  return readBoardAccess(
+    () =>
+      view(
+        configuredBoard(
+          NETWORK === "mainnet" ? process.env.PROVEN_BOARD : BOARD,
+        ),
+        "get_access",
+        {},
+      ),
+    () => legacyAccess(process.env.PROVEN_MARKET_ACCESS, NETWORK),
+  );
 }
 
 /** The escrow's limits on NEAR, read from the chain and kept for a minute, so the page never states
@@ -312,7 +320,14 @@ async function escrowCaps(): Promise<Caps | null> {
 
 /** The access setting and the escrow's limits, for the page. */
 export async function marketSettings() {
-  return { ...marketConfig(), caps: await escrowCaps() };
+  const [access, caps] = await Promise.all([boardAccess(), escrowCaps()]);
+  return {
+    network: NETWORK,
+    open: access.open,
+    ...(access.open ? {} : { buyers: access.buyers }),
+    access_source: access.source,
+    caps,
+  };
 }
 
 /** Publishes a bid's check once its bid has ended. The relay checks the rule against the chain. */
@@ -440,7 +455,7 @@ export async function reviewRoute(
   if (bid.state !== "Unreviewed")
     throw new ReadError("That bid is not waiting for a review.", 409);
   // A review spends the operator's model credit, so a closed market reviews only its listed buyers.
-  if (!marketOpenTo(bid.buyer))
+  if (!buyerAllowed(await boardAccess(), bid.buyer))
     throw new ReadError("The market is not open to this buyer.", 403);
   // Anyone can start it, so the buyer signs nothing after posting. The market-access check above, one
   // review at a time, and the per-buyer limit below bound what it can cost.
@@ -536,12 +551,34 @@ export function createDevWallet() {
           deposit: body.deposit,
           gas: BigInt(body.gas),
         });
-        return { transaction_hash: outcome.transaction.hash };
-      } catch (error) {
+        let result: unknown = null;
+        if (
+          typeof outcome.status === "object" &&
+          "SuccessValue" in outcome.status
+        ) {
+          try {
+            result = JSON.parse(
+              Buffer.from(outcome.status.SuccessValue, "base64").toString(
+                "utf8",
+              ),
+            );
+          } catch {
+            // Non-JSON results cannot identify a posted bid. Preserve the transaction for reconciliation.
+          }
+        }
+        const postedBid =
+          body.method === "post_bid"
+            ? postedBidFromOutcome(outcome, body.receiver, id)
+            : null;
+        return {
+          transaction_hash: outcome.transaction.hash,
+          result,
+          ...(postedBid === null ? {} : { posted_bid_id: postedBid }),
+        };
+      } catch {
         throw new ReadError(
-          /panicked: ([^"\\]{0,120})/.exec(String(error))?.[1] ??
-            "The transaction failed.",
-          400,
+          "The transaction outcome is unknown. Reconcile wallet history and the chain before retrying.",
+          502,
         );
       }
     },
@@ -552,11 +589,18 @@ export function createDevWallet() {
         provider,
         new KeyPairSigner(KeyPair.fromString(key as `ed25519:${string}`)),
       );
-      const outcome = await account.signAndSendTransaction({
-        receiverId: body.receiver,
-        actions: [actions.transfer(BigInt(body.yocto))],
-      });
-      return { transaction_hash: outcome.transaction.hash };
+      try {
+        const outcome = await account.signAndSendTransaction({
+          receiverId: body.receiver,
+          actions: [actions.transfer(BigInt(body.yocto))],
+        });
+        return { transaction_hash: outcome.transaction.hash };
+      } catch {
+        throw new ReadError(
+          "The transaction outcome is unknown. Reconcile wallet history and the chain before retrying.",
+          502,
+        );
+      }
     },
     sign(body: {
       as: string;

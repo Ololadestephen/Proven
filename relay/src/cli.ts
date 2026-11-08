@@ -16,6 +16,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { checkAttestation, fetchAttestation } from "./attestation.ts";
 import { type Config, loadConfig } from "./config.ts";
 import { sha256Hex } from "./hash.ts";
+import { verifierFromCheck } from "./json.ts";
 import {
   getJob,
   type Job,
@@ -163,7 +164,7 @@ async function pinAndRun(
     throw new Error(
       `the ${kind === "Challenge" ? "reference" : "deliverable"} does not match the job's hash`,
     );
-  const checkVerifier = JSON.parse(checkText).verifier;
+  const checkVerifier = verifierFromCheck(checkText);
   if (checkVerifier !== job.verifier_hash)
     throw new Error(
       `the check is written for verifier ${checkVerifier}, but the job pins ${job.verifier_hash}`,
