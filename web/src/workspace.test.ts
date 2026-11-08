@@ -286,3 +286,29 @@ test("a cancelled action clears only if the chain shows it did not happen", asyn
   assert.equal(store.size, 0);
   assert.deepEqual(seen, [null]);
 });
+
+test("posting reconciliation cannot clear a pending signature for changed private commitments or a preexisting bid", () => {
+  const marker = {
+    ...pending("post_bid", {
+      check_hash: bid.check_hash,
+      reference_hash: bid.reference_hash,
+      description: bid.description,
+    }),
+    bidId: undefined,
+    before: actionSnapshot(market, bid.buyer),
+  };
+  assert.equal(reconciled(marker, market), false);
+  for (const over of [
+    { reference_hash: "other" },
+    { check_hash: "other" },
+    { description: "other" },
+    { buyer: "other.testnet" },
+  ])
+    assert.equal(
+      reconciled(marker, {
+        ...market,
+        bids: [bid, { ...bid, id: 2, ...over }],
+      }),
+      false,
+    );
+});

@@ -138,3 +138,48 @@ test("missing board configuration cannot select an env fallback", () => {
     );
   assert.equal(configuredBoard("board.near"), "board.near");
 });
+
+test("an old board still rejects an invalid legacy buyer policy instead of opening admission", async () => {
+  for (const setting of ["listed.near,INVALID.NEAR", "x"])
+    await assert.rejects(
+      readBoardAccess(
+        async () => {
+          throw missing;
+        },
+        () => legacyAccess(setting, "mainnet"),
+      ),
+      MarketAccessError,
+    );
+  const result = await readBoardAccess(
+    async () => {
+      throw missing;
+    },
+    () => legacyAccess(" listed.near,listed.near, ", "mainnet"),
+  );
+  assert.deepEqual(result, {
+    open: false,
+    buyers: ["listed.near"],
+    source: "legacy-env",
+  });
+  assert.equal(buyerAllowed(result, "stranger.near"), false);
+});
+
+test("failure after a successful admission read never reuses the previous buyer list or env open setting", async () => {
+  let unavailable = false;
+  let fallbacks = 0;
+  const read = () =>
+    readBoardAccess(
+      async () => {
+        if (unavailable) throw new Error("RPC unavailable");
+        return { open: false, buyers: ["listed.near"] };
+      },
+      () => {
+        fallbacks++;
+        return legacyAccess("open", "mainnet");
+      },
+    );
+  assert.equal(buyerAllowed(await read(), "listed.near"), true);
+  unavailable = true;
+  await assert.rejects(read(), MarketAccessError);
+  assert.equal(fallbacks, 0);
+});

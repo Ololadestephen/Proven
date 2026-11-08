@@ -122,3 +122,81 @@ test("expiry boundaries do not expire at the exact deadline", () => {
     method: "expire",
   });
 });
+
+test("a failed board read releases the sweep lock so the next pass can return storage", async () => {
+  const f = fixture();
+  const read = f.deps.readBids;
+  let unavailable = true;
+  f.deps.readBids = async (from, limit) => {
+    if (unavailable) throw new Error("RPC unavailable");
+    return read(from, limit);
+  };
+  const sweep = createStorageFinisher(f.deps);
+  await assert.rejects(sweep(), /RPC unavailable/);
+  assert.deepEqual(f.calls, []);
+  unavailable = false;
+  await sweep();
+  assert.deepEqual(f.calls, ["read:0", "job:7", "bid:2"]);
+});
+
+test("a signing suspension discovered while reading a page prevents every storage write", async () => {
+  const f = fixture();
+  f.deps.readBids = async () => {
+    f.calls.push("read:0");
+    f.pause();
+    return [[2, bid]];
+  };
+  await createStorageFinisher(f.deps)();
+  assert.deepEqual(f.calls, ["read:0"]);
+});
+
+test("a suspension after the first board return prevents signing for the next bid", async () => {
+  const f = fixture([
+    [2, bid],
+    [3, { ...bid, job_id: 8 }],
+  ]);
+  f.deps.finishBid = async (id) => {
+    f.calls.push(`bid:${id}`);
+    f.pause();
+  };
+  await createStorageFinisher(f.deps)();
+  assert.deepEqual(f.calls, ["read:0", "job:7", "bid:2"]);
+});
+
+test("successful returns remain remembered when another bid fails and must retry", async () => {
+  const f = fixture([
+    [2, bid],
+    [3, { ...bid, job_id: 8 }],
+  ]);
+  let refuseSecond = true;
+  f.deps.finishBid = async (id) => {
+    f.calls.push(`bid:${id}`);
+    if (id === 3 && refuseSecond) throw new Error("transfer refused");
+  };
+  const sweep = createStorageFinisher(f.deps);
+  await sweep();
+  refuseSecond = false;
+  await sweep();
+  await sweep();
+  assert.equal(f.calls.filter((call) => call === "job:7").length, 1);
+  assert.equal(f.calls.filter((call) => call === "bid:2").length, 1);
+  assert.equal(f.calls.filter((call) => call === "job:8").length, 2);
+  assert.equal(f.calls.filter((call) => call === "bid:3").length, 2);
+  assert.equal(f.failures.length, 1);
+});
+
+test("storage no longer held by the board is terminal, but an unknown refusal is not", async () => {
+  const f = fixture([[2, { ...bid, job_id: null }]]);
+  let error: unknown = "no storage is left";
+  f.deps.finishBid = async (id) => {
+    f.calls.push(`bid:${id}`);
+    throw error;
+  };
+  const sweep = createStorageFinisher(f.deps);
+  await sweep();
+  error = new Error("no storage is left");
+  await sweep();
+  await sweep();
+  assert.deepEqual(f.calls, ["read:0", "bid:2", "read:0", "bid:2", "read:0"]);
+  assert.deepEqual(f.failures, ["no storage is left"]);
+});

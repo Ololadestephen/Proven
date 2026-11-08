@@ -181,3 +181,30 @@ test("stale reconciliation cannot erase a newer journal", async () => {
   await reconcilePending(env, next, observed);
   assert.equal(env.storage.getItem(PENDING_KEY), null);
 });
+
+test("hash-only posting results survive the signing guard while the unresolved journal stays durable", async () => {
+  const env = fixture();
+  const receipt = { transaction_hash: "A".repeat(44) };
+  let sends = 0;
+  const result = await guardedCall({
+    ...env,
+    send: async () => {
+      sends++;
+      return receipt;
+    },
+  });
+  assert.deepEqual(result, receipt);
+  assert.equal(sends, 1);
+  assert.ok(env.storage.getItem(PENDING_KEY));
+  await assert.rejects(
+    guardedCall({
+      ...env,
+      send: async () => {
+        sends++;
+        return receipt;
+      },
+    }),
+    /reconciliation/,
+  );
+  assert.equal(sends, 1);
+});

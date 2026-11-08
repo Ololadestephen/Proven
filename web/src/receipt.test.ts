@@ -358,3 +358,42 @@ test("job id zero and null legacy IDs keep the correct exact-work filename witho
   buildReceipt(frozenBid, frozenJob, original, "mainnet", madeAt);
   assert.equal(JSON.stringify({ bid: frozenBid, job: frozenJob }), before);
 });
+
+test("receipt attributes the current verdict and worker before any earlier attempt", async () => {
+  const job = {
+    ...(await paidJob()),
+    worker: "current-worker.testnet",
+    verdict_request_id: "12000",
+    history: [
+      {
+        worker: "earlier-worker.testnet",
+        outcome: "Failed",
+        failed_rule: "old-rule",
+        verdict_request_id: "11999",
+      },
+    ],
+  };
+  const receipt = buildReceipt(bid, job, original, "testnet", madeAt);
+  const metadata = receipt.split("## Delivered work")[0]!;
+  assert.match(metadata, /Worker: ` current-worker\.testnet `/);
+  assert.match(
+    metadata,
+    /Verdict attestation: https:\/\/testnet-api\.outlayer\.ai\/attestations\/by-request\/12000/,
+  );
+  assert.ok(!metadata.includes("/by-request/11999"));
+  assert.ok(!metadata.includes("earlier-worker.testnet"));
+  assert.match(metadata, /Result: Paid/);
+  assert.match(
+    metadata,
+    /Last completed attempt: Failed with rule ` old-rule `/,
+  );
+});
+
+test("visually similar Unicode or newline changes do not satisfy the collected-work commitment", async () => {
+  const exact = "caf\u00e9\r\n";
+  const hash = await sha256(exact);
+  assert.equal(await matchesDelivery(exact, hash), true);
+  assert.equal(await matchesDelivery("cafe\u0301\r\n", hash), false);
+  assert.equal(await matchesDelivery("caf\u00e9\n", hash), false);
+  assert.equal(await matchesDelivery("", await sha256("")), true);
+});

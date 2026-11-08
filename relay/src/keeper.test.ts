@@ -123,3 +123,96 @@ test("storage goes back only from an ended bid with its fees settled, once", () 
   // A bid from before this version records no storage payment.
   assert.equal(storageDue({ state: "Done", claim: null, fees: [] }), false);
 });
+
+test("a failed refund transfer is retried without delivery metadata, while in-flight transfers are left alone", () => {
+  assert.deepEqual(
+    nextNudge({ state: "RefundDue", delivered_at: null }, NOW, held),
+    { contract: "escrow", method: "refund" },
+  );
+  for (const state of [
+    "Releasing",
+    "Refunding",
+    "Expiring",
+    "Challenging",
+    "Verifying",
+    "Refunded",
+  ])
+    assert.equal(
+      nextNudge(
+        { state, compute_budget: "1000000000000000000000000" },
+        NOW,
+        held,
+      ),
+      null,
+      state,
+    );
+});
+
+test("missing private texts cannot prevent expiry or authorize verification of unpaid work", () => {
+  const absent = { check: false, deliverable: false };
+  assert.deepEqual(
+    nextNudge(
+      { state: "Funded", deadline: (NOW - 1n).toString() },
+      NOW,
+      absent,
+    ),
+    { contract: "escrow", method: "expire" },
+  );
+  assert.deepEqual(
+    nextNudge(
+      {
+        state: "Delivered",
+        delivered_at: (NOW - 2_000_000_000n).toString(),
+        verdict_window_secs: 1,
+      },
+      NOW,
+      absent,
+    ),
+    { contract: "escrow", method: "expire" },
+  );
+  assert.equal(nextNudge({ state: "Funded" }, NOW, held), null);
+  assert.equal(nextNudge({ state: "Released" }, NOW, held), null);
+});
+
+test("board sync follows unsettled attempts and final refunds without repeating settled bookkeeping", () => {
+  const open = { state: "Open", claim: null, fees: ["ReturnedToBuyer"] };
+  assert.equal(boardBehind(open, { state: "CheckRejected" }), true);
+  assert.equal(boardBehind(open, { state: "Refunded" }), true);
+  assert.equal(
+    boardBehind(open, {
+      state: "Open",
+      history: [
+        { worker: "first", outcome: "Failed" },
+        { worker: "second", outcome: "Expired" },
+      ],
+    }),
+    true,
+  );
+  assert.equal(
+    boardBehind(open, {
+      state: "Open",
+      history: [{ worker: "first", outcome: "Failed" }],
+    }),
+    false,
+  );
+  const ended = { state: "Closed", claim: null, fees: ["Held"] };
+  assert.equal(boardBehind(ended, { state: "Refunded" }), true);
+  assert.equal(boardBehind(ended, { state: "Refunding" }), false);
+  assert.equal(
+    boardBehind({ ...ended, fees: ["ReturnedToBuyer"] }, { state: "Refunded" }),
+    false,
+  );
+});
+
+test("refundable storage never skips an unsettled or unknown fee state", () => {
+  for (const state of ["Done", "Closed", "Cancelled"]) {
+    const ended = { state, claim: null, storage_paid: "1", finished: false };
+    assert.equal(storageDue({ ...ended, fees: [] }), true, state);
+    for (const fee of ["Held", "Paying", "Unknown"])
+      assert.equal(
+        storageDue({ ...ended, fees: ["ReturnedToBuyer", fee] }),
+        false,
+        `${state}:${fee}`,
+      );
+  }
+});

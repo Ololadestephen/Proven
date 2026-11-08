@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { performJobAction } from "../ui/job-actions.ts";
+import { performJobAction, resendDelivery } from "../ui/job-actions.ts";
 import { sha256 } from "../ui/market-client.ts";
 import type { MarketBid } from "../ui/market-steps.ts";
 import {
@@ -338,4 +338,100 @@ test("a missing wallet fails before any transaction", async (t) => {
     /Connect a wallet/,
   );
   assert.deepEqual([f.calls, f.requests, f.signatures], [[], [], []]);
+});
+
+test("an unknown delivery transaction outcome never hands private work to the relay", async (t) => {
+  const f = fixture(t);
+  t.mock.method(f.context.wallet, "call", async () => {
+    throw new Error("Submission outcome unknown; reconcile before retrying");
+  });
+  await assert.rejects(
+    performJobAction(
+      { id: "deliver", label: "Deliver", jobId: JOB_ID },
+      f.context,
+    ),
+    /outcome unknown/,
+  );
+  assert.deepEqual(f.requests, []);
+  assert.deepEqual(f.signatures, []);
+});
+
+test("a failed private handoff preserves exact work and does not repeat the recorded transaction", async (t) => {
+  const f = fixture(t);
+  const stored = new Map<string, string>();
+  const previousStorage = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "localStorage",
+  );
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { setItem: (key: string, value: string) => stored.set(key, value) },
+  });
+  t.after(() => {
+    if (previousStorage)
+      Object.defineProperty(globalThis, "localStorage", previousStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  });
+  f.failRelay();
+  await assert.rejects(
+    performJobAction(
+      { id: "deliver", label: "Deliver", jobId: JOB_ID },
+      f.context,
+    ),
+    /recorded on the chain.*did not reach the relay/,
+  );
+  assert.equal(
+    stored.get(`proven-private-${await sha256(DELIVERY)}`),
+    DELIVERY,
+  );
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0]!.method, "deliver");
+  assert.equal(f.signatures.length, 1);
+  assert.deepEqual(f.order, ["chain", "relay"]);
+});
+
+test("resending work checks the original fingerprint before signing and never repeats delivery", async (t) => {
+  const f = fixture(t);
+  const exact = ' {"result":42}\r\n';
+  const hash = await sha256(exact);
+  await assert.rejects(resendDelivery(null, JOB_ID, exact, hash), /Connect/);
+  await assert.rejects(
+    resendDelivery(f.context.wallet, JOB_ID, DELIVERY, hash),
+    /not the work recorded/,
+  );
+  assert.deepEqual([f.calls, f.requests, f.signatures], [[], [], []]);
+  await resendDelivery(f.context.wallet, JOB_ID, exact, hash);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.requests[0]!.body.deliverable, exact);
+  assertAuth(f, "deliver", JOB_ID, hash);
+});
+
+test("a collection signature refusal returns no work and makes no relay request", async (t) => {
+  const f = fixture(t);
+  t.mock.method(f.context.wallet, "signForRelay", async () => {
+    throw new Error("Wallet signature refused");
+  });
+  await assert.rejects(
+    performJobAction(
+      { id: "collect", label: "Collect", jobId: JOB_ID },
+      f.context,
+    ),
+    /signature refused/,
+  );
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.requests, []);
+});
+
+test("an unavailable collection relay cannot return a cached or invented delivery", async (t) => {
+  const f = fixture(t);
+  f.failRelay();
+  await assert.rejects(
+    performJobAction(
+      { id: "collect", label: "Collect", jobId: JOB_ID },
+      f.context,
+    ),
+    /Relay unavailable/,
+  );
+  assert.deepEqual(f.calls, []);
+  assert.equal(f.signatures.length, 1);
 });
