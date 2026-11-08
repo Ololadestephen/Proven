@@ -1,8 +1,10 @@
 import { canPost, COIN, MAX_JOB, NETWORK } from "./network.ts";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { requestReview, sendCheck } from "./job-actions.ts";
-import type { Market, Wallet } from "./market-types.ts";
+import type { Market, Wallet, WalletCallResult } from "./market-types.ts";
 import { api, remember, sha256 } from "./market-client.ts";
+
+import { confirmedPostedBid, postedBidId } from "./posting.ts";
 
 const NEAR = 10n ** 24n;
 const TGAS = 10n ** 12n;
@@ -184,20 +186,27 @@ function Choices({
  * and starts the review straight away; neither needs a signature. */
 function PostSuccess({
   market,
-  checkHash,
+  posted,
   title,
   check,
   reference,
   onAnother,
 }: {
   market: Market;
-  checkHash: string;
+  posted: {
+    receipt: WalletCallResult | void;
+    buyer: string;
+    check_hash: string;
+    reference_hash: string;
+    verifier_hash: string;
+  };
   title: string;
   check: string;
   reference: string;
   onAnother: () => void;
 }) {
-  const bid = market.bids.find((item) => item.check_hash === checkHash);
+  const bid = confirmedPostedBid(market.bids, posted.receipt, posted);
+  const exactId = postedBidId(posted.receipt?.posted_bid_id);
   const jobId = bid?.job_id ?? null;
   const [sent, setSent] = useState<"" | "sending" | "done" | string>("");
   const [reviewed, setReviewed] = useState<"" | "asking" | "done" | string>("");
@@ -260,8 +269,12 @@ function PostSuccess({
         </>
       ) : (
         <p className="market-note">
-          Your wallet accepted it. This usually takes a few seconds, and there
-          is nothing more to press.
+          {exactId === null
+            ? "The posting result needs reconciliation. Check the transaction in wallet history before doing anything else. Do not post again."
+            : `Waiting for confirmed bid ${exactId} to appear on the board. Do not post again.`}
+          {posted.receipt?.transaction_hash
+            ? ` Transaction: ${posted.receipt.transaction_hash}`
+            : ""}
         </p>
       )}
     </section>
@@ -295,7 +308,13 @@ export function PostJob({
   const [error, setError] = useState("");
   const [preparing, setPreparing] = useState(false);
   const [limited, setLimited] = useState(false);
-  const [posted, setPosted] = useState<string | null>(null);
+  const [posted, setPosted] = useState<{
+    receipt: WalletCallResult | void;
+    buyer: string;
+    check_hash: string;
+    reference_hash: string;
+    verifier_hash: string;
+  } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const samplePending = useRef(false);
   const locked = busy || preparing;
@@ -396,7 +415,7 @@ export function PostJob({
         throw new Error("The Market is paused. No bid was posted.");
       remember(prepared.check_hash, draft.check);
       remember(prepared.reference_hash, draft.reference);
-      await wallet.call({
+      const receipt = await wallet.call({
         receiver: market.board,
         method: "post_bid",
         args: {
@@ -415,7 +434,13 @@ export function PostJob({
         deposit: cost!.total,
         gas: 150n * TGAS,
       });
-      setPosted(prepared.check_hash);
+      setPosted({
+        receipt,
+        buyer: wallet.accountId,
+        check_hash: prepared.check_hash,
+        reference_hash: prepared.reference_hash,
+        verifier_hash: market.verifier_hash,
+      });
     });
   };
 
@@ -437,7 +462,7 @@ export function PostJob({
     return (
       <PostSuccess
         market={market}
-        checkHash={posted}
+        posted={posted}
         title={draft.description.split("\n")[0] ?? ""}
         check={draft.check}
         reference={draft.reference}

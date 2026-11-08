@@ -207,7 +207,6 @@ export function nextStep(
           }
         : wait("Passed. The payment is on its way to the worker");
     case "Failed":
-    case "RefundDue":
       return stalled(job, now)
         ? {
             id: "settle",
@@ -216,10 +215,19 @@ export function nextStep(
             method: "refund",
           }
         : wait("Did not pass. Closing this attempt");
+    case "RefundDue":
+      return viewer
+        ? {
+            id: "settle",
+            label: "Retry the buyer’s refund",
+            jobId,
+            method: "refund",
+          }
+        : wait("The refund needs a retry. Connect a wallet to continue");
     case "Refunded":
-      return stalled(job, now)
-        ? { id: "sync", label: "Nothing happened: finish the record now" }
-        : wait("Refunded to the buyer. Finishing the record");
+      return viewer
+        ? { id: "sync", label: "Finish the refund record" }
+        : wait("Refunded to the buyer. Connect a wallet to finish the record");
     default:
       return wait("A payout is in progress");
   }

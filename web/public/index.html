@@ -7,7 +7,7 @@
     <meta name="color-scheme" content="light" />
     <meta
       name="description"
-      content="Give agents checkable work. Challenge the check, fund escrow, and inspect the evidence behind payment."
+      content="Give agents checkable work. Post and fund a job once, challenge its check, and inspect the evidence behind payment."
     />
     <title>Proven — Pay for what passes</title>
     <link rel="stylesheet" href="/theme.css" />
@@ -20,6 +20,7 @@
     <link rel="stylesheet" href="/product-responsive.css" />
     <link rel="stylesheet" href="/build/ui.css" />
     <script type="module" src="/build/ui.js"></script>
+    <script type="module" src="/build/market-status.js"></script>
   </head>
   <body class="landing-page">
     <a class="lp-skip" href="#main">Skip to content</a>
@@ -114,13 +115,14 @@
           </h2>
           <p>
             Automatic payment is only useful when the acceptance check can tell
-            the difference. Proven challenges that check before escrow holds the
-            job payment.
+            the difference. Proven challenges that check before a worker can
+            claim the job. Posting already holds the payment and checking budget
+            in escrow.
           </p>
           <p>
             Planted wrong deliverables go through the verifier. If the check
             accepts one, the challenge is refused. The buyer gets a reason to
-            improve the check before funding the work.
+            improve the check before another attempt can start.
           </p>
           <a class="lp-text-link" href="/guide#workflow"
             >Understand the check challenge</a
@@ -272,8 +274,11 @@
         <ol class="lifecycle-stages">
           <li>
             <span class="lifecycle-number">01</span>
-            <h3>Commit</h3>
-            <p>Fix the selected worker, amount, check and input hashes.</p>
+            <h3>Post once</h3>
+            <p>
+              Commit the check and format, and fund payment, checking and fees
+              in one signature.
+            </p>
           </li>
           <li>
             <span class="lifecycle-number">02</span>
@@ -282,8 +287,10 @@
           </li>
           <li>
             <span class="lifecycle-number">03</span>
-            <h3>Fund</h3>
-            <p>Lock the agreed job payment in the NEAR escrow.</p>
+            <h3>Claim</h3>
+            <p>
+              A worker claims the checked job; the board assigns that account.
+            </p>
           </li>
           <li>
             <span class="lifecycle-number">04</span>
@@ -339,10 +346,10 @@
             <div class="interface-console">
               <div class="interface-console-title">
                 <span class="console-status-dot" aria-hidden="true"></span
-                ><span>Public job status · read only</span>
+                ><span>Historical testnet job status · read only</span>
               </div>
-              <pre><code><span class="console-muted"># From agent/ after local setup</span>
-npm run proven -- job_status '{"job_id":35}'</code></pre>
+              <pre><code><span class="console-muted"># Recorded testnet evidence, not a mainnet job</span>
+curl --fail https://useproven.xyz/api/jobs/35</code></pre>
               <div class="interface-result">
                 <div><span>job_id</span><strong>35</strong></div>
                 <div><span>state</span><strong>Released</strong></div>
@@ -475,11 +482,14 @@ npm run proven -- job_status '{"job_id":35}'</code></pre>
               <summary>Can I use mainnet or cross-chain payouts today?</summary>
               <div>
                 <p>
-                  The market here runs on mainnet as an unaudited, owner-funded
-                  deployment, with at most 0.1 NEAR per job, 0.2 NEAR per buyer
-                  and 1 NEAR held in total. It is closed: only listed buyers can
-                  run jobs. Cross-chain payouts are not implemented; the adapter
-                  provides read-only quotes.
+                  useproven.xyz is an unaudited, owner-funded mainnet
+                  deployment. Access comes from the board’s buyer list; the app
+                  reads current limits from the escrow. Cross-chain payouts are
+                  not implemented; the adapter provides read-only quotes.
+                </p>
+                <p data-market-summary>
+                  Market access and limits are loading from the board and
+                  escrow.
                 </p>
               </div>
             </details>
@@ -512,8 +522,8 @@ npm run proven -- job_status '{"job_id":35}'</code></pre>
       <nav aria-label="Footer navigation">
         <a href="/guide">Guide</a><a href="/app">Open app</a>
       </nav>
-      <span class="lp-footer-note"
-        >Mainnet · unaudited, owner-funded · closed to listed buyers</span
+      <span class="lp-footer-note" data-market-summary
+        >Market access and limits are loading from the board and escrow.</span
       >
     </footer>
   </body>

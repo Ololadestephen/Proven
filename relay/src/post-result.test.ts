@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { postedBidFromOutcome } from "./post-result.ts";
+import { postedBidFromOutcome } from "../../shared/post-result.ts";
 const board = "proven-board.near",
   buyer = "buyer.near";
 function outcome(id: unknown = 150) {

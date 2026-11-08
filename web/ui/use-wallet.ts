@@ -1,7 +1,7 @@
 import { NearConnector, type EventMap } from "@hot-labs/near-connect";
 import { useEffect, useState } from "react";
 import { api, randomNonce, b64, RELAY_RECIPIENT } from "./market-client.ts";
-import type { Wallet, Call } from "./market-types.ts";
+import type { Wallet, Call, WalletCallResult } from "./market-types.ts";
 import { adaptWallet, connectorOptions } from "./wallet-adapter.ts";
 let connector: NearConnector | undefined;
 function getConnector() {
@@ -76,7 +76,7 @@ export function useWallet() {
       label: `Dev signer: ${role}`,
       signOut: async () => setWallet(null),
       call: async (call: Call) => {
-        await api("/api/market/dev/call", {
+        return await api<WalletCallResult>("/api/market/dev/call", {
           as: role,
           ...call,
           deposit: call.deposit.toString(),

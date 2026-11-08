@@ -20,6 +20,7 @@
 
     <script src="/build/ui.js" type="module"></script>
     <script src="/app.js" defer></script>
+    <script type="module" src="/build/market-status.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#workspace-content">Skip to job evidence</a>
@@ -50,7 +51,9 @@
       <div class="app-area">
         <main class="shell main-content" id="workspace-content">
           <div class="workspace-toolbar">
-            <span class="workspace-network">Proven workspace</span
+            <span class="workspace-network" data-market-summary
+              >Market access and limits are loading from the board and
+              escrow.</span
             ><a class="button button-secondary" href="/app">Back to overview</a>
           </div>
           <header class="workspace-heading">
@@ -236,7 +239,9 @@
             >.
           </p>
         </main>
-        <footer class="workspace-footer">Proven</footer>
+        <footer class="workspace-footer" data-market-summary>
+          Market access and limits are loading from the board and escrow.
+        </footer>
       </div>
     </div>
   </body>

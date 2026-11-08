@@ -19,6 +19,7 @@
     <link rel="stylesheet" href="/workspace.css" />
 
     <script src="/build/ui.js" type="module"></script>
+    <script type="module" src="/build/market-status.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#workspace-content"
@@ -52,7 +53,9 @@
       <div class="app-area">
         <main class="shell main-content" id="workspace-content">
           <div class="workspace-toolbar">
-            <span class="workspace-network">Proven workspace</span
+            <span class="workspace-network" data-market-summary
+              >Market access and limits are loading from the board and
+              escrow.</span
             ><a class="button button-secondary" href="/app">Back to overview</a>
           </div>
           <header class="workspace-heading">
@@ -121,9 +124,14 @@
             <section class="workspace-card">
               <h2>The risks</h2>
               <p>
-                The contracts are unaudited, and you can lose what you put in up
-                to the caps: 0.1 NEAR per job, 0.2 per buyer and 1 held in
-                total.
+                useproven.xyz is an unaudited, owner-funded mainnet deployment.
+                The board enforces which buyers may post; current payment limits
+                are read from the escrow. You can lose the funds you commit
+                within those limits. The testnet copy is preparation only and is
+                not linked from this app.
+              </p>
+              <p data-market-summary>
+                Market access and limits are loading from the board and escrow.
               </p>
               <p>
                 <strong>Our relay's operator can read your work</strong> and
@@ -153,7 +161,9 @@
             </section>
           </div>
         </main>
-        <footer class="workspace-footer">Proven</footer>
+        <footer class="workspace-footer" data-market-summary>
+          Market access and limits are loading from the board and escrow.
+        </footer>
       </div>
     </div>
   </body>

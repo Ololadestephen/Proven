@@ -353,7 +353,7 @@ test("an in-flight run needs both expired verdict time and a strictly stale run 
 
 test("the relay gets the full stalled interval and the UI never releases a failed attempt", () => {
   const boundary = (NS - 20n * 60n * 1_000_000_000n).toString();
-  for (const state of ["Passed", "Failed", "RefundDue"]) {
+  for (const state of ["Passed", "Failed"]) {
     const current = bid({
       state: "Claimed",
       job: job(state, { delivered_at: boundary }),
@@ -404,4 +404,40 @@ test("assignment and terminal bookkeeping cannot offer a second claim or payout"
     ),
     null,
   );
+});
+
+// Refund callbacks clear delivered_at: recovery must not depend on that earlier timestamp.
+test("refund retry and record sync remain available after delivery metadata is cleared", () => {
+  const refund = bid({
+    state: "Claimed",
+    job: job("RefundDue", { delivered_at: null }),
+  });
+  const step = nextStep(refund, "stranger", true, NOW);
+  assert.equal(step?.id, "settle");
+  assert.equal((step as { method?: string }).method, "refund");
+  assert.equal(
+    nextStep(
+      bid({ state: "Claimed", job: job("Refunded", { delivered_at: null }) }),
+      "b",
+      true,
+      NOW,
+    )?.id,
+    "sync",
+  );
+  assert.notEqual(nextStep(refund, "stranger", true, NOW)?.id, "collect");
+});
+
+test("refund recovery waits for a connected wallet and cannot offer a second payment", () => {
+  for (const state of ["RefundDue", "Refunded"]) {
+    const current = bid({
+      state: "Claimed",
+      job: job(state, { delivered_at: null }),
+    });
+    assert.equal(nextStep(current, null, true, NOW)?.id, "wait");
+    assert.notEqual(nextStep(current, "stranger", true, NOW)?.id, "claim");
+    assert.notEqual(
+      (nextStep(current, "stranger", true, NOW) as { method?: string }).method,
+      "release",
+    );
+  }
 });

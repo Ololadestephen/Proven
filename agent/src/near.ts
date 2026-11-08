@@ -1,4 +1,4 @@
-import { postedBidFromOutcome } from "../../relay/src/post-result.ts";
+import { postedBidFromOutcome } from "../../shared/post-result.ts";
 import { chainProvider } from "./rpc.ts";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import type { Config } from "./config.ts";

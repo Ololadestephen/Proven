@@ -6,7 +6,7 @@ import {
   PENDING_KEY,
   type PendingAction,
 } from "./action-guard.ts";
-import type { Market, Call } from "./market-types.ts";
+import type { Market, Call, WalletCallResult } from "./market-types.ts";
 type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 interface Environment {
   locks: LockManager;
@@ -18,7 +18,7 @@ export async function guardedCall(
     marker: PendingAction;
     call: Call;
     readMarket: () => Promise<Market>;
-    send: (call: Call) => Promise<void>;
+    send: (call: Call) => Promise<WalletCallResult | void>;
     onFresh: (market: Market) => void;
   },
 ) {
@@ -27,7 +27,7 @@ export async function guardedCall(
     throw new Error(
       "This browser cannot safely guard signing across tabs. Use a current browser.",
     );
-  await locks.request(PENDING_KEY, { ifAvailable: true }, async (lock) => {
+  return locks.request(PENDING_KEY, { ifAvailable: true }, async (lock) => {
     if (!lock)
       throw new Error("Another tab is signing. Finish that action first.");
     if (storage.getItem(PENDING_KEY))
@@ -45,7 +45,7 @@ export async function guardedCall(
     storage.setItem(PENDING_KEY, JSON.stringify(journal));
     onPending(journal);
     try {
-      await env.send(call);
+      return await env.send(call);
     } catch (error) {
       if (definitelyNotApplied(error)) {
         storage.removeItem(PENDING_KEY);

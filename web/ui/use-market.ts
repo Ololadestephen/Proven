@@ -54,7 +54,7 @@ export function useMarket(bidId?: number) {
               const marker = intentRef.current;
               if (!marker)
                 throw new Error("Start this action from its job workspace.");
-              await guardedCall({
+              return await guardedCall({
                 locks: navigator.locks,
                 storage: localStorage,
                 marker,

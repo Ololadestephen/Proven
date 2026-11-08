@@ -38,6 +38,16 @@ await build({
   define: { "process.env.NODE_ENV": '"production"' },
 });
 
+await build({
+  absWorkingDir: fileURLToPath(new URL("../", import.meta.url)),
+  entryPoints: ["ui/market-status.ts"],
+  bundle: true,
+  outdir: "dist",
+  format: "esm",
+  target: "es2022",
+  minify: true,
+});
+
 const licenses = [
   "react-bits-LICENSE.md",
   "near-connect-LICENSE.txt",

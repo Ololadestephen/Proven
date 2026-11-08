@@ -12,6 +12,7 @@ import { demoRoute } from "./demo-routes.ts";
 import { loadJob } from "./evidence.ts";
 import {
   hostedRoute,
+  NETWORK,
   marketSettings,
   revealRoute,
   createDevWallet,
@@ -22,6 +23,7 @@ import {
   sample,
 } from "./market.ts";
 import { ReadError } from "./model.ts";
+import { startupMessage } from "../ui/network-status.ts";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 const FILES: Record<string, [string, string]> = {
@@ -67,6 +69,10 @@ const FILES: Record<string, [string, string]> = {
     "landing-responsive.css",
     "text/css; charset=utf-8",
   ],
+  "/build/market-status.js": [
+    "../dist/market-status.js",
+    "text/javascript; charset=utf-8",
+  ],
   "/build/ui.js": ["../dist/ui.js", "text/javascript; charset=utf-8"],
   "/build/ui.css": ["../dist/ui.css", "text/css; charset=utf-8"],
   "/third-party-notices.txt": [
@@ -84,7 +90,7 @@ const FILES: Record<string, [string, string]> = {
 const CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
-/** The market page talks to the wallets' own endpoints and to testnet RPC. No other page does. */
+/** The market page talks to the wallets' own endpoints and the configured network RPC. */
 const MARKET_CSP =
   "default-src 'none'; script-src 'self' 'nonce-__WALLET_NONCE__'; frame-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:; img-src 'self' data: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
@@ -297,7 +303,9 @@ export function createApp(
         error:
           error instanceof ReadError
             ? error.message
-            : "The public snapshot could not be read. No transaction was sent.",
+            : req.method === "GET"
+              ? "The public snapshot could not be read."
+              : "The request could not finish. A transaction may have been sent. Reconcile wallet history and the chain before retrying.",
       });
     }
   });
@@ -338,6 +346,10 @@ if (
   let devWallet: ReturnType<typeof createDevWallet> | undefined;
   if (args.includes("--dev-wallet")) {
     if (origin) throw new Error("The dev signer is for this machine only.");
+    if (NETWORK !== "testnet")
+      throw new Error(
+        "The dev signer runs only on the testnet preparation server.",
+      );
     const root = fileURLToPath(new URL("../../", import.meta.url));
     (globalThis as { __provenEnv?: string }).__provenEnv = await readFile(
       `${root}.env`,
@@ -365,8 +377,6 @@ if (
   if (!Number.isInteger(port) || port < 1024 || port > 65535)
     throw new Error("PROVEN_PORT is not a usable port.");
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () =>
-    console.log(
-      `Proven job evidence: http://127.0.0.1:${port} (live demo requires a separate operator allowance)`,
-    ),
+    console.log(startupMessage(port, NETWORK)),
   );
 }

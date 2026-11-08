@@ -37,7 +37,7 @@ export interface Call {
 export interface Wallet {
   accountId: string;
   label: string;
-  call(call: Call): Promise<void>;
+  call(call: Call): Promise<WalletCallResult | void>;
   /** Sends NEAR, and returns the transaction's hash. */
   transfer(receiver: string, yocto: bigint): Promise<string>;
   signForRelay(message: string): Promise<{
@@ -46,6 +46,12 @@ export interface Wallet {
     nonce_base64: string;
   }>;
   signOut(): Promise<void>;
+}
+
+export interface WalletCallResult {
+  transaction_hash: string;
+  result?: unknown;
+  posted_bid_id?: number;
 }
 
 export type Run = (label: string, task: () => Promise<void>) => Promise<void>;

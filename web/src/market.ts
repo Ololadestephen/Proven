@@ -20,7 +20,7 @@ import {
   type RelayAuth,
 } from "../../relay/src/buyer-auth.ts";
 import { FallbackRpcProvider } from "../../relay/src/rpc.ts";
-import { postedBidFromOutcome } from "../../relay/src/post-result.ts";
+import { postedBidFromOutcome } from "../../shared/post-result.ts";
 import {
   buyerAllowed,
   configuredBoard,

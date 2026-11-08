@@ -6,6 +6,8 @@ import { DefinitiveWalletFailure } from "./action-guard.ts";
 import type { Wallet } from "./market-types.ts";
 import { IS_MAINNET, NETWORK } from "./network.ts";
 import { b64, randomNonce, RELAY_RECIPIENT } from "./market-client.ts";
+import { decodeCallResult } from "./posting.ts";
+import { postedBidFromOutcome } from "../../shared/post-result.ts";
 
 export function connectorOptions(cspNonce: string): NearConnectorOptions {
   return {
@@ -78,6 +80,17 @@ export function adaptWallet(
         throw new Error(
           "The wallet did not confirm a successful transaction. Check the chain before retrying.",
         );
+      return {
+        transaction_hash: outcome.transaction?.hash ?? "",
+        result: decodeCallResult(outcome.status.SuccessValue),
+        ...(call.method === "post_bid"
+          ? {
+              posted_bid_id:
+                postedBidFromOutcome(outcome, call.receiver, accountId) ??
+                undefined,
+            }
+          : {}),
+      };
     },
     async transfer(receiver, yocto) {
       await checkAccount();

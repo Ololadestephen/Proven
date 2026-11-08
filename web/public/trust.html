@@ -19,6 +19,7 @@
     <link rel="stylesheet" href="/workspace.css" />
 
     <script src="/build/ui.js" type="module"></script>
+    <script type="module" src="/build/market-status.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#workspace-content"
@@ -52,7 +53,9 @@
       <div class="app-area">
         <main class="shell main-content" id="workspace-content">
           <div class="workspace-toolbar">
-            <span class="workspace-network">Proven workspace</span
+            <span class="workspace-network" data-market-summary
+              >Market access and limits are loading from the board and
+              escrow.</span
             ><a class="button button-secondary" href="/app">Back to overview</a>
           </div>
           <header class="workspace-heading">
@@ -125,8 +128,9 @@
                 The wallet picker uses NEAR Connect. Its SDK, runtime wallet
                 manifest, and fetched or cached wallet executor code are trusted
                 dependencies. The app requests account access without adding an
-                access key, and explicitly names testnet and your selected
-                account for signing. Check every request in your wallet.
+                access key, and explicitly names the network shown in the app
+                and your selected account for signing. Check every request in
+                your wallet.
               </p>
               <p>
                 Browser locks and saved pending actions guard repeat submissions
@@ -140,10 +144,11 @@
                 A binding match is not a signature check
               </h2>
               <p>
-                The evidence viewer compares public job commitments with the
-                selected attestation’s fields. It relies on the public testnet
-                RPC and OutLayer API; it does not verify NEAR light-client
-                proofs, Intel signatures or worker-measurement approval.
+                The historical testnet evidence reader compares public job
+                commitments with the selected attestation’s fields. It relies on
+                the public testnet RPC and OutLayer API; it does not verify NEAR
+                light-client proofs, Intel signatures or worker-measurement
+                approval.
               </p>
               <p>
                 Separate command-line checks of the recorded verdict
@@ -207,15 +212,17 @@
               </p>
             </section>
             <section class="workspace-card" aria-labelledby="network-heading">
-              <h2 id="network-heading">Mainnet is unaudited and closed</h2>
+              <h2 id="network-heading">Network access and enforced limits</h2>
               <p>
-                The market at useproven.xyz runs on NEAR mainnet, using
-                proven-escrow.near and proven-board.near. It is an unaudited,
-                owner-funded deployment, with at most 0.1 NEAR per job, 0.2 NEAR
-                per buyer and 1 NEAR held in total. Only listed buyers can run
-                jobs, and anyone can still post directly to the board contract.
-                The deploy key is a single key, so its holder could change the
-                contracts.
+                useproven.xyz is an unaudited, owner-funded mainnet deployment,
+                using proven-escrow.near and proven-board.near. The board itself
+                enforces its buyer list when a bid is posted. The owner can open
+                the market or change listed buyers; current access is read from
+                the board. The holder of the deploy key can change contract
+                code.
+              </p>
+              <p data-market-summary>
+                Market access and limits are loading from the board and escrow.
               </p>
               <p>
                 Cross-chain settlement currently offers read-only quote and
@@ -225,7 +232,9 @@
             </section>
           </div>
         </main>
-        <footer class="workspace-footer">Proven</footer>
+        <footer class="workspace-footer" data-market-summary>
+          Market access and limits are loading from the board and escrow.
+        </footer>
       </div>
     </div>
   </body>

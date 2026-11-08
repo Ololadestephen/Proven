@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="/guide.css" />
     <link rel="stylesheet" href="/landing-responsive.css" />
     <script type="module" src="/build/ui.js"></script>
+    <script type="module" src="/build/market-status.js"></script>
   </head>
   <body class="guide-page">
     <a class="lp-skip" href="#main">Skip to content</a>
@@ -35,7 +36,7 @@
     <main id="main" class="guide-main lp-shell">
       <div class="guide-heading">
         <p class="lp-kicker">THE PROVEN GUIDE</p>
-        <h1>The check comes<br />before the payment.</h1>
+        <h1>Post once.<br />Inspect the result.</h1>
         <p>
           Proven handles work with executable acceptance conditions. This guide
           explains the path from those conditions to a recorded delivery result,
@@ -46,34 +47,38 @@
         <h2 id="workflow">How a job moves</h2>
         <ol>
           <li>
-            <strong>Commit the job.</strong> Fix the worker, payment, acceptance
-            check, planted fakes and verifier build before funding. Hashes bind
-            the job to these inputs.
+            <strong>Post and fund once.</strong> The buyer commits the public
+            format, check and reference hashes, payment, checking budget and
+            attempt fees in one transaction. The board creates the escrow job.
           </li>
           <li>
-            <strong>Challenge the check.</strong> Run it against the planted
-            wrong deliverables. A check that accepts one of those fakes is
-            refused. Catching the planted fakes does not prove that every
-            possible wrong delivery will be caught.
+            <strong>Review and challenge.</strong> A bid review can block entry
+            but cannot pay anyone. The relay sends the committed check and
+            reference for its planted-fake challenge. A rejected check leaves no
+            worker authorised to claim the job.
           </li>
           <li>
-            <strong>Fund escrow.</strong> The buyer locks the agreed payment in
-            the NEAR contract after the challenge is accepted.
+            <strong>Claim.</strong> A worker claims an allowed, checked job. The
+            board fixes that worker in the escrow; the buyer does not sign
+            another funding or linking transaction.
           </li>
           <li>
-            <strong>Deliver the work.</strong> The worker commits the delivery
-            hash. Changed bytes do not match that commitment.
+            <strong>Deliver.</strong> The assigned worker records the delivery
+            hash and hands over exactly those bytes privately. Changed bytes do
+            not match.
           </li>
           <li>
-            <strong>Request verification.</strong> Anyone may trigger the
-            escrow’s OutLayer request with the required compute deposit. Only
-            the escrow’s private promise callback records its verdict.
+            <strong>Verify.</strong> The worker or relay can request execution
+            using the prepaid checking budget. Only escrow’s private promise
+            callback records a verdict; model output never decides payment.
           </li>
           <li>
-            <strong>Settle and inspect.</strong> A recorded pass permits
-            release; a recorded fail permits refund. Inspect the final contract
-            state and transfer receipt to establish that payment actually
-            happened.
+            <strong>Settle and return storage.</strong> A pass permits payment
+            to the worker. A failed or expired attempt can reopen the job within
+            its limits; closing returns the buyer’s remaining funds. The relay
+            syncs ended bids and asks both contracts to return unused storage.
+            The measured remainder stays as evidence. Inspect confirmed transfer
+            state rather than inferring a payout from a pending state.
           </li>
         </ol>
       </section>
@@ -104,9 +109,10 @@
             Changed texts are refused when they do not match the job’s hashes.
           </li>
           <li>
-            <strong>Custody and keystore services.</strong> The buyer uses a
-            restricted testnet custody policy; workers use scoped keys. These
-            restrictions do not make the service or host untrusted.
+            <strong>Custody and keystore services.</strong> A buyer or worker
+            may use a restricted custody wallet or scoped key. Its policy must
+            permit the actual one-signature board call. These restrictions do
+            not remove trust in the service or host.
           </li>
           <li>
             <strong>Contract upgrade keys.</strong> Whoever controls the escrow
@@ -114,8 +120,9 @@
           </li>
           <li>
             <strong>Public data providers.</strong> The viewer relies on the
-            configured NEAR testnet RPC and OutLayer API. It does not verify a
-            NEAR light-client proof.
+            configured network’s NEAR RPC and OutLayer API. The separate
+            historical evidence reader reads recorded testnet jobs. Neither
+            verifies a NEAR light-client proof.
           </li>
         </ul>
         <h3>What an attestation panel means</h3>
@@ -149,26 +156,18 @@
         </div>
       </section>
       <section class="guide-section" aria-labelledby="demo">
-        <h2 id="demo">The guarded live demo</h2>
+        <h2 id="demo">Historical scripted demo</h2>
         <p>
-          The live control is separate from job lookups. It starts disabled
-          unless the operator prepares one fixed run. That run uses the
-          operator’s testnet funds and the existing restricted buyer and scoped
-          workers; the visitor cannot choose payment amounts, recipients or
-          inputs.
+          The November 6 recorded demo used scripted workers on older testnet
+          contracts. Its earlier fresh command took 117.87 seconds. That timing
+          is evidence for that old flow, not a current one-signature benchmark
+          or a time guarantee.
         </p>
         <p>
-          A durable allowance is consumed before launch. Repeat clicks, another
-          server process or a restart cannot use it again. An uncertain result
-          requires operator reconciliation; there is no automatic retry or
-          browser reset.
+          The legacy launcher is retired. The testnet copy is preparation only;
+          no live demo control or testnet app link is offered here.
         </p>
-        <p>
-          One earlier fresh command completed in 117.87 seconds. That is a
-          measured run, not a guarantee of future network timing. The browser’s
-          elapsed display is a progress timer.
-        </p>
-        <a class="lp-text-link" href="/examples">Open the demo controls </a>
+        <a class="lp-text-link" href="/examples">Read the recorded examples</a>
       </section>
       <section class="guide-section" aria-labelledby="scope">
         <h2 id="scope">Where Proven stops</h2>
@@ -178,13 +177,16 @@
           correctness beyond the committed check.
         </p>
         <p>
-          The market at useproven.xyz runs on NEAR mainnet. It is an unaudited,
-          owner-funded deployment, with at most 0.1 NEAR per job, 0.2 NEAR per
-          buyer and 1 NEAR held in total, and it is closed: only listed buyers
-          can run jobs. The recorded examples on this page are scripted testnet
+          useproven.xyz is an unaudited, owner-funded mainnet deployment. The
+          board enforces its buyer list on posting. The app reads access from
+          that board and limits from the escrow instead of assuming a fixed cap.
+          The recorded examples on this page are historical scripted testnet
           jobs. Cross-chain payouts are not implemented. The relay operator can
           read private inputs; this page does not independently verify their
           handling.
+        </p>
+        <p data-market-summary>
+          Market access and limits are loading from the board and escrow.
         </p>
       </section>
     </main>
@@ -203,8 +205,8 @@
         <a href="/guide" aria-current="page">Guide</a
         ><a href="/app">Open app </a>
       </nav>
-      <span class="lp-footer-note"
-        >Mainnet · unaudited, owner-funded · closed to listed buyers</span
+      <span class="lp-footer-note" data-market-summary
+        >Market access and limits are loading from the board and escrow.</span
       >
     </footer>
   </body>

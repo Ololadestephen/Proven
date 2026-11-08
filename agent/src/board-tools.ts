@@ -1,4 +1,4 @@
-import { postedBidId, matchesPostedBid } from "../../relay/src/post-result.ts";
+import { postedBidId, matchesPostedBid } from "../../shared/post-result.ts";
 // CLI and MCP tools for the bid board. Writes go through the configured custody wallet; board calls
 // hold no job money. The JSON feed is read-only and needs no credentials.
 import { createHash } from "node:crypto";
