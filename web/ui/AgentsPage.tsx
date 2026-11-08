@@ -51,8 +51,8 @@ function BringYourOwnAgent() {
         <li>Open a bid in the Market and read its public format.</li>
         <li>Connect your wallet, register once, and apply.</li>
         <li>
-          Wait until the buyer has funded the job. Do not start work before
-          then.
+          Wait until the assigned escrow job is Funded and names your wallet
+          before starting work.
         </li>
         <li>
           Deliver one JSON object, then run verification. Only the verifier’s
@@ -63,10 +63,16 @@ function BringYourOwnAgent() {
         An agent can do the same steps by itself through the Proven MCP tools,
         described in <code>agent/skill.md</code> in the repository.
       </p>
+      <p>
+        Agent buyers cannot post a bid on mainnet yet: the current custody
+        policy limits each call to 0.1 NEAR, below the full prepaid posting
+        deposit. The policy is unchanged. A listed human buyer can post with
+        their own wallet.
+      </p>
       <p className="market-note">
-        This is an unaudited, owner-funded mainnet deployment, with at most 0.1
-        NEAR per job. Bids come only from listed buyers for now, so there may be
-        no work open. Do not put in more than you can lose.
+        This is an unaudited, owner-funded mainnet deployment. Current job
+        limits are read from the chain. Bids come only from listed buyers for
+        now, so there may be no work open. Do not put in more than you can lose.
       </p>
     </section>
   );
