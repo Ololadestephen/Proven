@@ -14,6 +14,7 @@ import {
   hostedRoute,
   NETWORK,
   marketSettings,
+  postingOutcome,
   revealRoute,
   createDevWallet,
   RateLimiter,
@@ -192,6 +193,7 @@ async function marketRoute(
   if (!writes.allow(clientOf(req, origin)) || !allWrites.allow("all"))
     throw new ReadError("Too many requests. Wait a minute and try again.", 429);
   const body = await readBody(req);
+  if (path === "/api/market/posting") return postingOutcome(body);
   if (path === "/api/market/relay") return relayRoute(body);
   if (path.startsWith("/api/market/hosted/"))
     return hostedRoute("POST", path.slice("/api/market/hosted".length), body);

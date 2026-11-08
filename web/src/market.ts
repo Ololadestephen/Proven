@@ -62,6 +62,37 @@ const view = <T>(
 ) =>
   provider.callFunction({ contractId, method, args }) as unknown as Promise<T>;
 
+/** A read only lookup on the server's configured network; the browser validates the board event. */
+export async function postingOutcome(
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const { buyer, hash } = body;
+  if (
+    typeof buyer !== "string" ||
+    buyer.length < 2 ||
+    buyer.length > 64 ||
+    !/^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/.test(buyer) ||
+    typeof hash !== "string" ||
+    !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(hash)
+  )
+    throw new ReadError(
+      "A valid buyer and transaction hash are required.",
+      400,
+    );
+  try {
+    return await provider.viewTransactionStatus({
+      txHash: hash,
+      accountId: buyer,
+      waitUntil: "FINAL",
+    });
+  } catch {
+    throw new ReadError(
+      "The posting outcome is not available yet. Check the board before retrying.",
+      502,
+    );
+  }
+}
+
 interface Job {
   buyer: string;
   /** Null while the job waits for a worker. */

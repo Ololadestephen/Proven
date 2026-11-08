@@ -18,7 +18,9 @@ export function matchesPostedBid(
 ): boolean {
   if (!value || typeof value !== "object") return false;
   const bid = value as Record<string, unknown>;
-  return Object.entries(expected).every(([key, entry]) => bid[key] === entry);
+  return (
+    ["buyer", "check_hash", "reference_hash", "verifier_hash"] as const
+  ).every((key) => bid[key] === expected[key]);
 }
 
 function record(value: unknown): value is Record<string, unknown> {

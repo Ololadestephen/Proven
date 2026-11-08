@@ -4,7 +4,12 @@ import { requestReview, sendCheck } from "./job-actions.ts";
 import type { Market, Wallet, WalletCallResult } from "./market-types.ts";
 import { api, remember, sha256 } from "./market-client.ts";
 
-import { confirmedPostedBid, postedBidId } from "./posting.ts";
+import {
+  resolvePostedBid,
+  postedBidId,
+  startPostingFollowup,
+} from "./posting.ts";
+import type { MarketBid } from "./market-steps.ts";
 
 const NEAR = 10n ** 24n;
 const TGAS = 10n ** 12n;
@@ -205,21 +210,52 @@ function PostSuccess({
   reference: string;
   onAnother: () => void;
 }) {
-  const bid = confirmedPostedBid(market.bids, posted.receipt, posted);
+  const [bid, setBid] = useState<MarketBid | null>(null);
+  const [resolving, setResolving] = useState(true);
+  const lookup = useRef<Promise<unknown> | null>(null);
+  useEffect(() => {
+    let live = true;
+    setResolving(true);
+    void resolvePostedBid({
+      bids: market.bids,
+      receipt: posted.receipt,
+      expected: posted,
+      board: market.board,
+      readOutcome: (hash, buyer) => {
+        lookup.current ??= api("/api/market/posting", { hash, buyer }).catch(
+          () => null,
+        );
+        return lookup.current;
+      },
+    }).then((found) => {
+      if (live) {
+        setBid(found);
+        setResolving(false);
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [market.bids, market.board, posted]);
   const exactId = postedBidId(posted.receipt?.posted_bid_id);
   const jobId = bid?.job_id ?? null;
   const [sent, setSent] = useState<"" | "sending" | "done" | string>("");
   const [reviewed, setReviewed] = useState<"" | "asking" | "done" | string>("");
   const started = useRef(false);
   useEffect(() => {
-    if (started.current || !bid || jobId === null) return;
-    started.current = true;
+    const followup = startPostingFollowup(
+      started,
+      bid,
+      (id) => sendCheck(id, check, reference),
+      requestReview,
+    );
+    if (!followup) return;
     setSent("sending");
-    void sendCheck(jobId, check, reference)
+    void followup.check
       .then(() => setSent("done"))
       .catch((error: Error) => setSent(error.message));
     setReviewed("asking");
-    void requestReview(bid.id)
+    void followup.review
       .then(() => setReviewed("done"))
       .catch((error: Error) => setReviewed(error.message));
   }, [bid, jobId, check, reference]);
@@ -269,9 +305,11 @@ function PostSuccess({
         </>
       ) : (
         <p className="market-note">
-          {exactId === null
-            ? "The posting result needs reconciliation. Check the transaction in wallet history before doing anything else. Do not post again."
-            : `Waiting for confirmed bid ${exactId} to appear on the board. Do not post again.`}
+          {resolving
+            ? "Finding your bid on the chain…"
+            : exactId === null
+              ? "The posting result needs reconciliation. Check the transaction in wallet history before doing anything else. Do not post again."
+              : `Waiting for confirmed bid ${exactId} to appear on the board. Do not post again.`}
           {posted.receipt?.transaction_hash
             ? ` Transaction: ${posted.receipt.transaction_hash}`
             : ""}

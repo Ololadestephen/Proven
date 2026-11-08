@@ -6,8 +6,7 @@ import { DefinitiveWalletFailure } from "./action-guard.ts";
 import type { Wallet } from "./market-types.ts";
 import { IS_MAINNET, NETWORK } from "./network.ts";
 import { b64, randomNonce, RELAY_RECIPIENT } from "./market-client.ts";
-import { decodeCallResult } from "./posting.ts";
-import { postedBidFromOutcome } from "../../shared/post-result.ts";
+import { decodeCallResult, postingReceipt } from "./posting.ts";
 
 export function connectorOptions(cspNonce: string): NearConnectorOptions {
   return {
@@ -66,14 +65,18 @@ export function adaptWallet(
       });
       if (
         outcome &&
+        outcome.status !== null &&
         typeof outcome.status === "object" &&
         "Failure" in outcome.status
       )
         throw new DefinitiveWalletFailure(
           "The transaction reported failure. Refresh the job and check wallet history before retrying.",
         );
+      if (call.method === "post_bid")
+        return postingReceipt(outcome, call.receiver, accountId);
       if (
         !outcome ||
+        !outcome.status ||
         typeof outcome.status !== "object" ||
         !("SuccessValue" in outcome.status)
       )
@@ -83,13 +86,6 @@ export function adaptWallet(
       return {
         transaction_hash: outcome.transaction?.hash ?? "",
         result: decodeCallResult(outcome.status.SuccessValue),
-        ...(call.method === "post_bid"
-          ? {
-              posted_bid_id:
-                postedBidFromOutcome(outcome, call.receiver, accountId) ??
-                undefined,
-            }
-          : {}),
       };
     },
     async transfer(receiver, yocto) {
