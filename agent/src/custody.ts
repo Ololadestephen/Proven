@@ -16,10 +16,10 @@ const CAPABILITIES = [
 /** The bid board. It holds no job money, so a wallet may also call it. */
 export const BOARD = process.env.PROVEN_BOARD ?? "board-v4.proven.testnet";
 
-/** Mainnet stays at 1 NEAR a day. The testnet buyer was raised by the owner to finish the gate runs.
- * The escrow's own account decides which, so no setting can loosen a mainnet wallet. */
-const maxDaily = (escrow: string) =>
-  escrow.endsWith(".testnet") ? 3n * 10n ** 24n : 10n ** 24n;
+/** Owner-approved custody ceilings. The escrow separately caps job payments at 5 NEAR.
+ * Six covers prepaid posting overhead; twelve covers two maximum postings in one day. */
+export const MAX_CALL_DEPOSIT = 6n * 10n ** 24n;
+export const MAX_DAILY_DEPOSIT = 12n * 10n ** 24n;
 
 /** A readable-policy check is defense in depth; the TEE must enforce its on-chain policy too. */
 /** A hosted agent's wallet may also send NEAR, but only to its owner and to the treasury. */
@@ -80,11 +80,11 @@ export function assertPolicy(
     !cap ||
     !/^\d+$/.test(cap) ||
     BigInt(cap) <= 0n ||
-    BigInt(cap) > 10n ** 23n ||
+    BigInt(cap) > MAX_CALL_DEPOSIT ||
     !daily ||
     !/^\d+$/.test(daily) ||
     BigInt(daily) <= 0n ||
-    BigInt(daily) > maxDaily(escrow) ||
+    BigInt(daily) > MAX_DAILY_DEPOSIT ||
     CAPABILITIES.some(
       (name) =>
         p.capabilities?.[name]?.allowed !== false && !relaySigning(name, p),
@@ -254,7 +254,9 @@ export async function custodyCall(
 ): Promise<string> {
   if (
     (plan.receiver_id !== escrow && plan.receiver_id !== BOARD) ||
-    BigInt(plan.deposit) > 10n ** 23n
+    typeof plan.deposit !== "string" ||
+    !/^\d+$/.test(plan.deposit) ||
+    BigInt(plan.deposit) > MAX_CALL_DEPOSIT
   )
     throw new PublicError("Call exceeds the signing boundary.");
   const address = (await custodyRead(
@@ -275,11 +277,17 @@ export async function custodyCall(
     throw new PublicError(
       "Custody wallet identity differs from the configured unbound buyer account.",
     );
-  assertPolicy(
-    await custodyRead(api, key, "/wallet/v1/policy"),
-    escrow,
-    hosted,
-  );
+  const storedPolicy = await custodyRead(api, key, "/wallet/v1/policy");
+  assertPolicy(storedPolicy, escrow, hosted);
+  const storedCap = (
+    storedPolicy as {
+      rules: { limits: { per_transaction: { native: string } } };
+    }
+  ).rules.limits.per_transaction.native;
+  if (BigInt(plan.deposit) > BigInt(storedCap))
+    throw new PublicError(
+      "The stored wallet policy does not permit this deposit. Its owner must approve and apply a policy update first.",
+    );
   const response = await fetch(`${api}/wallet/v1/call`, {
     method: "POST",
     headers: {

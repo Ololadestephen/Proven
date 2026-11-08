@@ -4,8 +4,8 @@
     "allowed_tokens": ["native"],
     "addresses": { "mode": "whitelist", "list": ["escrow-v5.proven.testnet", "board-v4.proven.testnet"] },
     "limits": {
-      "per_transaction": { "native": "100000000000000000000000" },
-      "daily": { "native": "1000000000000000000000000" }
+      "per_transaction": { "native": "6000000000000000000000000" },
+      "daily": { "native": "12000000000000000000000000" }
     }
   },
   "capabilities": {

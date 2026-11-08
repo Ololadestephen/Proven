@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   BOARD,
+  MAX_CALL_DEPOSIT,
+  MAX_DAILY_DEPOSIT,
   assertPolicy,
   custodyCall,
   custodyTransaction,
@@ -61,7 +63,9 @@ test("stored escrow-only native-call policy passes; missing or broader policy fa
       p.rules.allowed_tokens = ["*"];
     },
     (p: any) => {
-      p.rules.limits.per_transaction.native = "1000000000000000000000000";
+      p.rules.limits.per_transaction.native = (
+        MAX_CALL_DEPOSIT + 1n
+      ).toString();
     },
     (p: any) => {
       delete p.rules.limits.daily;
@@ -102,7 +106,7 @@ test("wrong target and excessive deposit are refused before a network request", 
         method_name: "fund",
         args: {},
         gas: "70000000000000",
-        deposit: "100000000000000000000001",
+        deposit: (MAX_CALL_DEPOSIT + 1n).toString(),
       },
     ])
       await assert.rejects(
@@ -404,11 +408,97 @@ test("transient status-read failure is retried without submitting the call again
   }
 });
 
-test("a mainnet wallet's daily limit stays at 1 NEAR whatever the environment says", () => {
+test("a mainnet wallet cannot exceed the owner-approved 12 NEAR daily ceiling", () => {
   const over = policy();
   over.rules.addresses.list = ["escrow.near"];
-  over.rules.limits.daily.native = (2n * 10n ** 24n).toString();
+  over.rules.limits.daily.native = (MAX_DAILY_DEPOSIT + 1n).toString();
   assert.throws(() => assertPolicy(over, "escrow.near"));
-  over.rules.limits.daily.native = (10n ** 24n).toString();
+  over.rules.limits.daily.native = MAX_DAILY_DEPOSIT.toString();
   assert.doesNotThrow(() => assertPolicy(over, "escrow.near"));
+});
+
+test("product custody ceilings accept full prepaid jobs but refuse a one-yocto excess", () => {
+  const p = policy();
+  assert.equal(
+    p.rules.limits.per_transaction.native,
+    MAX_CALL_DEPOSIT.toString(),
+  );
+  assert.equal(p.rules.limits.daily.native, MAX_DAILY_DEPOSIT.toString());
+  assert.doesNotThrow(() => assertPolicy(p, escrow));
+  p.rules.limits.daily.native = (MAX_DAILY_DEPOSIT + 1n).toString();
+  assert.throws(() => assertPolicy(p, escrow));
+  // A stored legacy policy remains valid; a template edit does not expand its authority.
+  p.rules.limits.daily.native = (10n ** 24n).toString();
+  p.rules.limits.per_transaction.native = (10n ** 23n).toString();
+  assert.doesNotThrow(() => assertPolicy(p, escrow));
+});
+
+test("a stored legacy cap refuses prepaid posting before submission; an updated wallet can post within six NEAR", async () => {
+  const original = globalThis.fetch;
+  const expectedAccount = "a".repeat(64);
+  let storedCap = 10n ** 23n;
+  let submissions = 0;
+  globalThis.fetch = async (url, init) => {
+    const path = String(url);
+    if (path.includes("/address?"))
+      return Response.json({ address: expectedAccount });
+    if (path.endsWith("/policy")) {
+      const p = policy();
+      p.rules.limits.per_transaction.native = storedCap.toString();
+      return Response.json(p);
+    }
+    assert.ok(path.endsWith("/call"));
+    assert.equal(
+      JSON.parse(String(init?.body)).deposit,
+      "5211000000000000000000000",
+    );
+    submissions++;
+    return Response.json({ tx_hash: "A".repeat(44) });
+  };
+  try {
+    const plan = {
+      receiver_id: BOARD,
+      method_name: "post_bid",
+      args: {},
+      gas: "250000000000000",
+      deposit: "5211000000000000000000000",
+    };
+    await assert.rejects(
+      custodyCall(
+        "https://testnet-api.outlayer.ai",
+        "fixture",
+        expectedAccount,
+        escrow,
+        plan,
+      ),
+      /stored wallet policy/,
+    );
+    assert.equal(submissions, 0);
+    storedCap = MAX_CALL_DEPOSIT;
+    assert.equal(
+      await custodyCall(
+        "https://testnet-api.outlayer.ai",
+        "fixture",
+        expectedAccount,
+        escrow,
+        plan,
+      ),
+      "A".repeat(44),
+    );
+    assert.equal(submissions, 1);
+    for (const deposit of ["-1", "1.5", (MAX_CALL_DEPOSIT + 1n).toString()])
+      await assert.rejects(
+        custodyCall(
+          "https://testnet-api.outlayer.ai",
+          "fixture",
+          expectedAccount,
+          escrow,
+          { ...plan, deposit },
+        ),
+        /signing boundary/,
+      );
+    assert.equal(submissions, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
 });
