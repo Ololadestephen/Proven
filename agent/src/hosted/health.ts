@@ -4,6 +4,51 @@ import { BoardClient } from "../board.ts";
 import type { Job } from "../types.ts";
 import { RATE_REVIEW_BELOW_USD, USD_PER_NEAR } from "./limits.ts";
 
+export const MAINNET_RELAY_ACCOUNT = "proven-relay.near";
+export const MAINNET_RELAY_MINIMUM = 250_000_000_000_000_000_000_000n;
+
+export interface BalanceWatch {
+  name: string;
+  account: string;
+  minimum: bigint;
+}
+
+/** Mainnet always watches the run payer with enough headroom for its gas reservation.
+ * Testnet never queries the mainnet relay, even if a stale caller setting names it. */
+export function healthBalances(
+  escrow: string,
+  balances: BalanceWatch[],
+): BalanceWatch[] {
+  const other = balances.filter(
+    (entry) => entry.account !== MAINNET_RELAY_ACCOUNT,
+  );
+  if (!escrow.endsWith(".near")) return other;
+  const supplied = balances.filter(
+    (entry) => entry.account === MAINNET_RELAY_ACCOUNT,
+  );
+  const minimum = supplied.reduce(
+    (highest, entry) => (entry.minimum > highest ? entry.minimum : highest),
+    MAINNET_RELAY_MINIMUM,
+  );
+  return [
+    ...other,
+    {
+      name: supplied[0]?.name ?? "The relay",
+      account: MAINNET_RELAY_ACCOUNT,
+      minimum,
+    },
+  ];
+}
+
+function nearAmount(amount: bigint): string {
+  const near = 10n ** 24n;
+  const fraction = (amount % near)
+    .toString()
+    .padStart(24, "0")
+    .replace(/0+$/, "");
+  return `${amount / near}${fraction ? `.${fraction}` : ""}`;
+}
+
 /** The public price, with no account and nothing about us in the request. */
 export async function nearPrice(): Promise<number | null> {
   const reply = await fetch(
@@ -44,13 +89,14 @@ export function stuckReason(job: Job, nowNanos: bigint): string | null {
 
 export async function healthReport(deps: {
   config: Config;
-  balances: Array<{ name: string; account: string; minimum: bigint }>;
+  balances: BalanceWatch[];
+  board?: Pick<BoardClient, "now" | "view" | "bids">;
   balance: (account: string) => Promise<bigint>;
   spentNanoUsd: number;
   limitNanoUsd: number;
   nearPriceUsd?: () => Promise<number | null>;
 }): Promise<{ at: string; alerts: Alert[]; expirable_jobs: number[] }> {
-  const board = new BoardClient(deps.config.rpc);
+  const board = deps.board ?? new BoardClient(deps.config.rpc);
   const alerts: Alert[] = [];
   const now = await board.now();
   const expirable: number[] = [];
@@ -88,12 +134,12 @@ export async function healthReport(deps: {
         });
     if (page.length < 50) break;
   }
-  for (const entry of deps.balances) {
+  for (const entry of healthBalances(deps.config.escrow, deps.balances)) {
     const balance = await deps.balance(entry.account);
     if (balance < entry.minimum)
       alerts.push({
         kind: "low_balance",
-        detail: `${entry.name} holds ${Number(balance / 10n ** 21n) / 1000} NEAR.`,
+        detail: `${entry.name} (${entry.account}) holds ${nearAmount(balance)} NEAR, below its ${nearAmount(entry.minimum)} NEAR minimum.${entry.account === MAINNET_RELAY_ACCOUNT ? " Starting a run reserves about 0.2 NEAR for gas." : ""}`,
       });
   }
   const price = await deps.nearPriceUsd?.().catch(() => null);
