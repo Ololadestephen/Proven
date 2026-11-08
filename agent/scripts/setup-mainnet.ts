@@ -31,7 +31,7 @@ import { networkSettings } from "../src/network.ts";
 const MAX_JOB = 5n * 10n ** 24n; // 5 NEAR.
 const MAX_HELD = 10n * 10n ** 24n; // 10 NEAR.
 const MAX_HELD_PER_BUYER = 5n * 10n ** 24n; // 5 NEAR.
-const BUDGET = 66n * 10n ** 23n; // The owner's limit: stop above 6.6 NEAR across the new accounts.
+const BUDGET = 105n * 10n ** 23n; // The owner's limit since November 8: stop above 10.5 NEAR across the new accounts.
 const YOCTO_PER_BYTE = 10n ** 19n;
 const STATE_ROOM_BYTES = 10_000n; // Room for the contract's records on top of its code.
 const MAX_POLICY_STORAGE = 5n * 10n ** 22n;
