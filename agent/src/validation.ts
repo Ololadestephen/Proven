@@ -57,9 +57,9 @@ export function yocto(value: string): string {
     throw new PublicError("Invalid amount_near.");
   const [whole, fraction = ""] = value.split(".");
   const amount = BigInt(whole) * 10n ** 24n + BigInt(fraction.padEnd(24, "0"));
-  if (amount <= 0n || amount > 10n ** 23n)
+  if (amount <= 0n || amount > (1n << 128n) - 1n)
     throw new PublicError(
-      "Demo job amount must be greater than zero and at most 0.1 NEAR.",
+      "Amount must be positive and fit in an unsigned 128-bit integer.",
     );
   return amount.toString();
 }
@@ -70,4 +70,40 @@ export function requestId(value: string): string {
   )
     throw new PublicError("Invalid request_id.");
   return value;
+}
+
+/** Read the native limits supplied by escrow, refusing absent or malformed caps.
+ * Current aggregate usage can race this preflight; the contract remains authoritative. */
+export function checkPostingCaps(config: unknown, amount: string): void {
+  const message = "Native job limits are unavailable. No posting was signed.";
+  if (
+    config === null ||
+    typeof config !== "object" ||
+    !("caps" in config) ||
+    !Array.isArray(config.caps)
+  )
+    throw new PublicError(message);
+  const cap = config.caps.find(
+    (value: unknown) =>
+      value !== null &&
+      typeof value === "object" &&
+      "token" in value &&
+      value.token === null,
+  );
+  if (!cap) throw new PublicError(message);
+  const limits = ["max_job", "max_held", "max_held_per_buyer"].map((name) => {
+    const value: unknown = cap[name];
+    if (
+      typeof value !== "string" ||
+      !/^(0|[1-9]\d{0,38})$/.test(value) ||
+      BigInt(value) <= 0n ||
+      BigInt(value) > (1n << 128n) - 1n
+    )
+      throw new PublicError(message);
+    return BigInt(value);
+  });
+  if (limits.some((limit) => BigInt(amount) > limit))
+    throw new PublicError(
+      "Job amount exceeds the native limits read from escrow. No posting was signed.",
+    );
 }

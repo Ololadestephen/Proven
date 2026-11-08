@@ -6,6 +6,7 @@ import { attestationUrl } from "./network.ts";
 import { boardTools, executeBoardTool, isBoardTool } from "./board-tools.ts";
 import {
   accountId,
+  checkPostingCaps,
   fields,
   flag,
   integer,
@@ -33,7 +34,7 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
   [
     [
       "post_job",
-      "Create a native-NEAR job with a named worker and committed private check/reference. The worker must be on the operator's list; use post_job_for_claim for a board claim. Buyer custody only; amount at most 0.1 NEAR.",
+      "Create a native-NEAR job with a named worker and committed private check/reference. Legacy direct-job interface, outside the Market flow. The worker must be on the operator's list. Use post_bid for a one-signature Market job. Live creation checks escrow's native limits before signing; custody policy can impose a lower limit.",
       {
         worker: string,
         check: string,
@@ -47,13 +48,13 @@ const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
     ],
     [
       "challenge_check",
-      "Privately hand off and pin a check/reference, then ask escrow to run its challenge. Can pin only.",
+      "Legacy direct-job challenge. Market post_bid hands off its check automatically. Can pin only.",
       { job_id: id, check: string, reference: string, pin_only: boolean },
       ["job_id", "check", "reference"],
     ],
     [
       "fund_job",
-      "Fund a challenged native-NEAR job for exactly its recorded amount through buyer custody.",
+      "Legacy direct-job funding through buyer custody. Market post_bid already prepays its job and needs no per-worker funding.",
       { job_id: id },
       ["job_id"],
     ],
@@ -274,6 +275,7 @@ export function createService(runtime: Runtime) {
           ? "20000000000000000000000"
           : yocto(text(args, "storage_deposit_near", 30)),
       );
+      if (!dry) checkPostingCaps(cfg, call.args.amount as string);
       if (BigInt(call.deposit) > 50000000000000000000000n)
         throw new PublicError("Job storage deposit cannot exceed 0.05 NEAR.");
       return submit(call, dry);

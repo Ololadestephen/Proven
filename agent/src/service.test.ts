@@ -51,7 +51,17 @@ function fixture(state = "Delivered", actor: Actor = "buyer") {
     async view<T>(method: string): Promise<T> {
       return (
         method === "get_config"
-          ? { verifier_hash: build }
+          ? {
+              verifier_hash: build,
+              caps: [
+                {
+                  token: null,
+                  max_job: "100000000000000000000000",
+                  max_held: "1000000000000000000000000",
+                  max_held_per_buyer: "100000000000000000000000",
+                },
+              ],
+            }
           : method === "get_jobs"
             ? [[1, current]]
             : { ...current }

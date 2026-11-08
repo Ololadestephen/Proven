@@ -49,6 +49,7 @@ export interface CallResult {
   result?: unknown;
   pending?: boolean;
   failed?: boolean;
+  posted_bid_id?: number;
 }
 export interface Runtime {
   actor: Actor;

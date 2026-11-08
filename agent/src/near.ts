@@ -1,3 +1,4 @@
+import { postedBidFromOutcome } from "../../relay/src/post-result.ts";
 import { chainProvider } from "./rpc.ts";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import type { Config } from "./config.ts";
@@ -51,6 +52,7 @@ export async function transactionResult(
   provider: JsonRpcProvider,
   tx: string,
   account: string,
+  postingBoard?: string,
 ): Promise<CallResult> {
   try {
     const response = await provider.viewTransactionStatus({
@@ -69,7 +71,14 @@ export async function transactionResult(
       } catch {
         /* Methods with no return value. */
       }
-      return { transaction_hash: tx, result };
+      const bidId = postingBoard
+        ? postedBidFromOutcome(response, postingBoard, account)
+        : null;
+      return {
+        transaction_hash: tx,
+        result,
+        ...(bidId === null ? {} : { posted_bid_id: bidId }),
+      };
     }
     if (typeof status === "object" && "Failure" in status)
       return { transaction_hash: tx, failed: true };
@@ -85,9 +94,10 @@ export async function waitTransactionResult(
   tx: string,
   account: string,
   wait = () => new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+  postingBoard?: string,
 ): Promise<CallResult> {
   for (let read = 0; read < 45; read++) {
-    const result = await transactionResult(provider, tx, account);
+    const result = await transactionResult(provider, tx, account, postingBoard);
     if (!result.pending) return result;
     if (read < 44) await wait();
   }

@@ -1,3 +1,4 @@
+import { postedBidId, matchesPostedBid } from "../../relay/src/post-result.ts";
 // CLI and MCP tools for the bid board. Writes go through the configured custody wallet; board calls
 // hold no job money. The JSON feed is read-only and needs no credentials.
 import { createHash } from "node:crypto";
@@ -14,6 +15,7 @@ import { PublicError } from "./errors.ts";
 import { buildFeed } from "./feed.ts";
 import {
   accountId,
+  checkPostingCaps,
   fields,
   flag,
   integer,
@@ -230,20 +232,41 @@ export async function executeBoardTool(
       {},
       config.escrow,
     );
+    checkPostingCaps(escrowConfig, call.amount);
     const deposit = postingDeposit(
       BigInt(call.amount),
       call.max_attempts,
       BigInt(escrowConfig.run_deposit),
     );
-    const posted = await board.postBid(wallet(config), call, deposit);
-    // The bid and its job, found by the check this call fixed.
-    const found = (await board.bids(0, 50)).find(
-      ([, bid]) => bid.check_hash === call.check_hash,
-    );
-    const bidId = found?.[0];
-    const jobId = found?.[1].job_id ?? null;
-    if (bidId === undefined || jobId === null)
-      return { ...posted, note: "Posted. Read the bid to find its job." };
+    const buyerWallet = wallet(config);
+    const posted = await board.postBid(buyerWallet, call, deposit);
+    const bidId = postedBidId(posted.posted_bid_id);
+    const reconcile =
+      "Posting has completed. Reconcile this transaction and its exact bid before any further action; do not post again.";
+    if (bidId === null) return { ...posted, note: reconcile };
+    let bid;
+    try {
+      bid = await board.bid(bidId);
+    } catch {
+      return { ...posted, bid_id: bidId, note: reconcile };
+    }
+    if (
+      !matchesPostedBid(bid, {
+        buyer: buyerWallet.account,
+        check_hash: call.check_hash,
+        reference_hash: call.reference_hash,
+        verifier_hash: call.verifier_hash,
+      })
+    )
+      return { ...posted, bid_id: bidId, note: reconcile };
+    const jobId = bid?.job_id ?? null;
+    if (jobId === null)
+      return {
+        ...posted,
+        bid_id: bidId,
+        job_id: null,
+        note: "Posted. Wait for this bid's job creation; do not post again.",
+      };
     // No signature: the texts match the hashes just fixed on chain.
     const challenge = { action: "challenge", job_id: jobId, check, reference };
     const sent = await (

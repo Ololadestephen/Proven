@@ -144,6 +144,8 @@ export class BoardClient {
       this.provider,
       tx,
       wallet.account,
+      undefined,
+      method_name === "post_bid" ? BOARD : undefined,
     );
     if (result.failed)
       throw new PublicError(`Board call ${method_name} failed on chain: ${tx}`);
