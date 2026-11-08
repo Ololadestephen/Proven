@@ -12,6 +12,7 @@ import {
   RELAY_RECIPIENT,
 } from "../custody.ts";
 import { PublicError } from "../errors.ts";
+import { isObject, jsonObject } from "../json.ts";
 
 const MAX_POLICY_STORAGE = 50_000_000_000_000_000_000_000n;
 /** The policy allows no single transfer above this, so a withdrawal goes in steps. */
@@ -37,7 +38,10 @@ async function post(
   });
   if (!response.ok)
     throw new PublicError(`OutLayer refused ${path}: HTTP ${response.status}.`);
-  return (await response.json()) as Record<string, unknown>;
+  return jsonObject(
+    await response.text(),
+    `OutLayer returned invalid JSON for ${path}.`,
+  );
 }
 
 export function treasuryAccount(
@@ -52,58 +56,136 @@ export function treasuryAccount(
   );
 }
 
-/** The whole policy, from the same limits as every other wallet in this project. */
-export function hostedPolicy(escrow: string, owner: string, treasury: string) {
-  const base = JSON.parse(
-    readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
-  ) as {
-    rules: {
-      transaction_types: string[];
-      addresses: { list: string[] };
-    };
-    capabilities: Record<string, unknown>;
-  };
-  base.rules.transaction_types = ["call", "transfer"];
-  base.rules.addresses.list = [...new Set([escrow, BOARD, owner, treasury])];
-  base.capabilities.sign_message = {
+/** Builds a restricted hosted policy only from a valid local policy document. */
+export function parseHostedPolicy(
+  text: string,
+  escrow: string,
+  owner: string,
+  treasury: string,
+) {
+  const message =
+    "The hosted custody policy is invalid. No wallet was registered or policy signed.";
+  const value = jsonObject(text, message);
+  const rules = value.rules;
+  if (
+    !isObject(rules) ||
+    !Array.isArray(rules.transaction_types) ||
+    !rules.transaction_types.every((type) => typeof type === "string") ||
+    !isObject(rules.addresses) ||
+    !Array.isArray(rules.addresses.list) ||
+    !rules.addresses.list.every((address) => typeof address === "string") ||
+    !isObject(value.capabilities)
+  )
+    throw new PublicError(message);
+  rules.transaction_types = ["call", "transfer"];
+  rules.addresses.list = [...new Set([escrow, BOARD, owner, treasury])];
+  value.capabilities.sign_message = {
     allowed: true,
     allowed_recipients: [RELAY_RECIPIENT],
   };
-  return base;
+  try {
+    assertPolicy({ ...value, policy: "stored", frozen: false }, escrow, {
+      owner,
+      treasury,
+    });
+  } catch {
+    throw new PublicError(message);
+  }
+  return value;
+}
+
+function readPolicyText(read: () => string): string {
+  try {
+    return read();
+  } catch {
+    throw new PublicError(
+      "The hosted custody policy could not be read. No wallet was registered or policy signed.",
+    );
+  }
+}
+
+/** The whole policy, from the same limits as every other wallet in this project. */
+export function hostedPolicy(escrow: string, owner: string, treasury: string) {
+  return parseHostedPolicy(
+    readPolicyText(() =>
+      readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+    ),
+    escrow,
+    owner,
+    treasury,
+  );
 }
 
 export async function createHostedWallet(
   config: Config,
   owner: string,
   treasury: Account,
+  readPolicy = () => readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
 ): Promise<{ wallet: string; wallet_id: string; custody_key: string }> {
+  // Validate before registration, which creates external state even before policy storage.
+  const policy = parseHostedPolicy(
+    readPolicyText(readPolicy),
+    config.escrow,
+    owner,
+    treasury.accountId,
+  );
   const outlayer = config.custodyApi.includes("testnet")
     ? "outlayer.testnet"
     : "outlayer.near";
   const made = await post(config.custodyApi, "/register", {});
   if (
     typeof made.api_key !== "string" ||
+    made.api_key.trim().length === 0 ||
     typeof made.wallet_id !== "string" ||
+    made.wallet_id.trim().length === 0 ||
     typeof made.near_account_id !== "string" ||
     !/^[a-f0-9]{64}$/.test(made.near_account_id)
   )
     throw new PublicError("OutLayer gave an unexpected registration.");
   const key = made.api_key;
-  const policy = hostedPolicy(config.escrow, owner, treasury.accountId);
   const encrypted = await post(
     config.custodyApi,
     "/wallet/v1/encrypt-policy",
     { wallet_id: made.wallet_id, ...policy },
     key,
   );
+  if (
+    typeof encrypted.encrypted_base64 !== "string" ||
+    encrypted.encrypted_base64.length === 0 ||
+    Buffer.from(encrypted.encrypted_base64, "base64").toString("base64") !==
+      encrypted.encrypted_base64
+  )
+    throw new PublicError(
+      "OutLayer returned an invalid encrypted policy. No policy storage was signed.",
+    );
   const signed = await post(
     config.custodyApi,
     "/wallet/v1/sign-policy",
     { encrypted_data: encrypted.encrypted_base64, caller: treasury.accountId },
     key,
   );
+  const uint64 = (value: unknown) =>
+    ((typeof value === "number" && Number.isSafeInteger(value) && value >= 0) ||
+      (typeof value === "string" && /^\d+$/.test(value))) &&
+    BigInt(value as string | number) <= 18446744073709551615n;
+  const metadataValid =
+    signed.version === undefined
+      ? signed.locked === undefined && signed.valid_until === undefined
+      : uint64(signed.version) &&
+        typeof signed.locked === "boolean" &&
+        (signed.valid_until === null || uint64(signed.valid_until));
+  if (
+    typeof signed.public_key_hex !== "string" ||
+    !/^[a-fA-F0-9]{64}$/.test(signed.public_key_hex) ||
+    typeof signed.signature_hex !== "string" ||
+    !/^[a-fA-F0-9]{128}$/.test(signed.signature_hex) ||
+    !metadataValid
+  )
+    throw new PublicError(
+      "OutLayer returned an invalid policy signature. No policy storage was signed.",
+    );
   const args = {
-    wallet_pubkey: `ed25519:${String(signed.public_key_hex)}`,
+    wallet_pubkey: `ed25519:${signed.public_key_hex}`,
     encrypted_data: encrypted.encrypted_base64,
     storage_refund_to: null,
   };
@@ -163,15 +245,28 @@ export async function sendFromWallet(
   let left = yocto;
   while (left > 0n) {
     const step = left > MAX_TRANSFER ? MAX_TRANSFER : left;
-    const sent = await post(
-      config.custodyApi,
-      "/wallet/v1/transfer",
-      { to, amount: step.toString(), chain: "near" },
-      custodyKey,
-    );
-    hashes.push(
-      String(sent.tx_hash ?? sent.transaction_hash ?? sent.request_id ?? ""),
-    );
+    let sent: Record<string, unknown>;
+    try {
+      sent = await post(
+        config.custodyApi,
+        "/wallet/v1/transfer",
+        { to, amount: step.toString(), chain: "near" },
+        custodyKey,
+      );
+    } catch {
+      throw new PublicError(
+        "The custody transfer outcome is unknown. Reconcile wallet history before retrying; no further transfer was sent.",
+      );
+    }
+    const hash =
+      sent.tx_hash ??
+      sent.transaction_hash ??
+      (isObject(sent.result) ? sent.result.tx_hash : undefined);
+    if (typeof hash !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(hash))
+      throw new PublicError(
+        "Custody did not confirm the transfer with a valid transaction hash. Reconcile wallet history before retrying; no further transfer was sent.",
+      );
+    hashes.push(hash);
     left -= step;
   }
   return hashes;

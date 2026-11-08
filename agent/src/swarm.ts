@@ -17,6 +17,7 @@ import { attestationUrl } from "./network.ts";
 import { loadConfig, ROOT, type Config } from "./config.ts";
 import { BOARD } from "./custody.ts";
 import { PublicError } from "./errors.ts";
+import { jsonObject } from "./json.ts";
 import {
   DEFAULT_MODEL,
   fetchPrices,
@@ -137,20 +138,39 @@ function uniqueSpaces(): string {
   ).join("");
 }
 
+/** Reject malformed or incomplete acceptance checks before reading credentials or calling the board. */
+export function parseBidCheck(check: string): {
+  verifier: string;
+  format: string;
+} {
+  const message =
+    "The bid acceptance check is invalid. It must name a verifier hash and a public format.";
+  const value = jsonObject(check, message);
+  if (
+    typeof value.verifier !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.verifier) ||
+    typeof value.format !== "string" ||
+    !value.format.trim()
+  )
+    throw new PublicError(message);
+  jsonObject(
+    value.format,
+    "The bid's public format is not a valid JSON object.",
+  );
+  return { verifier: value.verifier, format: value.format };
+}
+
 export async function postBid(
   jobDir: string,
   checkFile = "check.json",
   referenceFile = "reference.json",
 ) {
-  const { wallet, config } = buyer();
   const description = readFileSync(`${ROOT}${jobDir}/task.txt`, "utf8");
   // The exact text can be on one bid only, so each posting of an example differs by a trailing space.
   const check = `${readFileSync(`${ROOT}${jobDir}/${checkFile}`, "utf8")}${uniqueSpaces()}`;
   const reference = readFileSync(`${ROOT}${jobDir}/${referenceFile}`, "utf8");
-  const { verifier, format } = JSON.parse(check) as {
-    verifier: string;
-    format: string;
-  };
+  const { verifier, format } = parseBidCheck(check);
+  const { wallet, config } = buyer();
   const board = new BoardClient(config.rpc);
   const { run_deposit } = await board.view<{ run_deposit: string }>(
     "get_config",
