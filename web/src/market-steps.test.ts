@@ -406,25 +406,31 @@ test("assignment and terminal bookkeeping cannot offer a second claim or payout"
   );
 });
 
-// Refund callbacks clear delivered_at: recovery must not depend on that earlier timestamp.
-test("refund retry and record sync remain available after delivery metadata is cleared", () => {
+test("RefundDue retries at once but Refunded sync waits strictly beyond the stall interval", () => {
   const refund = bid({
     state: "Claimed",
     job: job("RefundDue", { delivered_at: null }),
   });
-  const step = nextStep(refund, "stranger", true, NOW);
-  assert.equal(step?.id, "settle");
-  assert.equal((step as { method?: string }).method, "refund");
+  const retry = nextStep(refund, "stranger", true, NOW);
+  assert.equal(retry?.id, "settle");
+  assert.equal((retry as { method?: string }).method, "refund");
+  const stamp = (NS - 20n * 60n * 1_000_000_000n).toString();
+  const ended = bid({
+    state: "Claimed",
+    job: job("Refunded", { delivered_at: stamp }),
+  });
+  assert.equal(nextStep(ended, "b", true, NOW)?.id, "wait");
+  assert.equal(nextStep(ended, "b", true, NOW + 1)?.id, "sync");
+  assert.equal(nextStep(ended, null, true, NOW + 1)?.id, "wait");
   assert.equal(
     nextStep(
-      bid({ state: "Claimed", job: job("Refunded", { delivered_at: null }) }),
+      { ...ended, job: job("Refunded", { delivered_at: null }) },
       "b",
       true,
       NOW,
     )?.id,
-    "sync",
+    "wait",
   );
-  assert.notEqual(nextStep(refund, "stranger", true, NOW)?.id, "collect");
 });
 
 test("refund recovery waits for a connected wallet and cannot offer a second payment", () => {

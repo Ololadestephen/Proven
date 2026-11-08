@@ -225,9 +225,9 @@ export function nextStep(
           }
         : wait("The refund needs a retry. Connect a wallet to continue");
     case "Refunded":
-      return viewer
+      return viewer && stalled(job, now)
         ? { id: "sync", label: "Finish the refund record" }
-        : wait("Refunded to the buyer. Connect a wallet to finish the record");
+        : wait("Refunded to the buyer. Finishing the record");
     default:
       return wait("A payout is in progress");
   }
