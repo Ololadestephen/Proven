@@ -45,6 +45,7 @@ export const CHAIN_LIMITS = {
   maxArgsChars: 2 * KIB,
   timeoutMs: 10_000,
   cacheEntries: 500,
+  maxCacheEntryBytes: 16 * KIB,
 };
 
 const MINUTE_MS = 60_000;

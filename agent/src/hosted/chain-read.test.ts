@@ -168,6 +168,25 @@ test("an unreachable RPC falls through to the next one, and a repeated read is s
   );
 });
 
+test("large chain results can be read but are not retained in the cache", async () => {
+  const { seen, fetchImpl } = network(() =>
+    ok({ amount: "1", extra: "é".repeat(10_000) }),
+  );
+  const reader = chainReader(ENDPOINTS, fetchImpl);
+  const input = JSON.stringify({
+    method: "view_account",
+    account_id: "a.near",
+    block: 9,
+    select: ["amount"],
+  });
+  const first = await reader.read(input, "a:bid-1");
+  const second = await reader.read(input, "a:bid-1");
+  assert.equal(first.ran, true);
+  assert.match(first.output, /"amount":"1"/);
+  assert.deepEqual(second, first);
+  assert.equal(seen.length, 2);
+});
+
 test("a garbage-collected block says why, and is not charged; archival is used only when on, and capped", async () => {
   const gone = network(() => rpcError("GARBAGE_COLLECTED_BLOCK"));
   const reader = chainReader(ENDPOINTS, gone.fetchImpl);

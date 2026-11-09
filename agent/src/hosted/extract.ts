@@ -7,6 +7,7 @@ import { runInWorker } from "./worker-run.ts";
 
 const MAX_PATTERN = 300;
 const MAX_MATCHES = 200;
+const MAX_CAPTURE_UNITS = 65_536;
 const REGEX_TIME_LIMIT_MS = 2_000;
 const MONTHS = [
   "jan",
@@ -25,17 +26,29 @@ const MONTHS = [
 
 const REGEX_WORKER = `
 const { parentPort, workerData } = require("node:worker_threads");
-const { text, pattern, flags, max } = workerData;
+const { text, pattern, flags, max, maxCaptureUnits } = workerData;
 let answer;
 try {
   const regex = new RegExp(pattern, flags + "g");
   const matches = [];
+  let remaining = maxCaptureUnits;
+  let captureLimitReached = false;
   // matchAll moves past empty matches by itself, so a pattern that matches "" still ends.
   for (const match of text.matchAll(regex)) {
-    matches.push({ groups: match.slice(1).map((g) => g ?? null), named: match.groups ?? null });
+    const groups = match.slice(1).map((g) => g ?? null);
+    const named = match.groups ?? null;
+    // Structured cloning copies captures, including duplicate and named captures.
+    const units = groups.reduce((sum, group) => sum + (group?.length ?? 0), 0)
+      + Object.entries(named ?? {}).reduce((sum, [name, value]) => sum + name.length + (value?.length ?? 0), 0);
+    if (units > remaining) {
+      captureLimitReached = true;
+      break;
+    }
+    remaining -= units;
+    matches.push({ groups, named });
     if (matches.length > max) break;
   }
-  answer = { ok: true, matches };
+  answer = { ok: true, matches, captureLimitReached };
 } catch (error) {
   answer = { ok: false, error: String(error && error.message || error).slice(0, 200) };
 }
@@ -171,7 +184,9 @@ interface Match {
   named: Record<string, string | undefined> | null;
 }
 
-type PatternRun = { ok: true; matches: Match[] } | { ok: false; error: string };
+type PatternRun =
+  | { ok: true; matches: Match[]; captureLimitReached: boolean }
+  | { ok: false; error: string };
 
 /** The worker posts an object, so the answer arrives already structured. */
 function runPattern(
@@ -185,6 +200,7 @@ function runPattern(
       pattern: request.pattern,
       flags: request.flags,
       max: MAX_MATCHES,
+      maxCaptureUnits: MAX_CAPTURE_UNITS,
     },
     timeLimitMs,
     "pattern",
@@ -240,6 +256,7 @@ export async function extract(
     output: fitList(matches, (shown) => ({
       matches: shown,
       ...(stopped ? { stopped_at: MAX_MATCHES } : {}),
+      ...(reply.captureLimitReached ? { capture_limit_reached: true } : {}),
     })),
     ran: true,
   };

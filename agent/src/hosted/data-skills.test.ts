@@ -238,3 +238,18 @@ test("csv_to_json returns up to 16 KB, never a partial table", async () => {
   assert.equal(through.ran, true);
   assert.match(through.output, /^Error/);
 });
+
+test("extract bounds repeated captures before copying matches out of the worker", async () => {
+  const captures = 145;
+  const result = await extract(
+    JSON.stringify({
+      text: "a".repeat(60_000),
+      pattern: "(?=" + "(".repeat(captures) + ".*" + ")".repeat(captures + 1),
+    }),
+  );
+  assert.equal(result.ran, true);
+  assert.deepEqual(JSON.parse(result.output), {
+    matches: [],
+    capture_limit_reached: true,
+  });
+});

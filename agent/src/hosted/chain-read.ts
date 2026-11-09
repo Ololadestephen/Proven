@@ -339,17 +339,17 @@ class ResultCache {
   static cacheable(request: Request): boolean {
     return !(request.method === "block" && request.block === "final");
   }
-  has(request: Request): boolean {
-    return (
-      ResultCache.cacheable(request) &&
-      this.entries.has(JSON.stringify(request))
-    );
-  }
   get(request: Request): unknown {
     return this.entries.get(JSON.stringify(request));
   }
   set(request: Request, value: unknown) {
     if (!ResultCache.cacheable(request)) return;
+    const serialized = JSON.stringify(value);
+    if (
+      serialized === undefined ||
+      Buffer.byteLength(serialized) > CHAIN_LIMITS.maxCacheEntryBytes
+    )
+      return;
     this.entries.set(JSON.stringify(request), value);
     if (this.entries.size > CHAIN_LIMITS.cacheEntries)
       this.entries.delete(this.entries.keys().next().value!);
@@ -376,7 +376,8 @@ export function chainReader(
   }
 
   async function result(request: Request, count: RunCount): Promise<unknown> {
-    if (cache.has(request)) return cache.get(request);
+    const cached = cache.get(request);
+    if (cached !== undefined) return cached;
     const value = await fetchResult(transport, request, count);
     cache.set(request, value);
     return value;
