@@ -23,25 +23,34 @@ export class DemoRpcProvider extends JsonRpcProvider {
 }
 
 /** A public RPC can rate-limit a busy service, so a request it refuses that way goes to the next approved
- * one. Only a rate limit moves on: a refusal means the request was not processed, so nothing is repeated
- * that might already have taken effect, and a transaction goes out as the same signed bytes anyway. */
+ * one. Callers can also opt into transient read failover. The extra fallback applies only to
+ * query requests, which cannot submit a transaction. */
 export class FallbackRpcProvider extends JsonRpcProvider {
   private readonly others: JsonRpcProvider[];
-  constructor(urls: readonly string[]) {
-    super({ url: urls[0]! });
-    this.others = urls.slice(1).map((url) => new JsonRpcProvider({ url }));
+  private readonly retryReadFailures: boolean;
+  constructor(urls: readonly string[], retryReadFailures = false) {
+    const options = retryReadFailures ? { retries: 1 } : undefined;
+    super({ url: urls[0]! }, options);
+    this.retryReadFailures = retryReadFailures;
+    this.others = urls
+      .slice(1)
+      .map((url) => new JsonRpcProvider({ url }, options));
   }
   override async sendJsonRpc<T>(method: never, params: never): Promise<T> {
+    const canRetry = (error: unknown) =>
+      isRateLimit(error) ||
+      (this.retryReadFailures &&
+        method === "query" &&
+        isTransientReadError(error));
     try {
       return (await super.sendJsonRpc(method, params)) as T;
     } catch (error) {
-      if (!isRateLimit(error)) throw error;
+      if (!canRetry(error)) throw error;
       for (const [index, other] of this.others.entries()) {
         try {
           return (await other.sendJsonRpc(method, params)) as T;
         } catch (next) {
-          if (!isRateLimit(next) || index === this.others.length - 1)
-            throw next;
+          if (!canRetry(next) || index === this.others.length - 1) throw next;
         }
       }
       throw error;
@@ -51,4 +60,12 @@ export class FallbackRpcProvider extends JsonRpcProvider {
 
 export function isRateLimit(error: unknown): boolean {
   return /rate limit|429|too many requests/i.test(String(error));
+}
+
+function isTransientReadError(error: unknown): boolean {
+  if (error instanceof Error && [502, 503, 504].includes(Number(error.cause)))
+    return true;
+  return /fetch failed|timed? ?out|timeout|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|temporarily unavailable|bad gateway|service unavailable|gateway timeout|(?:HTTP|status(?: code)?)[: ]+50[234]/i.test(
+    String(error),
+  );
 }

@@ -38,7 +38,7 @@ export const MARKET_ESCROW =
   process.env.PROVEN_MARKET_ESCROW ?? "escrow-v5.proven.testnet";
 const RPC =
   NETWORK === "mainnet"
-    ? "https://rpc.mainnet.fastnear.com"
+    ? "https://rpc.intea.rs"
     : "https://test.rpc.fastnear.com";
 const HOSTED_SERVICE = process.env.PROVEN_HOSTED_URL ?? "http://127.0.0.1:4175";
 const MAX_BODY = 512 * 1024;
@@ -53,8 +53,13 @@ const HANDOFF_ACTIONS = new Set([
 // A rate limit from one public RPC moves to the next approved one, so a busy page keeps working.
 const provider = new FallbackRpcProvider(
   NETWORK === "mainnet"
-    ? [RPC, "https://rpc.mainnet.near.org"]
+    ? [
+        RPC,
+        "https://free.rpc.fastnear.com",
+        "https://archival-rpc.mainnet.near.org",
+      ]
     : [RPC, "https://near-testnet.drpc.org", "https://testnet-rpc.intea.rs"],
+  NETWORK === "mainnet",
 );
 const view = <T>(
   contractId: string,
@@ -149,17 +154,28 @@ interface Bid {
 }
 
 const MARKET_CACHE_MS = 4_000;
-let cached: { at: number; value: Promise<unknown> } | null = null;
-/** Many people reading the board share one set of chain reads. */
+let cached: {
+  at: number;
+  value: Awaited<ReturnType<typeof readMarket>>;
+} | null = null;
+let marketRead: Promise<unknown> | null = null;
+/** Share an in-flight refresh even if it takes longer than the cache window. */
 export function readMarketCached(now = Date.now()): Promise<unknown> {
-  if (!cached || now - cached.at > MARKET_CACHE_MS) {
-    const value = readMarket();
-    value.catch(() => {
-      cached = null;
+  if (cached && now - cached.at <= MARKET_CACHE_MS)
+    return Promise.resolve(cached.value);
+  marketRead ??= readMarket()
+    .then((value) => {
+      cached = { at: Date.now(), value };
+      return value;
+    })
+    .catch((error: unknown) => {
+      if (!cached) throw error;
+      return { ...cached.value, snapshot_stale: true };
+    })
+    .finally(() => {
+      marketRead = null;
     });
-    cached = { at: now, value };
-  }
-  return cached.value;
+  return marketRead;
 }
 
 /** A fixed number of writes per client per minute. Reads are shared through the cache above. */
@@ -190,15 +206,11 @@ export class RateLimiter {
 }
 
 export async function readMarket() {
-  const [config, boardConfig] = await Promise.all([
-    view<{
-      next_job_id: number;
-      verifier_hash: string;
-      paused: boolean;
-      run_deposit: string;
-    }>(MARKET_ESCROW, "get_config", {}),
-    view<{ escrow: string; reviewer: string }>(BOARD, "get_config", {}),
-  ]);
+  const config = await view<{
+    verifier_hash: string;
+    paused: boolean;
+    run_deposit: string;
+  }>(MARKET_ESCROW, "get_config", {});
   const bids: Array<[number, Bid]> = [];
   for (let from = 0; ; from += 50) {
     const page = await view<Array<[number, Bid]>>(BOARD, "get_bids", {
@@ -519,14 +531,24 @@ export async function reviewRoute(
         if (error) {
           reject(
             new ReadError(
-              "The review could not finish. The bid stays closed.",
+              "We couldn’t finish the bid review. Check the bid status before trying again.",
               502,
             ),
           );
           return;
         }
         try {
-          resolve(JSON.parse(stdout));
+          const reply = JSON.parse(stdout) as { recorded?: boolean };
+          if (reply?.recorded !== true) {
+            reject(
+              new ReadError(
+                "The review has no confirmed decision yet. Check the bid status before trying again.",
+                503,
+              ),
+            );
+            return;
+          }
+          resolve(reply);
         } catch {
           reject(new ReadError("The review gave no usable answer.", 502));
         }

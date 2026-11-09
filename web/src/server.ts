@@ -172,9 +172,21 @@ async function marketRoute(
   origin?: string,
 ): Promise<unknown> {
   if (req.method === "GET") {
-    if (path === "/api/market") return readMarketCached();
+    if (path === "/api/market")
+      return readMarketCached().catch(() => {
+        throw new ReadError(
+          "We can’t reach the job board right now. Try again shortly.",
+          503,
+        );
+      });
     if (path === "/api/market/sample") return sample();
-    if (path === "/api/market/config") return marketSettings();
+    if (path === "/api/market/config")
+      return marketSettings().catch(() => {
+        throw new ReadError(
+          "We can’t reach the job board right now. Try again shortly.",
+          503,
+        );
+      });
     const reveal = /^\/api\/market\/reveal\/([0-9]+)$/.exec(path);
     if (reveal) return revealRoute(Number(reveal[1]));
     if (path.startsWith("/api/market/hosted/"))

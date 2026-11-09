@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DemoRpcProvider, isRateLimit } from "./rpc.ts";
+import { DemoRpcProvider, FallbackRpcProvider, isRateLimit } from "./rpc.ts";
 
 const reader = "https://test.rpc.fastnear.com",
   writer = "https://testnet-rpc.intea.rs";
@@ -78,4 +78,23 @@ test("only a rate limit counts as one", () => {
   );
   assert.equal(isRateLimit(new Error("Smart contract panicked")), false);
   assert.equal(isRateLimit(new Error("timeout")), false);
+});
+
+test("opt-in fallback uses the next endpoint on transient queries only", async (t) => {
+  const primary = "https://primary.invalid";
+  const backup = "https://backup.invalid";
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string) => {
+    calls.push(String(url));
+    if (url === primary) throw new TypeError("fetch failed");
+    return Response.json({ jsonrpc: "2.0", id: "1", result: { ok: true } });
+  });
+  const provider = new FallbackRpcProvider([primary, backup], true);
+  const send = (method: string) =>
+    provider.sendJsonRpc(method as never, {} as never);
+  assert.deepEqual(await send("query"), { ok: true });
+  assert.deepEqual(calls, [primary, backup]);
+  calls.length = 0;
+  await assert.rejects(send("broadcast_tx_async"), /fetch failed/);
+  assert.deepEqual(calls, [primary]);
 });
