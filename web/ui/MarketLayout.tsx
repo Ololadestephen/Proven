@@ -39,14 +39,13 @@ export function MarketLayout({
           activeSection={active}
         />
         <div className="sidebar-account">
-          {/* Only the network's name here; its full status, including the mainnet disclosure,
-           * is in the three-dots menu. */}
-          <p className="sidebar-status" title={NETWORK_LINES.join(" · ")}>
+          {/* Only the network's name (owner, November 9). */}
+          <p className="sidebar-status">
             <span>{NETWORK_LINES[0]}</span>
           </p>
           <div className="sidebar-account-row">
             {walletControls}
-            <SidebarMore lines={NETWORK_LINES} active={active} />
+            <SidebarMore active={active} />
           </div>
         </div>
       </aside>

@@ -44,7 +44,6 @@ export async function showMarketStatus(
         return span;
       }),
     );
-    if (mode === "network") label.title = lines.join(" · ");
   }
 }
 

@@ -118,8 +118,14 @@ test("static pages have no stale caps, testnet app link or retired live-start co
       name,
     );
     assert.ok(!/href=["']https:\/\/testnet\.useproven\.xyz/.test(html), name);
-    assert.match(html, /data-market-summary/);
-    assert.match(html, /\/build\/market-status\.js/);
+    // Pages with the app sidebar read the network's name live; the landing page and guide name no
+    // network status at all (owner, November 9).
+    if (["index.html", "guide.html"].includes(name))
+      assert.ok(!/data-market-summary/.test(html), name);
+    else {
+      assert.match(html, /data-market-summary="network"/);
+      assert.match(html, /\/build\/market-status\.js/);
+    }
   }
   const examples = await readFile(
     new URL("../public/examples.html", import.meta.url),

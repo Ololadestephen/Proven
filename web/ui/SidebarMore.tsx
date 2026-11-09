@@ -4,14 +4,8 @@ import {
   type WorkspaceSection,
 } from "./navigation-state.ts";
 
-/** The three-dots menu at the foot of the sidebar: help pages, and the network's full status. */
-export function SidebarMore({
-  lines,
-  active,
-}: {
-  lines: string[];
-  active?: WorkspaceSection;
-}) {
+/** The three-dots menu at the foot of the sidebar, for the help pages. */
+export function SidebarMore({ active }: { active?: WorkspaceSection }) {
   const menu = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     const close = (event: Event) => {
@@ -57,11 +51,6 @@ export function SidebarMore({
             </a>
           ))}
         </nav>
-        <p className="sidebar-more-status">
-          {lines.map((line) => (
-            <span key={line}>{line}</span>
-          ))}
-        </p>
       </div>
     </details>
   );
