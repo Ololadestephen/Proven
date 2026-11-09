@@ -1,5 +1,5 @@
 // Which network this site serves, from the server. Everything that names a network reads it here.
-import { marketDescription, parseMarketSettings } from "./network-status.ts";
+import { marketStatusLines, parseMarketSettings } from "./network-status.ts";
 
 const config = await fetch("/api/market/config")
   .then(async (reply) =>
@@ -17,8 +17,9 @@ export const canPost = (account: string | undefined) =>
 export const MAX_JOB: bigint | null = config?.caps
   ? BigInt(config.caps.max_job)
   : null;
-/** Mainnet is always labelled unaudited and owner-funded; limits come only from the escrow. */
-export const NETWORK_LABEL = marketDescription(config);
+/** The sidebar's status lines. Mainnet is always labelled unaudited and owner-funded; limits come
+ * only from the escrow. */
+export const NETWORK_LINES = marketStatusLines(config);
 export const COIN = IS_MAINNET ? "NEAR" : "testnet NEAR";
 export const OUTLAYER_API = IS_MAINNET
   ? "https://api.outlayer.ai"

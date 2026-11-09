@@ -19,13 +19,15 @@
   .workspace-app .main-content {
     padding-top: 23px;
   }
-  .workspace-app .workspace-toolbar {
-    align-items: flex-start;
-    margin-bottom: 28px;
-    gap: 12px 18px;
+  /* On a phone the sidebar is a menu, and the network and wallet open with it. */
+  .workspace-app
+    .app-sidebar:has(.workspace-navigation-panel[data-open="false"])
+    .sidebar-account {
+    display: none;
   }
-  .workspace-app .workspace-toolbar-actions {
-    gap: 9px;
+  .workspace-app .sidebar-account {
+    margin-top: 12px;
+    padding-inline: 0;
   }
   .workspace-app .workspace-heading h1 {
     font-size: 29px;
@@ -51,9 +53,6 @@
   }
 }
 @media (max-width: 390px) {
-  .workspace-app .workspace-toolbar-actions {
-    justify-content: flex-start;
-  }
   .workspace-app .workspace-heading h1 {
     font-size: 27px;
   }

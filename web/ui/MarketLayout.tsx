@@ -1,4 +1,4 @@
-import { NETWORK_LABEL } from "./network.ts";
+import { NETWORK_LINES } from "./network.ts";
 import type { ReactNode } from "react";
 import { WorkspaceNavigation } from "./WorkspaceNavigation.tsx";
 import {
@@ -41,22 +41,26 @@ export function MarketLayout({
           activeSection={active}
           secondaryItems={SUPPORT_NAVIGATION}
         />
+        <div className="sidebar-account">
+          <p className="sidebar-status">
+            {NETWORK_LINES.map((line) => (
+              <span key={line}>{line}</span>
+            ))}
+          </p>
+          {walletControls}
+        </div>
       </aside>
       <div className="app-area">
         <main className="shell main-content market" id="workspace-content">
-          <div className="workspace-toolbar">
-            <span className="workspace-network">{NETWORK_LABEL}</span>
-            <div className="workspace-toolbar-actions">
-              <div className="workspace-wallet">{walletControls}</div>
+          <header className="workspace-heading">
+            <div className="workspace-heading-row">
+              <h1>{title}</h1>
               {active !== "post" && canPostJob && (
                 <a className="button button-primary" href="/app/post">
                   Post a job
                 </a>
               )}
             </div>
-          </div>
-          <header className="workspace-heading">
-            <h1>{title}</h1>
             {subtitle && <p>{subtitle}</p>}
           </header>
           <div className="workspace-content">{children}</div>

@@ -84,6 +84,31 @@ export function marketDescription(settings: MarketSettings | null): string {
   return `${networkDescription(settings.network)} · ${access} · ${limits}`;
 }
 
+/** The same facts as marketDescription, as short lines for the sidebar. Mainnet always names its
+ * risk in full, so a narrow column never shortens the disclosure. */
+export function marketStatusLines(settings: MarketSettings | null): string[] {
+  if (!settings)
+    return [
+      "Market status unavailable",
+      "Posting is disabled until the board can be read.",
+    ];
+  const lines =
+    settings.network === "mainnet"
+      ? [
+          "Mainnet",
+          "Unaudited, owner-funded deployment. The owner holds a single key that can upgrade the contracts.",
+        ]
+      : ["Testnet", "Preparation only."];
+  lines.push(settings.open ? "Open to buyers" : "Closed to listed buyers");
+  const caps = settings.caps;
+  lines.push(
+    caps
+      ? `${near(caps.max_job)} NEAR per job · ${near(caps.max_held_per_buyer)} per buyer · ${near(caps.max_held)} held in total`
+      : "Limits unavailable until read from the escrow",
+  );
+  return lines;
+}
+
 export function startupMessage(
   port: number,
   network: "mainnet" | "testnet",

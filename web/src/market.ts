@@ -344,7 +344,10 @@ async function escrowCaps(): Promise<Caps | null> {
     "get_config",
     {},
   ).catch(() => null);
-  const near = config?.caps.find((cap) => cap.token === null);
+  // A failed read shows the limits as unavailable now, and is tried again on the next request
+  // rather than kept for a minute.
+  if (!config) return null;
+  const near = config.caps.find((cap) => cap.token === null);
   const caps = near
     ? {
         max_job: near.max_job,
