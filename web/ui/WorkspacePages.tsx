@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AgentsPage } from "./AgentsPage.tsx";
+import { PrBounties } from "./PrBounties.tsx";
 import { JobWorkspace } from "./JobWorkspace.tsx";
 import { PostJob } from "./PostJob.tsx";
 import type { Market, Wallet, Run } from "./market-types.ts";
@@ -248,6 +249,8 @@ export function WorkspacePages({
     return <PostJob market={market} wallet={wallet} run={run} busy={busy} />;
   if (route.section === "agents")
     return <AgentsPage wallet={wallet} run={run} busy={busy} />;
+  if (route.section === "bounties")
+    return <PrBounties wallet={wallet} run={run} busy={busy} />;
   if (route.section === "market") return <MarketList bids={market.bids} />;
   if (route.section === "jobs")
     return <MyJobs market={market} wallet={wallet} />;

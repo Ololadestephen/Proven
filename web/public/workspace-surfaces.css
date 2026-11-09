@@ -246,3 +246,43 @@
 .workspace-app .button {
   text-decoration: none;
 }
+/* PR bounties: facts, actions and the claim challenge. */
+.workspace-app .bounty-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 20px;
+  margin: 14px 0;
+}
+.workspace-app .bounty-form label,
+.workspace-app .bounty-action label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.workspace-app .bounty-actions {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.workspace-app .bounty-action {
+  display: grid;
+  gap: 10px;
+}
+.workspace-app .bounty-evidence {
+  display: grid;
+  gap: 4px;
+}
+.workspace-app .bounty-challenge {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--app-bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

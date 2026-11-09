@@ -51,6 +51,13 @@ function Icon({ kind }: { kind: WorkspaceSection }) {
           <rect x="4" y="8" width="16" height="12" rx="3" />
           <path d="M12 8V4M9 13v1M15 13v1M2 13v2M22 13v2" />
         </>
+      ) : kind === "bounties" ? (
+        <>
+          <circle cx="6" cy="5" r="2" />
+          <circle cx="6" cy="19" r="2" />
+          <circle cx="18" cy="12" r="2" />
+          <path d="M6 7v10M6 9c0 3 3 3 6 3h4" />
+        </>
       ) : kind === "post" ? (
         <>
           <rect x="3" y="3" width="18" height="18" rx="4" />

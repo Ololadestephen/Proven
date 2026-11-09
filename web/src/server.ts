@@ -24,6 +24,7 @@ import {
   sample,
 } from "./market.ts";
 import { ReadError } from "./model.ts";
+import { bountiesRoute } from "./bounties.ts";
 import { startupMessage } from "../ui/network-status.ts";
 
 const PUBLIC = new URL("../public/", import.meta.url);
@@ -192,6 +193,11 @@ async function marketRoute(
     if (path.startsWith("/api/market/hosted/"))
       return hostedRoute("GET", path.slice("/api/market/hosted".length));
     if (path === "/api/market/dev") return devWallet ? devWallet.list() : {};
+    if (
+      path === "/api/market/bounties" ||
+      path.startsWith("/api/market/bounties/")
+    )
+      return bountiesRoute(path);
     throw new ReadError("Route not found.", 404);
   }
   if (req.method !== "POST") throw new ReadError("Use GET or POST.", 405);
@@ -254,7 +260,7 @@ async function serveRead(
 }
 
 export function isAppPath(path: string) {
-  return /^\/app(?:\/|\/(?:market|jobs|post|agents)|\/bids\/[0-9]{1,10})?$/.test(
+  return /^\/app(?:\/|\/(?:market|jobs|post|agents|bounties)|\/bids\/[0-9]{1,10})?$/.test(
     path,
   );
 }

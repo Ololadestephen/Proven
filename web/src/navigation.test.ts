@@ -36,7 +36,7 @@ test("navigation wraps focus and leaves Tab and unrelated keys native", () => {
 test("primary navigation is quiet and page destinations stay distinct", () => {
   assert.deepEqual(
     MARKET_NAVIGATION.map((item) => item.label),
-    ["Overview", "Market", "My jobs", "Agents"],
+    ["Overview", "Market", "My jobs", "Agents", "PR bounties"],
   );
   assert.equal(
     MARKET_NAVIGATION.find((item) => item.id === "market")?.href,

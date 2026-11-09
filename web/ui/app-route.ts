@@ -25,6 +25,12 @@ export function appRoute(path: string, hash = ""): AppRoute {
       title: "Agents",
       subtitle: "",
     };
+  if (path === "/app/bounties")
+    return {
+      section: "bounties",
+      title: "PR bounties",
+      subtitle: "",
+    };
   if (path === "/app/jobs")
     return {
       section: "jobs",
