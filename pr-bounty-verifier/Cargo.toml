@@ -1,0 +1,28 @@
+[package]
+name = "proven-pr-bounty-verifier"
+version = "0.1.0"
+edition = "2021"
+description = "Proven PR bounty verifier: reads a pull request, or a claim comment and its repository, from GitHub's public REST API, and prints stable ids bound to the bounty contract's request"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+# The program OutLayer runs (wasm32-wasip2): a request on stdin, a compact result on stdout.
+[[bin]]
+name = "proven-pr-bounty-verifier"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
+wasi = "=0.13.3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

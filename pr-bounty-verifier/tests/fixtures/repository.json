@@ -1,0 +1,11 @@
+{
+  "id": 800000001,
+  "node_id": "R_kgSYNTHETIC",
+  "name": "bounty-pilot",
+  "full_name": "proven-test/bounty-pilot",
+  "private": false,
+  "owner": { "login": "proven-test", "id": 800000000, "type": "User" },
+  "visibility": "public",
+  "default_branch": "main",
+  "archived": false
+}
