@@ -39,7 +39,7 @@ Public settings:
 - PROVEN_RELAY_SOCKET: the approved mainnet relay's private socket, or PROVEN_RELAY_URL: its HTTPS endpoint.
 - HOSTED_CREDIT_USD and HOSTED_CREDIT_AS_OF: the owner-reported credit balance and its UTC timestamp. Local spending since that timestamp is deducted. This is a labelled estimate, not a provider balance; other services' spending may be missing. Missing/invalid data warns, data over 24 hours old warns, and estimated credit below $1 warns.
 
-Private environment, provided by the owner only after deployment approval: HOSTED_TREASURY_PRIVATE_KEY and NEARAI_KEY_HOSTED, plus any separately approved spare inference keys. Never use an organization-session token for the credit snapshot. SANDBOX_URL and SANDBOX_TOKEN must be absent: hosted agents offer only knowledge search, calculator, JSON validation and CSV parsing.
+Private environment, provided by the owner only after deployment approval: HOSTED_TREASURY_PRIVATE_KEY and NEARAI_KEY_HOSTED, plus any separately approved spare inference keys. Never use an organization-session token for the credit snapshot. SANDBOX_URL and SANDBOX_TOKEN must be absent: hosted agents offer only the built-in skills in `agent/src/hosted/limits.ts` (`SAFE_SKILLS`): knowledge search, calculator, JSON validation, CSV parsing, `wat_compile`, `run_function`, `table_aggregate`, `extract` and the read-only `chain_read`. Build the function skills with `npm run build:skills` in `agent/` before copying the source to the host; without them those two are refused and not charged. `chain_read` reads free public NEAR endpoints with no key; `PROVEN_CHAIN_READ_ARCHIVAL=yes` turns on the rate-limited archival node, at most two reads per attempt.
 
 ## Commands the lead will run after the gates
 

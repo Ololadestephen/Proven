@@ -5,14 +5,15 @@
 // verifier's check run does.
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { MAX_SKILL_RESULT } from "./fit-list.ts";
 import { runInWorker } from "./worker-run.ts";
 
 const DEFAULT_PATH = fileURLToPath(
   new URL("../../assets/function-skill.wasm", import.meta.url),
 );
 const TIME_LIMIT_MS = 10_000;
-/** run_function returns up to 64 results, each about 90 bytes at most. */
-const MAX_RESULT = 8 * 1024;
+/** run_function returns up to 64 results, each about 90 bytes at most: twice the usual skill answer. */
+const MAX_RESULT = 2 * MAX_SKILL_RESULT;
 const MAX_CASES = 64;
 const I64 = /^-?\d{1,19}$/;
 const I64_MIN = -(2n ** 63n);
@@ -89,7 +90,12 @@ function status(text: string): {
   module_bytes: unknown;
   deliverable: unknown;
 } {
-  const reply = JSON.parse(text) as Record<string, unknown>;
+  let reply: Record<string, unknown>;
+  try {
+    reply = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    reply = { ok: false, error: "the function skill's answer was not JSON" };
+  }
   return {
     ok: reply.ok === true,
     error: String(reply.error ?? "the function skill gave no answer"),

@@ -7,7 +7,8 @@ import {
   watCompile,
   type SkillOutcome,
 } from "./function-skill.ts";
-import { extract, tableAggregate } from "./data-skills.ts";
+import { extract } from "./extract.ts";
+import { tableAggregate } from "./table-aggregate.ts";
 import type { ChainReader } from "./chain-read.ts";
 
 const MAX_INPUT = 64 * 1024;
@@ -246,47 +247,53 @@ export type ServiceSkill = Exclude<
   "run_code" | "run_tests" | "read_repo" | "make_patch"
 >;
 
+export interface SkillContext {
+  knowledge: string;
+  format: string;
+  functionSkill?: string;
+  /** The service's chain reader and this attempt's run name, for chain_read's per-attempt limit. */
+  chain?: ChainReader;
+  run?: string;
+}
+
+type SkillRunner = (
+  input: string,
+  context: SkillContext,
+) => SkillOutcome | Promise<SkillOutcome>;
+
+const ran = (output: string): SkillOutcome => ({ output, ran: true });
+
+/** Every service skill, by name. A new name in SAFE_SKILLS fails to type-check until it is listed here. */
+const SKILL_RUNNERS: Record<ServiceSkill, SkillRunner> = {
+  knowledge_search: (input, c) => ran(knowledgeSearch(c.knowledge, input)),
+  calculator: (input) => ran(calculator(input)),
+  csv_to_json: (input) => ran(csvToJson(input)),
+  json_validator: (input, c) => ran(jsonValidator(input, c.format)),
+  wat_compile: (input, c) => watCompile(input, c.format, c.functionSkill),
+  run_function: (input, c) => runFunction(input, c.format, c.functionSkill),
+  table_aggregate: (input) => ran(tableAggregate(input)),
+  extract: (input) => extract(input),
+  chain_read: (input, c) =>
+    c.chain
+      ? c.chain.read(input, c.run ?? "")
+      : {
+          output: "Error: chain reads are not available on this service.",
+          ran: false,
+        },
+};
+
 /** Runs one of this service's own skills. `ran` is false when nothing ran, so nothing is charged. */
-export async function runSkill(
+export function runSkill(
   skill: ServiceSkill,
   input: string,
-  context: {
-    knowledge: string;
-    format: string;
-    functionSkill?: string;
-    /** The service's chain reader and this attempt's run name, for chain_read's per-attempt limit. */
-    chain?: ChainReader;
-    run?: string;
-  },
+  context: SkillContext,
 ): Promise<SkillOutcome> {
   if (input.length > MAX_INPUT)
-    return { output: "Error: skill input exceeds the size limit.", ran: false };
-  const done = (output: string) => ({ output, ran: true });
-  switch (skill) {
-    case "knowledge_search":
-      return done(knowledgeSearch(context.knowledge, input));
-    case "calculator":
-      return done(calculator(input));
-    case "csv_to_json":
-      return done(csvToJson(input));
-    case "json_validator":
-      return done(jsonValidator(input, context.format));
-    case "wat_compile":
-      return watCompile(input, context.format, context.functionSkill);
-    case "run_function":
-      return runFunction(input, context.format, context.functionSkill);
-    case "table_aggregate":
-      return done(tableAggregate(input));
-    case "extract":
-      return extract(input);
-    case "chain_read":
-      return context.chain
-        ? context.chain.read(input, context.run ?? "")
-        : {
-            output: "Error: chain reads are not available on this service.",
-            ran: false,
-          };
-  }
+    return Promise.resolve({
+      output: "Error: skill input exceeds the size limit.",
+      ran: false,
+    });
+  return Promise.resolve(SKILL_RUNNERS[skill](input, context));
 }
 
 /** CSV text to rows, with quoted fields. Pure parsing, bounded in size. */

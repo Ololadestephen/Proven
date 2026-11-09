@@ -1,13 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import {
-  decimalText,
-  extract,
-  normalise,
-  tableAggregate,
-  toDecimal,
-} from "./data-skills.ts";
+import { extract, normalise } from "./extract.ts";
+import { decimalText, tableAggregate, toDecimal } from "./table-aggregate.ts";
 import { csvToJson, MAX_CSV_RESULT, runSkill } from "./skills.ts";
 
 const honest = JSON.parse(
