@@ -14,6 +14,7 @@ const SAFE_SKILLS = new Set([
   "run_function",
   "table_aggregate",
   "extract",
+  "chain_read",
 ]);
 
 interface Terms {

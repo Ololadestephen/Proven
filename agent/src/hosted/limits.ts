@@ -48,6 +48,8 @@ export const SAFE_SKILLS = [
   "run_function",
   "table_aggregate",
   "extract",
+  // Reads only, from fixed free NEAR endpoints; see chain-read.ts.
+  "chain_read",
 ] as const;
 /** Run in a disposable sandbox on a separate isolated machine. See deploy/sandbox. */
 export const CODE_SKILLS = [
@@ -74,6 +76,8 @@ export const SKILL_PRICES: Record<Skill, number> = {
   table_aggregate: SKILL_USE_NANO_USD,
   // Each pattern runs in its own worker thread.
   extract: FUNCTION_SKILL_USE_NANO_USD,
+  // Charged only for a read that returned a result, cached or not.
+  chain_read: FUNCTION_SKILL_USE_NANO_USD,
   run_code: CODE_SKILL_USE_NANO_USD,
   run_tests: CODE_SKILL_USE_NANO_USD,
   read_repo: CODE_SKILL_USE_NANO_USD,
@@ -100,6 +104,8 @@ export const SKILL_HELP: Record<Skill, string> = {
     'input is {"op":"totals","rows":[...],"fields":["amount"],"group_by":"supplier"} for exact count, sum, min and max (group_by optional); {"op":"reconcile","rows":[...],"items":"lines","item_field":"amount","total_field":"total","key_field":"id"} for rows whose items do not add up to their total; or {"op":"duplicates","rows":[...],"field":"id"}. Write numbers above 2^53 or with decimals as strings',
   extract:
     'input is {"text":"...","pattern":"<regular expression>","flags":"i","normalise":{"1":"cents","date":"date_dmy"}}; returns each match\'s groups by number and name. Normalisers: trim, lower, upper, number, number_comma_decimal, cents, cents_comma_decimal, date_ymd, date_dmy, date_mdy. A value that cannot be normalised exactly becomes null',
+  chain_read:
+    'reads NEAR, never writes. input is one of {"method":"view_account","account_id":"x.near","block":123}, {"method":"call_function","account_id":"x.near","function":"get_x","args":{},"block":123}, {"method":"block","block":123 or "final"}, {"method":"tx","hash":"...","sender_id":"x.near"}, {"method":"events","account_id":"x.near","block":123} (the EVENT_JSON logs of that contract in that block, any age). Add "select":["field.path"] to keep only some fields. State reads need the block the bid names; free nodes keep only about the last 100,000 blocks. Up to 30 reads per attempt',
   run_code: CODE_SKILL_HELP,
   run_tests: CODE_SKILL_HELP,
   read_repo: CODE_SKILL_HELP,

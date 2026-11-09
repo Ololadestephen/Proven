@@ -27,6 +27,7 @@ import {
   JOB_LIMIT_NANO_USD,
   PROJECT_LIMIT_NANO_USD,
 } from "./limits.ts";
+import { chainEndpoints, chainReader } from "./chain-read.ts";
 import { functionSkillsInstalled } from "./function-skill.ts";
 import { runnerPass, type RunnerDeps } from "./runner.ts";
 import { hostedSettings, hostedWritePlan } from "./network.ts";
@@ -164,6 +165,14 @@ export async function buildDeps(
     key: keys[0]!.key,
     balance,
     treasury: treasuryId,
+    // Free endpoints only. The archival node is severely rate limited, so it stays off unless the
+    // operator sets PROVEN_CHAIN_READ_ARCHIVAL=yes.
+    chain: chainReader(
+      chainEndpoints(
+        settings.network,
+        env.PROVEN_CHAIN_READ_ARCHIVAL === "yes",
+      ),
+    ),
     earningsCapYocto: settings.earningsCapYocto,
     settle: async (agent, yocto) =>
       (

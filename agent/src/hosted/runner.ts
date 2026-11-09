@@ -24,6 +24,7 @@ import {
   nanoUsdToNear,
 } from "./limits.ts";
 import { inferenceBudget, recordEarnings } from "./earnings.ts";
+import type { ChainReader } from "./chain-read.ts";
 import type { SandboxCall } from "./sandbox.ts";
 import type { HostedAgent, HostedStore } from "./store.ts";
 import { doHostedWork } from "./work.ts";
@@ -41,6 +42,8 @@ export interface RunnerDeps {
   settle: (agent: HostedAgent, yocto: bigint) => Promise<string>;
   treasury: string;
   sandbox?: SandboxCall;
+  /** Read-only NEAR access for chain_read. Without it, chain_read is refused. */
+  chain?: ChainReader;
   earningsCapYocto?: string;
   log: (line: string, detail?: unknown) => void;
 }
@@ -294,7 +297,7 @@ async function work(
         chargeHostedSkill(deps.ledger, spender, run, nanoUsd, limit()),
       );
     },
-    deps.sandbox,
+    { sandbox: deps.sandbox, chain: deps.chain },
   ).catch((error: Error) => {
     if (error instanceof ModelInterrupted)
       deps.store.log(jobId, { step: "work_interrupted", agent: agent.wallet });

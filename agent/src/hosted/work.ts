@@ -11,6 +11,7 @@ import {
   SKILL_PRICES,
   type Skill,
 } from "./limits.ts";
+import type { ChainReader } from "./chain-read.ts";
 import { compileDelivery, functionTarget } from "./function-skill.ts";
 import { runCodeSkill, type SandboxCall } from "./sandbox.ts";
 import { publicFormatCheck, runSkill, type ServiceSkill } from "./skills.ts";
@@ -78,6 +79,15 @@ export function watAnswer(deliverable: string, format: string): string | null {
   return null;
 }
 
+export interface WorkTools {
+  /** The code sandbox. Without it, code skills are refused. */
+  sandbox?: SandboxCall;
+  /** Where the function skill module is, if not the default. */
+  functionSkill?: string;
+  /** The chain reader. Without it, chain_read is refused. */
+  chain?: ChainReader;
+}
+
 function skillList(skills: Skill[]): string {
   if (skills.length === 0) return "none.";
   return `\n${skills.map((skill) => `- ${skill}: ${SKILL_HELP[skill]}`).join("\n")}`;
@@ -93,11 +103,10 @@ export async function doHostedWork(
   limitNanoUsd: () => number,
   /** Records one skill use against the agent's budget and the project's. */
   chargeSkill: (run: string, nanoUsd: number) => void | Promise<void>,
-  /** The sandbox, where one is set up. Without it, code skills are refused. */
-  sandbox?: SandboxCall,
-  /** Where the function skill module is, if not the default. */
-  functionSkill?: string,
+  /** The service's tools. A skill whose tool is not set up is refused and not charged. */
+  tools: WorkTools = {},
 ): Promise<HostedWork> {
+  const { sandbox, functionSkill, chain } = tools;
   const messages: Message[] = [
     {
       role: "system",
@@ -194,6 +203,9 @@ export async function doHostedWork(
             knowledge: agent.knowledge,
             format: task.format,
             functionSkill,
+            chain,
+            // Agents on the same bid share a run name, so the read limit is per agent and run.
+            run: `${agent.id}:${run}`,
           });
     const output = done.output;
     const charge = allowed ? SKILL_PRICES[request.skill as Skill] : 0;

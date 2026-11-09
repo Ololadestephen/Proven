@@ -8,6 +8,7 @@ import {
   type SkillOutcome,
 } from "./function-skill.ts";
 import { extract, tableAggregate } from "./data-skills.ts";
+import type { ChainReader } from "./chain-read.ts";
 
 const MAX_INPUT = 64 * 1024;
 const MAX_RESULT = 4 * 1024;
@@ -249,7 +250,14 @@ export type ServiceSkill = Exclude<
 export async function runSkill(
   skill: ServiceSkill,
   input: string,
-  context: { knowledge: string; format: string; functionSkill?: string },
+  context: {
+    knowledge: string;
+    format: string;
+    functionSkill?: string;
+    /** The service's chain reader and this attempt's run name, for chain_read's per-attempt limit. */
+    chain?: ChainReader;
+    run?: string;
+  },
 ): Promise<SkillOutcome> {
   if (input.length > MAX_INPUT)
     return { output: "Error: skill input exceeds the size limit.", ran: false };
@@ -271,6 +279,13 @@ export async function runSkill(
       return done(tableAggregate(input));
     case "extract":
       return extract(input);
+    case "chain_read":
+      return context.chain
+        ? context.chain.read(input, context.run ?? "")
+        : {
+            output: "Error: chain reads are not available on this service.",
+            ran: false,
+          };
   }
 }
 
