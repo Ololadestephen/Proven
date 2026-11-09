@@ -66,6 +66,38 @@
   font-size: 15px;
   font-weight: 600;
 }
+/* Links beside a heading and at the foot of a card match the post page's "Use an example". */
+.workspace-app .workspace-section-heading a,
+.workspace-app .workspace-card-link {
+  color: var(--purple);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.workspace-app .workspace-card-link {
+  display: inline-block;
+  margin-top: 14px;
+}
+.workspace-app .workspace-section-heading a:hover,
+.workspace-app a.workspace-card:hover .workspace-card-link {
+  text-decoration: underline;
+}
+.workspace-app a.workspace-card:hover h2 {
+  color: var(--purple);
+}
+.workspace-app .workspace-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+.workspace-app .workspace-empty-actions .workspace-card-link {
+  margin-top: 0;
+}
+.workspace-app .market-note {
+  margin: 0 0 14px;
+}
 .workspace-app .workspace-card-top {
   margin-bottom: 19px;
 }

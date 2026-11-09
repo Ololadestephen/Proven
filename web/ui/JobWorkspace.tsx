@@ -13,6 +13,7 @@ import { performJobAction, resendDelivery } from "./job-actions.ts";
 import { jobProgress, workerProgress } from "./job-progress.ts";
 import { noteFor, roleOf, stepForViewer } from "./role-steps.ts";
 import { COIN, IS_MAINNET, NETWORK, OUTLAYER_API } from "./network.ts";
+import { bidTitle } from "./app-route.ts";
 export function JobWorkspace({
   bid,
   market,
@@ -67,11 +68,16 @@ export function JobWorkspace({
 
   const record = market.buyer_records?.[bid.buyer];
   const workerRecord = worker ? market.agent_records?.[worker] : undefined;
+  // The board counts an attempt in its worker's record only when a sync records it. Bids posted before
+  // the board kept records start at zero, so a worker paid here can still show 0 paid.
+  const uncounted =
+    (bid.recorded_attempts ?? 0) <
+    Math.max(bid.funded_attempts, job?.history?.length ?? 0);
   const ended = ["Done", "Closed", "Cancelled"].includes(bid.state);
   const revealed = ended ? (
-    <p>
+    <p className="job-check-link">
       <a href={`/api/market/reveal/${bid.id}`}>Read the published check</a>. Its
-      SHA-256 must equal {bid.check_hash}.
+      SHA-256 must equal <code>{bid.check_hash}</code>.
     </p>
   ) : null;
 
@@ -165,9 +171,14 @@ export function JobWorkspace({
       <header className="job-head">
         <div>
           <span className="job-meta">
-            <a href="/app/jobs">My jobs</a> · Bid {bid.id}
+            {role === "visitor" ? (
+              <a href="/app/market">Market</a>
+            ) : (
+              <a href="/app/jobs">My jobs</a>
+            )}{" "}
+            · Bid {bid.id}
           </span>
-          <h2>{bid.description.split("\n")[0]}</h2>
+          <h2>{bidTitle(bid)}</h2>
         </div>
         <div className="job-head-side">
           <strong>{showNear(bid.amount)}</strong>
@@ -224,31 +235,54 @@ export function JobWorkspace({
               <pre className="market-pre">{bid.format}</pre>
             </details>
           )}
-          <p>
-            Bid ends{" "}
-            {new Date(
-              Number(BigInt(bid.expires_at) / 1_000_000n),
-            ).toUTCString()}
-            . {bid.funded_attempts} of {bid.max_attempts ?? 3} attempts used.
+          <dl className="market-facts">
+            <div>
+              <dt>{ended ? "Bid ended" : "Bid ends"}</dt>
+              <dd>
+                {new Date(
+                  Number(BigInt(bid.expires_at) / 1_000_000n),
+                ).toUTCString()}
+              </dd>
+            </div>
+            <div>
+              <dt>Attempts used</dt>
+              <dd>
+                {bid.funded_attempts} of {bid.max_attempts ?? 3}
+              </dd>
+            </div>
+            <div>
+              <dt>Buyer</dt>
+              <dd>{bid.buyer}</dd>
+            </div>
+            <div>
+              <dt>Worker</dt>
+              <dd>{worker ?? "No worker has claimed this job."}</dd>
+            </div>
+            <div>
+              <dt>Buyer’s record, from the chain</dt>
+              <dd>
+                {record?.paid ?? 0} paid, {record?.refunded ?? 0} refunded,{" "}
+                {record?.expired ?? 0} expired
+              </dd>
+            </div>
+            {workerRecord ? (
+              <div>
+                <dt>Worker’s record, from the chain</dt>
+                <dd>
+                  {workerRecord.paid} paid, {workerRecord.failed} failed the
+                  check, {workerRecord.failed_format} did not fit the format,{" "}
+                  {workerRecord.no_delivery} not delivered,{" "}
+                  {workerRecord.no_verdict} with no verdict
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+          <p className="post-hint">
+            A buyer paying its own second account can inflate these records.
+            {workerRecord && uncounted
+              ? " This bid’s attempts are not in the worker’s record yet: the board counts them when the bid is next synced."
+              : ""}
           </p>
-          <p>
-            This buyer’s record, from the chain: {record?.paid ?? 0} paid,{" "}
-            {record?.refunded ?? 0} refunded, {record?.expired ?? 0} expired. A
-            buyer paying its own second account can inflate this.
-          </p>
-          <p>
-            Buyer: {bid.buyer}.{" "}
-            {worker ? `Worker: ${worker}.` : "No worker has claimed this job."}
-          </p>
-          {workerRecord ? (
-            <p>
-              This worker’s record, from the chain: {workerRecord.paid} paid,{" "}
-              {workerRecord.failed} failed the check,{" "}
-              {workerRecord.failed_format} did not fit the format,{" "}
-              {workerRecord.no_delivery} not delivered,{" "}
-              {workerRecord.no_verdict} with no verdict.
-            </p>
-          ) : null}
           <details>
             <summary>What each side is protected from</summary>
             <p>

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appRoute, ownBids, completed } from "../ui/app-route.ts";
+import { appRoute, bidTitle, ownBids, completed } from "../ui/app-route.ts";
 import { parseNearAmount } from "../ui/near-amount.ts";
 import {
   ActionGate,
@@ -69,6 +69,25 @@ test("routes separate overview, browse, role views, post and bid IDs", () => {
   const claimed = { ...bid, claim: { number: 1, agent: "worker.testnet" } };
   assert.equal(ownBids([claimed], "worker.testnet", "delivering").length, 1);
   assert.equal(completed({ ...bid, state: "Done" }), true);
+});
+test("a bid whose escrow job has ended is not listed as open work", () => {
+  const job = (state: string) => ({ ...bid, state: "Open", job: { state } });
+  assert.equal(completed(job("Refunded") as never), true);
+  assert.equal(completed(job("Released") as never), true);
+  assert.equal(completed(job("Funded") as never), false);
+  assert.equal(completed({ ...bid, state: "Open", job: null }), false);
+});
+test("a title is the first line, without the colon that introduces what follows", () => {
+  const titled = (description: string) => bidTitle({ ...bid, description });
+  assert.equal(
+    titled("\nExtract these invoices, in this format:\n{...}"),
+    "Extract these invoices, in this format",
+  );
+  assert.equal(titled("Sum the rows."), "Sum the rows.");
+  assert.equal(titled("   \n  "), `Bid ${bid.id}`);
+  const long = titled("x".repeat(150));
+  assert.equal(long.length, 100);
+  assert.ok(long.endsWith("…"));
 });
 test("NEAR amounts preserve yocto precision and reject rounded or malformed payments", () => {
   const max = 5n * 10n ** 24n; // The escrow's limit, read from the chain.

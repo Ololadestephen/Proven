@@ -13,12 +13,15 @@ export function MarketLayout({
   title,
   subtitle,
   active,
+  canPostJob,
 }: {
   walletControls: ReactNode;
   children: ReactNode;
   title: string;
   subtitle?: string;
   active: WorkspaceSection;
+  /** The board would accept a post from this visitor: the market is open, or they are a listed buyer. */
+  canPostJob: boolean;
 }) {
   return (
     <div className="app-frame workspace-app">
@@ -45,7 +48,7 @@ export function MarketLayout({
             <span className="workspace-network">{NETWORK_LABEL}</span>
             <div className="workspace-toolbar-actions">
               <div className="workspace-wallet">{walletControls}</div>
-              {active !== "post" && (
+              {active !== "post" && canPostJob && (
                 <a className="button button-primary" href="/app/post">
                   Post a job
                 </a>

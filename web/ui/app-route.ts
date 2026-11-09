@@ -45,8 +45,11 @@ export function appRoute(path: string, hash = ""): AppRoute {
     subtitle: "",
   };
 }
+/** Ended on the board, or its escrow job has ended and the board has not been synced yet. A Released
+ * or Refunded job never runs again, so its bid is not open work. */
 export const completed = (bid: MarketBid) =>
-  ["Done", "Closed", "Cancelled", "Blocked"].includes(bid.state);
+  ["Done", "Closed", "Cancelled", "Blocked"].includes(bid.state) ||
+  ["Released", "Refunded"].includes(bid.job?.state ?? "");
 export function ownBids(
   bids: MarketBid[],
   account: string | null,
@@ -61,11 +64,14 @@ export function ownBids(
         (bid.job?.history ?? []).some((attempt) => attempt.worker === account),
   );
 }
+/** The description's first line, as a title. A line that only introduces what follows ("…in this
+ * format:") loses its colon. */
 export function bidTitle(bid: MarketBid) {
-  return (
-    bid.description
-      .split("\n")
-      .find((line) => line.trim())
-      ?.slice(0, 100) || `Bid ${bid.id}`
-  );
+  const line = bid.description
+    .split("\n")
+    .find((text) => text.trim())
+    ?.trim()
+    .replace(/\s*[:;,]+$/, "");
+  if (!line) return `Bid ${bid.id}`;
+  return line.length > 100 ? `${line.slice(0, 99).trimEnd()}…` : line;
 }

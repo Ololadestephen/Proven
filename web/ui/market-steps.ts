@@ -54,6 +54,8 @@ export interface MarketBid {
   claims_made: number;
   funded_attempts: number;
   fees?: string[];
+  /** Attempts the board has counted in its agents' records. Older boards do not report it. */
+  recorded_attempts?: number;
   /** The description is cut to its first line and the format removed, once the bid has ended. */
   finished?: boolean;
   storage_paid?: string;

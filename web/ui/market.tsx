@@ -31,6 +31,7 @@ function App() {
       title={route.title}
       subtitle={route.subtitle}
       active={route.section}
+      canPostJob={canPost(wallet?.accountId)}
       walletControls={
         <WalletControls
           wallet={wallet}

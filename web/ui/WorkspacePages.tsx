@@ -74,20 +74,58 @@ function Overview({
         <a className="workspace-card" href="/app/market">
           <h2>Find work</h2>
           <p>Browse open tasks.</p>
+          <span className="workspace-card-link">Open the market</span>
         </a>
         <a className="workspace-card" href="/guide">
           <h2>How it works</h2>
           <p>Read how a job runs and pays.</p>
+          <span className="workspace-card-link">Read the guide</span>
         </a>
       </div>
+      <RecentResults bids={market.bids} />
     </>
   );
 }
+/** Finished jobs, newest first, so a first visit shows real outcomes from the chain. */
+function RecentResults({ bids }: { bids: MarketBid[] }) {
+  const finished = bids
+    .filter(
+      (bid) => completed(bid) && !["Cancelled", "Blocked"].includes(bid.state),
+    )
+    .sort((a, b) => b.id - a.id)
+    .slice(0, RECENT_RESULTS);
+  if (!finished.length) return null;
+  return (
+    <section className="workspace-card">
+      <div className="workspace-section-heading">
+        <h2>Recent results</h2>
+        <a href="/app/market#completed">All completed jobs</a>
+      </div>
+      <div className="workspace-queue">
+        {finished.map((bid) => (
+          <JobRow key={bid.id} bid={bid} detail={outcome(bid)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+const RECENT_RESULTS = 3;
+/** The escrow's outcome in a few words. A refund is never shown as success. */
+function outcome(bid: MarketBid) {
+  const job = bid.job ?? bid.last_job;
+  if (job?.state === "Released") return `Paid ${showNear(job.amount)}`;
+  if (job?.state === "Refunded") return "Refunded to the buyer";
+  return bid.state === "Done" ? "Done" : "Closed";
+}
 function MarketList({ bids }: { bids: MarketBid[] }) {
-  const [tab, setTab] = useState("open");
+  // The server serves no query strings, so the completed view is chosen by the hash.
+  const [tab, setTab] = useState(() =>
+    location.hash === "#completed" ? "completed" : "open",
+  );
   const selected = bids.filter((bid) =>
     tab === "completed" ? completed(bid) : !completed(bid),
   );
+  const done = bids.filter(completed).length;
   return (
     <section className="workspace-card">
       <div className="workspace-tabs" aria-label="Market filter">
@@ -107,10 +145,35 @@ function MarketList({ bids }: { bids: MarketBid[] }) {
           <JobRow key={bid.id} bid={bid} />
         ))}
       </div>
-      {!selected.length ? (
+      {!selected.length && tab === "open" ? (
+        <div className="workspace-empty">
+          <h3>No open jobs right now.</h3>
+          <p>
+            A job appears here once its buyer posts it and the bid review allows
+            it.
+            {done
+              ? " Completed jobs show how a job runs and pays."
+              : " The guide shows how a job runs and pays."}
+          </p>
+          <div className="workspace-empty-actions">
+            {done ? (
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setTab("completed")}
+              >
+                See completed and closed jobs
+              </button>
+            ) : null}
+            <a className="workspace-card-link" href="/guide">
+              How a job works
+            </a>
+          </div>
+        </div>
+      ) : null}
+      {!selected.length && tab === "completed" ? (
         <p className="workspace-empty">
-          No {tab === "open" ? "open" : "completed or closed"} jobs on this
-          board.
+          No completed or closed jobs on this board.
         </p>
       ) : null}
     </section>

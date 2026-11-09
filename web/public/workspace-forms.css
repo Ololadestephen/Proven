@@ -402,6 +402,18 @@
   color: var(--muted);
   font-size: 12px;
 }
+/* Plain text on the job page reads at the same size as the cards around it. */
+.workspace-app .market-bid > p:not([class]),
+.workspace-app .job-check-link {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.workspace-app .job-check-link code {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .workspace-app .job-head-side {
   display: grid;
   flex: none;
