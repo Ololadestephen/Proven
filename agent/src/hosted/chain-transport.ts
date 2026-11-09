@@ -271,25 +271,29 @@ function succeeded(status: unknown): boolean {
   return !!status && typeof status === "object" && !("Failure" in status);
 }
 
+type ReceiptOutcome = NonNullable<
+  NonNullable<NeardataBlock["shards"]>[number]["receipt_execution_outcomes"]
+>[number];
+
+/** The events in one receipt's logs, if that receipt ran on `account`. */
+function receiptEvents(item: ReceiptOutcome, account: string): unknown[] {
+  const outcome = item.execution_outcome?.outcome;
+  if (outcome?.executor_id !== account) return [];
+  const where = {
+    tx_hash: item.tx_hash ?? null,
+    receipt_id: item.execution_outcome?.id ?? null,
+    succeeded: succeeded(outcome.status),
+  };
+  return (outcome.logs ?? [])
+    .filter((log) => log.startsWith(EVENT_PREFIX))
+    .map((log) => ({ ...where, event: eventValue(log) }));
+}
+
 /** The NEP-297 events one contract logged in a block, with the receipt and transaction of each. */
 export function eventsInBlock(data: NeardataBlock, account: string): unknown[] {
-  const found: unknown[] = [];
-  const items = (data.shards ?? []).flatMap(
-    (shard) => shard.receipt_execution_outcomes ?? [],
-  );
-  for (const item of items) {
-    const outcome = item.execution_outcome?.outcome;
-    if (outcome?.executor_id !== account) continue;
-    for (const log of outcome.logs ?? [])
-      if (log.startsWith(EVENT_PREFIX))
-        found.push({
-          tx_hash: item.tx_hash ?? null,
-          receipt_id: item.execution_outcome?.id ?? null,
-          succeeded: succeeded(outcome.status),
-          event: eventValue(log),
-        });
-  }
-  return found;
+  return (data.shards ?? [])
+    .flatMap((shard) => shard.receipt_execution_outcomes ?? [])
+    .flatMap((item) => receiptEvents(item, account));
 }
 
 /** One block from neardata, which keeps every block, reduced to one contract's events. */
