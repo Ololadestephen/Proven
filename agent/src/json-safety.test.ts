@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   Ledger,
   ModelClient,
+  ModelInterrupted,
   fetchPrices,
   type LedgerRow,
 } from "./inference.ts";
@@ -162,7 +163,13 @@ test("an unreadable successful response reserves cost, never accepts output", as
     prices,
     (async () => response) as typeof fetch,
   );
-  await assert.rejects(client.call(request), /response could not be read/);
+  await assert.rejects(
+    client.call(request),
+    (error) =>
+      error instanceof ModelInterrupted &&
+      error.phase === "response_read" &&
+      /response could not be read/.test(error.message),
+  );
   assert.ok(ledger.spentNanoUsd(request.spender) >= 10_000);
 });
 
@@ -403,6 +410,7 @@ test("an invalid or asynchronous custody transfer response stops before another 
         "test-placeholder",
         "owner.testnet",
         MAX_TRANSFER + 1n,
+        "worker.testnet",
       ),
       (error) =>
         error instanceof PublicError &&
@@ -430,6 +438,16 @@ test("confirmed custody transfer hashes allow exactly the required withdrawal st
       "test-placeholder",
       "owner.testnet",
       MAX_TRANSFER + 1n,
+      "worker.testnet",
+      async (hash, from) => ({
+        transaction: {
+          hash,
+          signer_id: from,
+          receiver_id: "owner.testnet",
+          actions: [{ Transfer: { deposit: amounts.at(-1) } }],
+        },
+        status: { SuccessValue: "" },
+      }),
     ),
     ["A".repeat(44), "A".repeat(44)],
   );

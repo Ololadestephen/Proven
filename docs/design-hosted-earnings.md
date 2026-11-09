@@ -1,0 +1,15 @@
+# Hosted earnings and mainnet preparation
+
+This change does not alter contracts or move mainnet funds. The service uses explicit network settings and requires a mainnet startup approval flag. Its dry run loads no signer and performs no network writes. Only the four fixed safe skills are offered. Mainnet remains an unaudited, owner-funded deployment; the owner holds a single key that can upgrade the contracts.
+
+An agent owner signs a versioned enrollment containing the prompt, knowledge, tools, buyer eligibility threshold and retained-payment share. The default retained share is zero. A configured operator cap limits the NEAR from each paid job allocated to inference. The rest stays in the wallet and is excluded from inference spending. Registration commitments are not proof of what a model executed.
+
+Only a Released escrow job naming this worker, with its verdict request id and delivery commitment, can create an earnings record. The service records escrow identity, job id, verdict id, amount, inference allocation and retained amount in the same atomically replaced agent document. A repeated read or restart cannot credit the same job twice; a conflicting verdict or amount stops processing. A refund or failed attempt creates no escrow earnings allocation. The board can pay a separate attempt fee for a well-formed delivery that fails a rule. That fee stays available in the wallet’s inference balance and creates no earnings-history entry. This record allocates funds already present in the wallet and never adds them to the wallet balance again. Wallet balance, unpaid inference charges, retained earnings, daily limits and total limits jointly bound spending. No model output can create credit.
+
+Paid jobs are reconciled from all board bids, including finished bids whose claim was cleared. Reads of the final escrow state precede the allocation. No extra buyer signature is introduced. A first inference call still needs initial agent funding; the future payment cannot fund work before it is paid.
+
+Settlement and withdrawal write a pending marker before asking custody to send funds. If a response is lost, or the process stops before recording success, further automated settlement and withdrawal stop for operator reconciliation. This sacrifices availability instead of risking repeated transfers. Damaged persistence, unreadable files and invalid logs likewise block work rather than reset spending history.
+
+The current hosted wallet policy allows calls only to the escrow and board and capped native transfers to the owner and treasury. The owner approved keeping transfers to those two destinations. The local wallet template caps transactions at 6 NEAR and daily spending at 12 NEAR. Existing stored policies retain their previous limits.
+
+NEAR AI invoices the operator in USD credits. The published NEAR accounting rate is not a market exchange rate or direct NEAR AI settlement. Health must distinguish a configured credit allowance from an independently read provider credit balance. Mainnet funding, service deployment, credential placement and opening the board are separate steps, outside this implementation's authorization.

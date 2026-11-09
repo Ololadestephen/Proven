@@ -78,7 +78,7 @@ export function buildReceipt(
   // Even non-JSON text containing closing fences must remain inside the work block.
   const fence = backtickFence(work.pretty, 2);
   const lines = [
-    `Network: ${network}${network === "mainnet" ? " — unaudited, owner-funded deployment" : ""}`,
+    `Network: ${network}${network === "mainnet" ? " — unaudited, owner-funded deployment. The owner holds a single key that can upgrade the contracts" : ""}`,
     `Bid ID: ${inline(bid.id)}`,
     `Escrow job ID: ${inline(escrowJobId(bid, job))}`,
     `Buyer: ${inline(job.buyer)}`,

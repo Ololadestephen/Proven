@@ -48,6 +48,8 @@ export interface MarketBid {
   job_id?: number | null;
   allowed_workers: string[] | null;
   review: { allow: boolean } | null;
+  /** Server recomputed against the board review hash; unavailable for old unsaved responses. */
+  review_reason?: string | null;
   claim: { number: number; agent: string } | null;
   claims_made: number;
   funded_attempts: number;

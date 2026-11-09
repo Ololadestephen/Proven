@@ -12,7 +12,7 @@ import {
   type Skill,
 } from "./limits.ts";
 import { runCodeSkill, type SandboxCall } from "./sandbox.ts";
-import { jsonValidator, runSkill } from "./skills.ts";
+import { publicFormatCheck, runSkill } from "./skills.ts";
 
 type Caller = Pick<ModelClient, "call">;
 
@@ -73,7 +73,7 @@ export async function doHostedWork(
    * case could pass it, before anything is spent. */
   limitNanoUsd: () => number,
   /** Records one skill use against the agent's budget and the project's. */
-  chargeSkill: (run: string, nanoUsd: number) => void,
+  chargeSkill: (run: string, nanoUsd: number) => void | Promise<void>,
   /** The sandbox, where one is set up. Without it, code skills are refused. */
   sandbox?: SandboxCall,
 ): Promise<HostedWork> {
@@ -112,24 +112,17 @@ export async function doHostedWork(
       // A delivery that does not fit the published format earns nothing, so the agent hears why and
       // can correct it, while it still has rounds left. Only the verifier's verdict decides anything.
       const fit = parsed.deliverable
-        ? jsonValidator(parsed.deliverable, task.format)
-        : (parsed.refusal ?? "Not a JSON object.");
-      result.format_checks.push(
-        fit.startsWith("Fits") || fit.includes("no rows to compare")
-          ? "fits"
-          : fit.slice(0, 300),
-      );
-      if (
-        (parsed.deliverable &&
-          (fit.startsWith("Fits") || fit.includes("no rows to compare"))) ||
-        round === MAX_ROUNDS - 1
-      )
-        return { ...result, ...parsed };
+        ? publicFormatCheck(parsed.deliverable, task.format)
+        : { fits: false, message: parsed.refusal ?? "Not a JSON object." };
+      result.format_checks.push(fit.fits ? "fits" : fit.message.slice(0, 300));
+      if (parsed.deliverable && fit.fits) return { ...result, ...parsed };
+      if (round === MAX_ROUNDS - 1)
+        return { ...result, deliverable: null, refusal: "public_format" };
       messages.push(
         { role: "assistant", content: call.text.slice(0, 8_000) },
         {
           role: "user",
-          content: `That answer does not fit the public format, so it would fail: ${fit.slice(0, 500)}\nAnswer again with only the final JSON result, in exactly that format.`,
+          content: `That answer does not fit the public format, so it would fail: ${fit.message.slice(0, 500)}\nAnswer again with only the final JSON result, in exactly that format.`,
         },
       );
       continue;
@@ -164,7 +157,7 @@ export async function doHostedWork(
       result_bytes: Buffer.byteLength(output),
     });
     if (done.ran) {
-      chargeSkill(run, charge);
+      await chargeSkill(run, charge);
       result.costNanoUsd += charge;
     }
     messages.push(

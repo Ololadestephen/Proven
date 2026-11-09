@@ -9,7 +9,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { Skill } from "./limits.ts";
+import { ALLOWED_SKILLS, type Skill } from "./limits.ts";
+import { PublicError } from "../errors.ts";
+import { isObject } from "../json.ts";
+import type { EarningsRecord } from "./earnings.ts";
 
 export interface HostedAgent {
   wallet: string;
@@ -33,6 +36,113 @@ export interface HostedAgent {
   last_claim_at: string | null;
   settled_nano_usd: number;
   paused: boolean;
+  keep_bps?: number;
+  earnings?: EarningsRecord[];
+  pending_settlement_nano_usd?: number;
+  pending_withdrawal?: boolean;
+  pending_claim_bid?: number;
+  pending_registration?: boolean;
+}
+
+function missing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+function damaged(): never {
+  throw new PublicError(
+    "Hosted persistence is damaged or unavailable. Work and spending are stopped; reconcile the stored records.",
+  );
+}
+function parseAgent(text: string, wallet: string): HostedAgent {
+  let x: unknown;
+  try {
+    x = JSON.parse(text);
+  } catch {
+    return damaged();
+  }
+  if (
+    !isObject(x) ||
+    x.wallet !== wallet ||
+    ![
+      "owner",
+      "prompt",
+      "knowledge",
+      "model",
+      "wallet_id",
+      "custody_key",
+      "created_at",
+    ].every((k) => typeof x[k] === "string") ||
+    !isObject(x.review) ||
+    !["reason", "model", "chat_id", "response_hash"].every(
+      (k) => typeof (x.review as Record<string, unknown>)[k] === "string",
+    ) ||
+    !Array.isArray(x.skills) ||
+    !x.skills.every(
+      (v) =>
+        typeof v === "string" &&
+        (ALLOWED_SKILLS as readonly string[]).includes(v),
+    ) ||
+    typeof x.paused !== "boolean" ||
+    !Number.isSafeInteger(x.settled_nano_usd) ||
+    Number(x.settled_nano_usd) < 0 ||
+    !(
+      x.min_buyer_paid_share === null ||
+      (typeof x.min_buyer_paid_share === "number" &&
+        x.min_buyer_paid_share >= 0 &&
+        x.min_buyer_paid_share <= 1)
+    ) ||
+    !(x.last_claim_at === null || typeof x.last_claim_at === "string") ||
+    !(
+      x.keep_bps === undefined ||
+      (Number.isInteger(x.keep_bps) &&
+        Number(x.keep_bps) >= 0 &&
+        Number(x.keep_bps) <= 10000)
+    ) ||
+    !(
+      x.pending_settlement_nano_usd === undefined ||
+      (Number.isSafeInteger(x.pending_settlement_nano_usd) &&
+        Number(x.pending_settlement_nano_usd) > 0)
+    ) ||
+    !(
+      x.pending_registration === undefined ||
+      typeof x.pending_registration === "boolean"
+    ) ||
+    !(
+      x.pending_claim_bid === undefined ||
+      (Number.isSafeInteger(x.pending_claim_bid) &&
+        Number(x.pending_claim_bid) >= 0)
+    ) ||
+    !(
+      x.pending_withdrawal === undefined ||
+      typeof x.pending_withdrawal === "boolean"
+    )
+  )
+    return damaged();
+  if (x.earnings !== undefined) {
+    if (!Array.isArray(x.earnings)) return damaged();
+    const jobs = new Set<string>();
+    for (const row of x.earnings) {
+      if (
+        !isObject(row) ||
+        typeof row.escrow !== "string" ||
+        !Number.isSafeInteger(row.job_id) ||
+        Number(row.job_id) < 0 ||
+        typeof row.verdict_request_id !== "string" ||
+        !/^\d+$/.test(row.verdict_request_id) ||
+        typeof row.at !== "string" ||
+        !["amount_yocto", "inference_yocto", "retained_yocto"].every(
+          (k) => typeof row[k] === "string" && /^\d+$/.test(row[k] as string),
+        ) ||
+        BigInt(row.inference_yocto as string) +
+          BigInt(row.retained_yocto as string) !==
+          BigInt(row.amount_yocto as string)
+      )
+        return damaged();
+      const id = `${row.escrow}:${row.job_id}`;
+      if (jobs.has(id)) return damaged();
+      jobs.add(id);
+    }
+  }
+  return x as unknown as HostedAgent;
 }
 
 export class HostedStore {
@@ -53,20 +163,20 @@ export class HostedStore {
   }
   get(wallet: string): HostedAgent | null {
     try {
-      return JSON.parse(readFileSync(this.path(wallet), "utf8")) as HostedAgent;
-    } catch {
-      return null;
+      return parseAgent(readFileSync(this.path(wallet), "utf8"), wallet);
+    } catch (error) {
+      if (missing(error)) return null;
+      return damaged();
     }
   }
   all(): HostedAgent[] {
     return readdirSync(join(this.dir, "agents"))
       .filter((name) => name.endsWith(".json"))
-      .map(
-        (name) =>
-          JSON.parse(
-            readFileSync(join(this.dir, "agents", name), "utf8"),
-          ) as HostedAgent,
-      );
+      .map((name) => {
+        const agent = this.get(name.slice(0, -5));
+        if (!agent) return damaged();
+        return agent;
+      });
   }
   /** Agents in the published order: longest waiting first, then oldest. */
   inOrder(): HostedAgent[] {
@@ -86,8 +196,9 @@ export class HostedStore {
         mode: 0o600,
       });
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === "EEXIST") return false;
+      return damaged();
     }
   }
   /** Kept until the relay has it, so a failed hand-over can never lose work already fixed on chain. */
@@ -102,8 +213,9 @@ export class HostedStore {
         join(this.dir, "logs", `job-${jobId}.delivery`),
         "utf8",
       );
-    } catch {
-      return null;
+    } catch (error) {
+      if (missing(error)) return null;
+      return damaged();
     }
   }
   removeDelivery(jobId: number) {
@@ -122,9 +234,20 @@ export class HostedStore {
       return readFileSync(join(this.dir, "logs", `job-${jobId}.jsonl`), "utf8")
         .split("\n")
         .filter(Boolean)
-        .map((line) => JSON.parse(line) as unknown);
-    } catch {
-      return [];
+        .map((line) => {
+          const entry: unknown = JSON.parse(line);
+          if (
+            !isObject(entry) ||
+            typeof entry.step !== "string" ||
+            !entry.step ||
+            typeof entry.at !== "string"
+          )
+            return damaged();
+          return entry;
+        });
+    } catch (error) {
+      if (missing(error)) return [];
+      return damaged();
     }
   }
 }

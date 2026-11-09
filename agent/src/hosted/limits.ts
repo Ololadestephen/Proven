@@ -24,6 +24,8 @@ export const WITHDRAW_LEFT_BEHIND = 2n * MILLI;
 /** Hard limits. The per-call limit is the agent's remaining budget, checked at its worst case first. */
 export const AGENT_LIMIT_NANO_USD = 0.5 * NANO_USD;
 export const JOB_LIMIT_NANO_USD = 0.05 * NANO_USD;
+export const DAILY_LIMIT_NANO_USD = 0.25 * NANO_USD;
+export const MAX_CONCURRENT_JOBS = 1;
 export const PROJECT_LIMIT_NANO_USD = 5 * NANO_USD;
 
 export const MAX_PROMPT_BYTES = 8 * 1024;
@@ -54,7 +56,7 @@ export const CODE_SKILL_USE_NANO_USD = 2_000_000;
 export type Skill = (typeof ALLOWED_SKILLS)[number];
 
 export function nearToNanoUsd(yocto: bigint): number {
-  return (Number(yocto) / Number(NEAR)) * USD_PER_NEAR * NANO_USD;
+  return Number((yocto * BigInt(USD_PER_NEAR * NANO_USD)) / NEAR);
 }
 
 export function nanoUsdToNear(nanoUsd: number): bigint {

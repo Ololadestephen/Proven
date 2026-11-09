@@ -48,6 +48,8 @@ export interface CallRequest {
   keyName?: string;
   /** Hard local limit for this spender, in nano-USD. Refused before spending if it could pass. */
   limitNanoUsd?: number;
+  /** Explicitly retain only public bid-review responses for fingerprint-proven reasons. */
+  retainPublicResponse?: boolean;
 }
 
 export interface CallResult {
@@ -60,6 +62,7 @@ export interface CallResult {
   costNanoUsd: number;
   requestHash: string;
   responseHash: string;
+  publicResponseBody?: string;
 }
 
 function sha256(bytes: Uint8Array | string): string {
@@ -226,16 +229,14 @@ export class ModelClient {
       // The outcome is unknown and it may have been charged, so count the worst case: the local
       // limit must never be passed because of a call we could not see finish.
       this.ledger.append({ ...row(0), cost_nano_usd: worst });
-      throw new PublicError("The model call did not complete.");
+      throw new ModelInterrupted("transport");
     }
     let bytes: Uint8Array;
     try {
       bytes = new Uint8Array(await response.arrayBuffer());
     } catch {
       this.ledger.append({ ...row(response.status), cost_nano_usd: worst });
-      throw new PublicError(
-        "The model response could not be read. Its possible cost was reserved.",
-      );
+      throw new ModelInterrupted("response_read");
     }
     if (!response.ok) {
       this.ledger.append(row(response.status));
@@ -291,7 +292,23 @@ export class ModelClient {
       costNanoUsd,
       requestHash,
       responseHash,
+      ...(request.retainPublicResponse
+        ? { publicResponseBody: new TextDecoder().decode(bytes) }
+        : {}),
     };
+  }
+}
+
+/** A possibly charged request whose transport or response ended without a usable outcome. */
+export class ModelInterrupted extends PublicError {
+  readonly phase: "transport" | "response_read";
+  constructor(phase: "transport" | "response_read") {
+    super(
+      phase === "transport"
+        ? "The model call did not complete."
+        : "The model response could not be read. Its possible cost was reserved.",
+    );
+    this.phase = phase;
   }
 }
 

@@ -138,3 +138,40 @@ test("testnet health never queries the mainnet relay, including a stale caller s
   assert.deepEqual(result.alerts, []);
   assert.deepEqual(healthBalances("escrow.testnet", []), []);
 });
+
+test("credit alerts distinguish low estimated credit, stale snapshots and unavailable provider balance", async () => {
+  const { inferenceCreditAlerts } = await import("./health.ts");
+  const now = Date.parse("2026-11-08T12:00:00Z");
+  assert.equal(
+    inferenceCreditAlerts(null, now)[0]?.kind,
+    "credit_snapshot_unavailable",
+  );
+  assert.deepEqual(
+    inferenceCreditAlerts(
+      { usd: 10, spentSinceUsd: 1, asOf: "2026-11-08T00:00:00Z" },
+      now,
+    ),
+    [],
+  );
+  const low = inferenceCreditAlerts(
+    { usd: 1, spentSinceUsd: 0.3, asOf: "2026-11-08T00:00:00Z" },
+    now,
+  );
+  assert.equal(low[0]?.kind, "low_inference_credit");
+  assert.match(low[0]!.detail, /owner-entered snapshot/);
+  assert.equal(
+    inferenceCreditAlerts(
+      { usd: 10, spentSinceUsd: 0, asOf: "2026-11-06T00:00:00Z" },
+      now,
+    )[0]?.kind,
+    "credit_snapshot_stale",
+  );
+  for (const snapshot of [
+    { usd: NaN, spentSinceUsd: 0, asOf: "bad" },
+    { usd: 10, spentSinceUsd: 0, asOf: "2026-11-09T00:00:00Z" },
+  ])
+    assert.equal(
+      inferenceCreditAlerts(snapshot, now)[0]?.kind,
+      "credit_snapshot_unavailable",
+    );
+});

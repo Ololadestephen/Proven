@@ -1,0 +1,35 @@
+[Unit]
+Description=Proven hosted agents (mainnet, unaudited, owner-funded, single owner upgrade key)
+After=proven-relay-mainnet.service
+Requires=proven-relay-mainnet.service
+
+[Service]
+User=proven-hosted-mainnet
+Group=proven-hosted-mainnet
+SupplementaryGroups=proven-sock
+WorkingDirectory=/opt/proven/agent
+Environment=NEAR_NETWORK=mainnet
+Environment=PROVEN_HOSTED_PORT=4177
+Environment=PROVEN_RELAY_SOCKET=/run/proven-mainnet/relay.sock
+Environment=PROVEN_RELAY_SOCKET_SHARED=yes
+Environment=PROVEN_HOSTED_DATA=/var/lib/proven/hosted-mainnet
+StateDirectory=proven/hosted-mainnet
+StateDirectoryMode=0700
+ExecStartPre=/opt/node/node --env-file=/etc/proven/hosted-mainnet.env src/hosted/service.ts --dry-run
+ExecStart=/opt/node/node --env-file=/etc/proven/hosted-mainnet.env src/hosted/service.ts
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+InaccessiblePaths=-/var/run/docker.sock -/var/run/proven/relay.sock -/usr/local/bin/boxd -/usr/local/bin/claude -/usr/local/bin/codex -/usr/local/bin/gh -/run/boxd
+MemoryMax=1500M
+TasksMax=128
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

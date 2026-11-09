@@ -1,3 +1,4 @@
+import { savePublicReview } from "../../shared/public-review.ts";
 import { chainProvider } from "./rpc.ts";
 import { randomBytes } from "node:crypto";
 // One attempt on one bid, driven from what the chain says at each step, so an interrupted attempt
@@ -256,6 +257,22 @@ export async function runReview(bidId: number, keyName: string) {
     response_hash: call.responseHash,
   };
   if (!answer) return { ...summary, recorded: false, state: "Unreviewed" };
+  if (!call.publicResponseBody)
+    throw new PublicError(
+      "The public review response was not retained; no decision was recorded.",
+    );
+  savePublicReview(
+    `${ROOT}runs/private/bid-reviews`,
+    BOARD,
+    bidId,
+    call.publicResponseBody,
+    {
+      allow: answer.allow,
+      review_hash: call.responseHash,
+      model: call.model,
+      chat_id: call.chatId,
+    },
+  );
   const signer = new Account(
     values.NEAR_ACCOUNT_ID ?? "",
     chainProvider(config.rpc),

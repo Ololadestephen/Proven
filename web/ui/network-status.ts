@@ -68,7 +68,7 @@ function near(yocto: string): string {
 
 export function networkDescription(network: "mainnet" | "testnet"): string {
   return network === "mainnet"
-    ? "Mainnet · unaudited, owner-funded deployment"
+    ? "Mainnet · unaudited, owner-funded deployment. The owner holds a single key that can upgrade the contracts"
     : "Testnet preparation only";
 }
 

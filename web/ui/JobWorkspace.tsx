@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { CollectedWork } from "./CollectedWork.tsx";
+import { BidReview } from "./BidReview.tsx";
 import {
   nextStep,
   showNear,
@@ -210,6 +211,7 @@ export function JobWorkspace({
       {tab === "brief" ? (
         <>
           <p className="market-description">{bid.description}</p>
+          <BidReview review={bid.review} reason={bid.review_reason} />
           {bid.finished ? (
             <p className="post-hint">
               This bid has ended and its storage went back to the buyer. The

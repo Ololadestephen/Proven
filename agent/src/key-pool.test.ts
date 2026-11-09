@@ -141,3 +141,123 @@ test("spare keys are found by name, in order, and missing ones skipped", () => {
     ["A", "A_3"],
   );
 });
+
+test("the next request cannot cross job or project headroom even when the caller has wallet funds", async () => {
+  const { ModelClient, DEFAULT_MODEL } = await import("./inference.ts");
+  for (const rows of [
+    [row("agent-a", "job-1", 499)],
+    [row("agent-b", "other-job", 4999)],
+  ]) {
+    let calls = 0;
+    const ledger = {
+      rows: () => rows,
+      spentNanoUsd: (spender: string) =>
+        rows
+          .filter((r) => r.spender === spender)
+          .reduce((s, r) => s + r.cost_nano_usd, 0),
+      append: () => assert.fail("no inference was sent"),
+    };
+    const client = new ModelClient(
+      ledger as never,
+      new Map([
+        [
+          DEFAULT_MODEL,
+          { inputNanoUsd: 1, outputNanoUsd: 1, verifiable: true },
+        ],
+      ]),
+      (async () => {
+        calls++;
+        throw Error("network must not run");
+      }) as typeof fetch,
+    );
+    const pool = new KeyPool(
+      client,
+      ledger as never,
+      keys,
+      limits,
+      join(mkdtempSync(join(tmpdir(), "pool-headroom-")), "events"),
+    );
+    await assert.rejects(
+      pool.call({ ...request, limitNanoUsd: 1e12 }),
+      /inference limit/,
+    );
+    assert.equal(calls, 0);
+  }
+});
+
+test("concurrent requests share one spending gate and re-read budget after the prior call", async () => {
+  const rows: ReturnType<typeof row>[] = [];
+  let release: () => void = () => undefined;
+  const firstWait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  const client = {
+    call: async () => {
+      calls++;
+      await firstWait;
+      rows.push(row("agent-a", "job-1", 500));
+      return { text: "done" } as CallResult;
+    },
+  };
+  const pool = new KeyPool(
+    client,
+    { rows: () => rows } as never,
+    keys,
+    limits,
+    join(mkdtempSync(join(tmpdir(), "pool-concurrent-")), "log"),
+  );
+  const first = pool.call(request),
+    second = pool.call(request);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  release();
+  await first;
+  await assert.rejects(second, /abnormal/);
+  assert.equal(calls, 1);
+});
+
+test("queued model spending and skill billing cannot together overrun the project ceiling", async () => {
+  const { chargeHostedSkill } = await import("./hosted/runner.ts");
+  const { PROJECT_LIMIT_NANO_USD } = await import("./hosted/limits.ts");
+  const rows = [row("old", "old", PROJECT_LIMIT_NANO_USD - 50_000_000)];
+  const ledger = {
+    rows: () => rows,
+    spentNanoUsd: (spender: string) =>
+      rows
+        .filter((r) => r.spender === spender)
+        .reduce((s, r) => s + r.cost_nano_usd, 0),
+    append: (r: ReturnType<typeof row>) => rows.push(r),
+  };
+  const client = {
+    call: async (r: CallRequest) => {
+      rows.push(
+        row(r.spender, r.run, r.spender === "a" ? 20_000_000 : 30_000_000),
+      );
+      return { text: "done" } as CallResult;
+    },
+  };
+  const pool = new KeyPool(
+    client,
+    ledger as never,
+    keys,
+    {
+      agentNanoUsd: 1e9,
+      projectNanoUsd: PROJECT_LIMIT_NANO_USD,
+      jobNanoUsd: 50_000_000,
+    },
+    join(mkdtempSync(join(tmpdir(), "pool-mixed-")), "log"),
+  );
+  const first = pool.call({ ...request, spender: "a" });
+  const second = pool.call({ ...request, spender: "b" });
+  await first;
+  const skill = pool.account(() =>
+    chargeHostedSkill(ledger as never, "a", "job-1", 100_000, 1e9),
+  );
+  await second;
+  await assert.rejects(skill, /exceed/);
+  assert.equal(
+    rows.reduce((s, r) => s + r.cost_nano_usd, 0),
+    PROJECT_LIMIT_NANO_USD,
+  );
+});

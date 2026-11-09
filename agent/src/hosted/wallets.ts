@@ -13,9 +13,10 @@ import {
 } from "../custody.ts";
 import { PublicError } from "../errors.ts";
 import { isObject, jsonObject } from "../json.ts";
+import { confirmedTransfer } from "./transfer-proof.ts";
 
 const MAX_POLICY_STORAGE = 50_000_000_000_000_000_000_000n;
-/** The policy allows no single transfer above this, so a withdrawal goes in steps. */
+/** Keep transfer steps compatible with legacy 0.1 NEAR stored policies. The policy may be stricter. */
 export const MAX_TRANSFER = 100_000_000_000_000_000_000_000n;
 
 async function post(
@@ -240,6 +241,16 @@ export async function sendFromWallet(
   custodyKey: string,
   to: string,
   yocto: bigint,
+  from: string,
+  finalOutcome: (hash: string, from: string) => Promise<unknown> = (
+    hash,
+    account,
+  ) =>
+    chainProvider(config.rpc).viewTransactionStatus({
+      txHash: hash,
+      accountId: account,
+      waitUntil: "FINAL",
+    }),
 ): Promise<string[]> {
   const hashes: string[] = [];
   let left = yocto;
@@ -266,6 +277,17 @@ export async function sendFromWallet(
       throw new PublicError(
         "Custody did not confirm the transfer with a valid transaction hash. Reconcile wallet history before retrying; no further transfer was sent.",
       );
+    try {
+      const outcome = await finalOutcome(hash, from);
+      if (
+        !confirmedTransfer(outcome, { hash, from, to, amount: step.toString() })
+      )
+        throw new Error("unconfirmed");
+    } catch {
+      throw new PublicError(
+        "The custody transfer is not confirmed as paid. Reconcile wallet history before retrying; no further transfer was sent.",
+      );
+    }
     hashes.push(hash);
     left -= step;
   }

@@ -59,6 +59,7 @@ export async function reviewBid(
   const call = await client.call({
     spender: "review",
     stage: "bid-review",
+    retainPublicResponse: true,
     run,
     key,
     limitNanoUsd,

@@ -39,6 +39,7 @@ export class KeyPool {
   private readonly limits: PoolLimits;
   private readonly logPath: string;
   private index = 0;
+  private pending: Promise<void> = Promise.resolve();
 
   constructor(
     client: Pick<ModelClient, "call">,
@@ -71,6 +72,15 @@ export class KeyPool {
     const rows = this.ledger.rows();
     const sum = (keep: (row: (typeof rows)[number]) => boolean) =>
       rows.filter(keep).reduce((total, row) => total + row.cost_nano_usd, 0);
+    const spentAgent = sum((row) => row.spender === request.spender);
+    const remaining = Math.min(
+      this.limits.projectNanoUsd - sum(() => true),
+      this.limits.agentNanoUsd - spentAgent,
+      this.limits.jobNanoUsd -
+        sum(
+          (row) => row.spender === request.spender && row.run === request.run,
+        ),
+    );
     const detail = { agent: request.spender, job: request.run };
     if (sum(() => true) >= this.limits.projectNanoUsd)
       this.stop("the project's inference budget is reached", detail);
@@ -84,12 +94,30 @@ export class KeyPool {
       ) >= this.limits.jobNanoUsd
     )
       this.stop("this agent's spending is abnormal for its job", detail);
+    return Math.min(
+      request.limitNanoUsd ?? Number.MAX_SAFE_INTEGER,
+      spentAgent + Math.max(0, remaining),
+    );
   }
 
   /** `request.key` is ignored: the pool chooses the key. */
-  async call(request: CallRequest): Promise<CallResult> {
+  /** Model requests and local skill billing share the same budget queue. */
+  account<T>(operation: () => T | Promise<T>): Promise<T> {
+    const result = this.pending.then(operation);
+    this.pending = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  call(request: CallRequest): Promise<CallResult> {
+    return this.account(() => this.execute(request));
+  }
+
+  private async execute(request: CallRequest): Promise<CallResult> {
     for (;;) {
-      this.checkBudgets(request);
+      const limitNanoUsd = this.checkBudgets(request);
       const current = this.keys[this.index];
       if (!current)
         this.stop("every key in the pool has reached its limit", {
@@ -100,6 +128,7 @@ export class KeyPool {
         return await this.client.call({
           ...request,
           key: current.key,
+          limitNanoUsd,
           keyName: current.name,
         });
       } catch (error) {

@@ -4,35 +4,66 @@
 // no relay key, buyer key or escrow owner key.
 import { chainProvider } from "../rpc.ts";
 import { createServer } from "node:http";
-import {} from "near-api-js";
+import { AccountDoesNotExistError } from "near-api-js/rpc-errors";
+import { isAbsentAccount } from "../../../relay/src/rpc.ts";
 import { RelayVerifier } from "../../../relay/src/buyer-auth.ts";
 import { BoardClient } from "../board.ts";
-import { loadConfig, ROOT } from "../config.ts";
-import { publicMessage } from "../errors.ts";
+import { ROOT } from "../config.ts";
+import { BOARD } from "../custody.ts";
+import { PublicError, publicMessage } from "../errors.ts";
 import { fetchPrices, Ledger, ModelClient } from "../inference.ts";
 import { KeyPool, keysFrom } from "../key-pool.ts";
 import { healthReport, nearPrice, telegramNotifier } from "./health.ts";
-import { addAgent, agentStatus, terms, withdraw, type ApiDeps } from "./api.ts";
+import {
+  addAgent,
+  agentStatus,
+  canEnroll,
+  terms,
+  withdraw,
+  type ApiDeps,
+} from "./api.ts";
 import {
   AGENT_LIMIT_NANO_USD,
   JOB_LIMIT_NANO_USD,
   PROJECT_LIMIT_NANO_USD,
 } from "./limits.ts";
 import { runnerPass, type RunnerDeps } from "./runner.ts";
-import { sandboxClient } from "./sandbox.ts";
+import { hostedSettings, hostedWritePlan } from "./network.ts";
+import { acquireHostedLock, bindHostedData } from "./service-lock.ts";
 import { HostedStore, publicView } from "./store.ts";
 import { sendFromWallet, treasuryAccount } from "./wallets.ts";
 
 const PASS_EVERY_MS = 20_000;
-const PORT = 4175;
 const MAX_BODY = 128 * 1024;
+
+/** Only a confirmed absent account is unfunded. An RPC outage must stop admission and spending. */
+export async function hostedBalance(
+  read: () => Promise<{ amount: bigint | string }>,
+): Promise<bigint> {
+  try {
+    const view = await read();
+    return BigInt(view.amount);
+  } catch (error) {
+    if (error instanceof AccountDoesNotExistError || isAbsentAccount(error))
+      return 0n;
+    throw new PublicError(
+      "The agent balance is unavailable. No work can start from this read.",
+    );
+  }
+}
 
 export async function buildDeps(
   root = process.env.PROVEN_HOSTED_DATA ?? `${ROOT}runs/private/hosted`,
   env: Record<string, string | undefined> = process.env,
 ) {
-  const config = loadConfig("agent");
-  const treasuryId = env.HOSTED_TREASURY_ACCOUNT_ID;
+  const settings = hostedSettings(env, BOARD);
+  if (settings.dataDirectory && settings.dataDirectory !== root)
+    throw new PublicError(
+      "The hosted data path must match PROVEN_HOSTED_DATA.",
+    );
+  bindHostedData(root, settings);
+  const config = settings.config;
+  const treasuryId = settings.treasury;
   const treasuryKey = env.HOSTED_TREASURY_PRIVATE_KEY;
   if (!treasuryId || !treasuryKey)
     throw new Error("The treasury account is not set.");
@@ -53,17 +84,13 @@ export async function buildDeps(
   const provider = chainProvider(config.rpc);
   const store = new HostedStore(root);
   const treasury = treasuryAccount(config, treasuryId, treasuryKey);
-  const balance = async (account: string) => {
-    try {
-      const view = await provider.viewAccount({
+  const balance = (account: string) =>
+    hostedBalance(() =>
+      provider.viewAccount({
         accountId: account,
         blockQuery: { finality: "final" },
-      });
-      return BigInt(view.amount);
-    } catch {
-      return 0n; // An implicit account nobody has funded yet.
-    }
-  };
+      }),
+    );
   const board = new BoardClient(config.rpc);
   const hasActiveClaim = async (wallet: string) => {
     for (let from = 0; ; from += 50) {
@@ -79,7 +106,9 @@ export async function buildDeps(
     client,
     key: keys[0]!.key,
     treasury,
-    codeSkills: Boolean(env.SANDBOX_URL && env.SANDBOX_TOKEN),
+    earningsCapYocto: settings.earningsCapYocto,
+    enrollmentOwners: settings.enrollmentOwners,
+    codeSkills: false,
     verifier: new RelayVerifier(async (accountId, publicKey) => {
       try {
         await provider.viewAccessKey({
@@ -134,14 +163,17 @@ export async function buildDeps(
     key: keys[0]!.key,
     balance,
     treasury: treasuryId,
-    sandbox:
-      env.SANDBOX_URL && env.SANDBOX_TOKEN
-        ? sandboxClient(env.SANDBOX_URL, env.SANDBOX_TOKEN)
-        : undefined,
+    earningsCapYocto: settings.earningsCapYocto,
     settle: async (agent, yocto) =>
-      (await sendFromWallet(config, agent.custody_key, treasuryId, yocto)).join(
-        ",",
-      ),
+      (
+        await sendFromWallet(
+          config,
+          agent.custody_key,
+          treasuryId,
+          yocto,
+          agent.wallet,
+        )
+      ).join(","),
     log: (line, detail) =>
       console.log(
         JSON.stringify({ at: new Date().toISOString(), line, detail }),
@@ -168,6 +200,11 @@ export function serve(api: ApiDeps, health: () => Promise<unknown>) {
         if (url.pathname === "/health") return json(res, 200, await health());
         if (url.pathname === "/agents")
           return json(res, 200, api.store.inOrder().map(publicView));
+        const enrollment = /^\/enrollment\/([a-z0-9._-]{2,64})$/.exec(
+          url.pathname,
+        );
+        if (enrollment)
+          return json(res, 200, { allowed: canEnroll(api, enrollment[1]!) });
         const agent = /^\/agents\/([a-z0-9._-]{2,64})$/.exec(url.pathname);
         if (agent) return json(res, 200, await agentStatus(api, agent[1]!));
         const log = /^\/jobs\/(\d+)\/log$/.exec(url.pathname);
@@ -194,56 +231,126 @@ export function serve(api: ApiDeps, health: () => Promise<unknown>) {
   });
 }
 
-if (import.meta.main) {
-  const { api, runner } = await buildDeps();
-  const treasuryId = process.env.HOSTED_TREASURY_ACCOUNT_ID!;
-  const notify = telegramNotifier(
-    process.env.HOSTED_TELEGRAM_TOKEN,
-    process.env.HOSTED_TELEGRAM_CHAT,
-  );
-  const health = async () =>
-    healthReport({
-      config: api.config,
-      balance: api.balance,
-      balances: [
-        { name: "The treasury", account: treasuryId, minimum: 10n ** 23n },
-        ...(process.env.RELAY_ACCOUNT_ID
-          ? [
-              {
-                name: "The relay",
-                account: process.env.RELAY_ACCOUNT_ID,
-                minimum: 15n * 10n ** 22n,
-              },
-            ]
-          : []),
-      ],
-      spentNanoUsd: api.ledger
-        .rows()
-        .reduce((sum, row) => sum + row.cost_nano_usd, 0),
-      limitNanoUsd: PROJECT_LIMIT_NANO_USD,
-      nearPriceUsd: nearPrice,
+export async function startHostedService() {
+  const settings = hostedSettings(process.env, BOARD);
+  const root = settings.dataDirectory ?? `${ROOT}runs/private/hosted`;
+  const release = acquireHostedLock(root);
+  try {
+    const { api, runner } = await buildDeps(root);
+    const treasuryId = process.env.HOSTED_TREASURY_ACCOUNT_ID!;
+    const notify = telegramNotifier(
+      process.env.HOSTED_TELEGRAM_TOKEN,
+      process.env.HOSTED_TELEGRAM_CHAT,
+    );
+    const health = async () =>
+      healthReport({
+        config: api.config,
+        balance: api.balance,
+        balances: [
+          {
+            name: "The treasury",
+            account: treasuryId,
+            minimum: 2n * 10n ** 23n,
+          },
+          ...(process.env.RELAY_ACCOUNT_ID
+            ? [
+                {
+                  name: "The relay",
+                  account: process.env.RELAY_ACCOUNT_ID,
+                  minimum: 15n * 10n ** 22n,
+                },
+              ]
+            : []),
+        ],
+        spentNanoUsd: api.ledger
+          .rows()
+          .reduce((sum, row) => sum + row.cost_nano_usd, 0),
+        limitNanoUsd: PROJECT_LIMIT_NANO_USD,
+        nearPriceUsd: nearPrice,
+        monitorInferenceCredit: true,
+        creditSnapshot:
+          process.env.HOSTED_CREDIT_USD && process.env.HOSTED_CREDIT_AS_OF
+            ? {
+                usd: Number(process.env.HOSTED_CREDIT_USD),
+                asOf: process.env.HOSTED_CREDIT_AS_OF,
+                spentSinceUsd:
+                  api.ledger
+                    .rows()
+                    .filter(
+                      (row) =>
+                        Date.parse(row.at) >=
+                        Date.parse(process.env.HOSTED_CREDIT_AS_OF!),
+                    )
+                    .reduce((sum, row) => sum + row.cost_nano_usd, 0) / 1e9,
+              }
+            : null,
+      });
+    let stopping = false;
+    let activePass: Promise<void> | null = null;
+    const server = serve(api, health);
+    const pass = () => {
+      if (stopping || activePass) return;
+      activePass = runnerPass(runner)
+        .catch((error: unknown) => console.error(publicMessage(error)))
+        .finally(() => {
+          activePass = null;
+        });
+    };
+    const check = () => {
+      if (stopping) return;
+      void health()
+        .then((report) => (stopping ? 0 : notify(report.alerts)))
+        .catch((error: unknown) => console.error(publicMessage(error)));
+    };
+    let passTimer: ReturnType<typeof setInterval> | undefined;
+    let checkTimer: ReturnType<typeof setInterval> | undefined;
+    const stop = async () => {
+      if (stopping) return;
+      stopping = true;
+      clearInterval(passTimer);
+      clearInterval(checkTimer);
+      // Stop admitting API calls and wait for existing writes before releasing runner ownership.
+      await Promise.all([
+        activePass ?? Promise.resolve(),
+        new Promise<void>((resolve) => server.close(() => resolve())),
+      ]);
+      release();
+    };
+    process.once("SIGINT", () => void stop());
+    process.once("SIGTERM", () => void stop());
+    server.once("error", (error) => {
+      process.exitCode = 1;
+      void stop().then(() => console.error(publicMessage(error)));
     });
-  serve(api, health).listen(PORT, "127.0.0.1", () =>
-    console.log(`Hosted agents service on 127.0.0.1:${PORT}.`),
-  );
-  let running = false;
-  const pass = async () => {
-    if (running) return;
-    running = true;
-    try {
-      await runnerPass(runner);
-    } catch (error) {
-      console.error(publicMessage(error));
-    } finally {
-      running = false;
-    }
-  };
-  void pass();
-  setInterval(() => void pass(), PASS_EVERY_MS);
-  const check = () =>
-    health()
-      .then((report) => notify(report.alerts))
-      .catch((error: unknown) => console.error(publicMessage(error)));
-  void check();
-  setInterval(() => void check(), 300_000);
+    server.listen(settings.port, "127.0.0.1", () => {
+      const disclosure =
+        settings.network === "mainnet"
+          ? "mainnet: unaudited, owner-funded; the owner holds a single key that can upgrade the contracts"
+          : "testnet preparation only";
+      console.log(
+        `Hosted agents service on 127.0.0.1:${settings.port}; ${disclosure}.`,
+      );
+      pass();
+      check();
+      passTimer = setInterval(pass, PASS_EVERY_MS);
+      checkTimer = setInterval(check, 300_000);
+    });
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
+if (import.meta.main) {
+  if (process.argv.includes("--dry-run")) {
+    console.log(
+      JSON.stringify(
+        hostedWritePlan(hostedSettings(process.env, BOARD)),
+        null,
+        2,
+      ),
+    );
+  } else {
+    await startHostedService();
+  }
 }

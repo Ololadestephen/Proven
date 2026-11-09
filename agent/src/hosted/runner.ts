@@ -5,12 +5,25 @@ import { createHash } from "node:crypto";
 import { BoardClient, buyerRecord, type Bid, type Wallet } from "../board.ts";
 import type { Config } from "../config.ts";
 import { PublicError } from "../errors.ts";
-import { DEFAULT_MODEL, type Ledger, type ModelClient } from "../inference.ts";
+import {
+  DEFAULT_MODEL,
+  ModelInterrupted,
+  type Ledger,
+  type ModelClient,
+} from "../inference.ts";
 import { createRuntime } from "../near.ts";
 import { createService } from "../service.ts";
 import { workRefusal } from "../swarm-rules.ts";
 import type { Job } from "../types.ts";
-import { MIN_TO_WORK, budgetNanoUsd, nanoUsdToNear } from "./limits.ts";
+import {
+  MIN_TO_WORK,
+  DAILY_LIMIT_NANO_USD,
+  JOB_LIMIT_NANO_USD,
+  PROJECT_LIMIT_NANO_USD,
+  SAFE_SKILLS,
+  nanoUsdToNear,
+} from "./limits.ts";
+import { inferenceBudget, recordEarnings } from "./earnings.ts";
 import type { SandboxCall } from "./sandbox.ts";
 import type { HostedAgent, HostedStore } from "./store.ts";
 import { doHostedWork } from "./work.ts";
@@ -19,13 +32,16 @@ export interface RunnerDeps {
   config: Config;
   store: HostedStore;
   ledger: Ledger;
-  client: Pick<ModelClient, "call">;
+  client: Pick<ModelClient, "call"> & {
+    account?: <T>(operation: () => T | Promise<T>) => Promise<T>;
+  };
   key: string;
   balance: (account: string) => Promise<bigint>;
   /** Moves spent NEAR to the treasury. Returns the transaction hash. */
   settle: (agent: HostedAgent, yocto: bigint) => Promise<string>;
   treasury: string;
   sandbox?: SandboxCall;
+  earningsCapYocto?: string;
   log: (line: string, detail?: unknown) => void;
 }
 
@@ -71,13 +87,92 @@ function unsettled(deps: RunnerDeps, agent: HostedAgent): number {
 
 /** Takes what an agent has spent out of its wallet, so its balance is always what it really has. */
 export async function settleSpending(deps: RunnerDeps, agent: HostedAgent) {
-  const owed = unsettled(deps, agent);
+  const fresh = deps.store.get(agent.wallet);
+  if (!fresh) throw new PublicError("The worker record is unavailable.");
+  if (
+    fresh.pending_settlement_nano_usd ||
+    fresh.pending_withdrawal ||
+    fresh.pending_claim_bid !== undefined ||
+    fresh.pending_registration
+  )
+    throw new PublicError(
+      "An earlier payment needs reconciliation. Automatic spending is stopped.",
+    );
+  const owed = unsettled(deps, fresh);
   if (owed <= 0) return;
-  const hash = await deps.settle(agent, nanoUsdToNear(owed));
-  const fresh = deps.store.get(agent.wallet) ?? agent;
-  fresh.settled_nano_usd += owed;
+  fresh.pending_settlement_nano_usd = owed;
   deps.store.save(fresh);
+  const hash = await deps.settle(fresh, nanoUsdToNear(owed));
+  if (!hash)
+    throw new PublicError(
+      "The settlement outcome is unknown. Reconcile before another payment.",
+    );
+  const latest = deps.store.get(agent.wallet);
+  if (!latest || latest.pending_settlement_nano_usd !== owed)
+    throw new PublicError(
+      "The settlement record changed. Reconcile before spending.",
+    );
+  latest.settled_nano_usd += owed;
+  delete latest.pending_settlement_nano_usd;
+  deps.store.save(latest);
   deps.log("settled", { agent: agent.wallet, nano_usd: owed, hash });
+}
+
+export function dailyRemaining(
+  ledger: Pick<Ledger, "rows">,
+  spender: string,
+  now = new Date(),
+): number {
+  const day = now.toISOString().slice(0, 10);
+  let spent = 0;
+  for (const row of ledger.rows()) {
+    if (row.spender !== spender) continue;
+    if (!Number.isFinite(Date.parse(row.at)))
+      throw new PublicError(
+        "The spending ledger has an invalid date. Spending is stopped.",
+      );
+    if (new Date(row.at).toISOString().slice(0, 10) === day)
+      spent += row.cost_nano_usd;
+  }
+  return Math.max(0, DAILY_LIMIT_NANO_USD - spent);
+}
+
+export function chargeHostedSkill(
+  ledger: Pick<Ledger, "rows" | "spentNanoUsd" | "append">,
+  spender: string,
+  run: string,
+  nanoUsd: number,
+  spenderLimit: number,
+) {
+  const rows = ledger.rows();
+  const projectSpent = rows.reduce((sum, row) => sum + row.cost_nano_usd, 0);
+  const jobSpent = rows
+    .filter((row) => row.spender === spender && row.run === run)
+    .reduce((sum, row) => sum + row.cost_nano_usd, 0);
+  if (
+    !Number.isSafeInteger(nanoUsd) ||
+    nanoUsd < 0 ||
+    ledger.spentNanoUsd(spender) + nanoUsd > spenderLimit ||
+    projectSpent + nanoUsd > PROJECT_LIMIT_NANO_USD ||
+    jobSpent + nanoUsd > JOB_LIMIT_NANO_USD
+  )
+    throw new PublicError(
+      "The skill would exceed an inference budget. Spending stopped.",
+    );
+  ledger.append({
+    at: new Date().toISOString(),
+    spender,
+    stage: "skill",
+    run,
+    model: "none",
+    status: 200,
+    input_tokens: 0,
+    output_tokens: 0,
+    cost_nano_usd: nanoUsd,
+    chat_id: null,
+    request_hash: "",
+    response_hash: null,
+  });
 }
 
 /** Everything that would stop this agent taking this bid. */
@@ -88,6 +183,19 @@ export function claimRefusal(
   balance: bigint,
 ): string | null {
   if (agent.paused) return "paused";
+  if (
+    agent.pending_settlement_nano_usd ||
+    agent.pending_withdrawal ||
+    agent.pending_claim_bid !== undefined ||
+    agent.pending_registration
+  )
+    return "payment needs reconciliation";
+  if (
+    agent.skills?.some(
+      (skill) => !(SAFE_SKILLS as readonly string[]).includes(skill),
+    )
+  )
+    return "unsupported skills";
   if (bid.state !== "Open") return "not open";
   if (now >= BigInt(bid.expires_at)) return "expired";
   if (bid.funded_attempts >= 3) return "no attempts left";
@@ -98,6 +206,31 @@ export function claimRefusal(
   return null;
 }
 
+export function canStartHostedWork(
+  entries: unknown[],
+  wallet: string,
+): boolean {
+  let started = 0,
+    interrupted = 0;
+  for (const value of entries) {
+    const row = value as { step?: string; agent?: string };
+    if (!["work_started", "work_interrupted"].includes(row.step ?? ""))
+      continue;
+    if (!row.agent)
+      throw new PublicError(
+        "Legacy work records need reconciliation before retrying this job.",
+      );
+    if (row.agent !== wallet) continue;
+    if (row.step === "work_started") started++;
+    else interrupted++;
+  }
+  if (interrupted > started)
+    throw new PublicError(
+      "The work history is inconsistent. Reconcile before spending.",
+    );
+  return started <= interrupted && started < 2;
+}
+
 async function work(
   deps: RunnerDeps,
   agent: HostedAgent,
@@ -106,28 +239,38 @@ async function work(
   jobId: number,
   job: Job,
 ) {
+  if (
+    agent.paused ||
+    agent.pending_settlement_nano_usd ||
+    agent.pending_withdrawal ||
+    agent.pending_claim_bid !== undefined ||
+    agent.pending_registration ||
+    agent.skills.some(
+      (skill) => !(SAFE_SKILLS as readonly string[]).includes(skill),
+    )
+  )
+    throw new PublicError(
+      "The agent cannot spend while paused, awaiting reconciliation or using unsupported skills.",
+    );
   const board = new BoardClient(deps.config.rpc);
   const refusal = workRefusal(bid, jobId, job, agent.wallet, await board.now());
   if (refusal) return deps.log("not_starting", { job: jobId, refusal });
   // One try per job, so a failed try never turns into repeated spending. The exception is a call that
   // never finished, such as a dropped connection: it gets one more try, and its worst case is still charged.
-  const entries = deps.store.readLog(jobId) as Array<{ step?: string }>;
-  const started = entries.filter(
-    (entry) => entry.step === "work_started",
-  ).length;
-  const interrupted = entries.filter(
-    (entry) => entry.step === "work_interrupted",
-  ).length;
-  if (started > interrupted || started >= 2) return;
+  if (!canStartHostedWork(deps.store.readLog(jobId), agent.wallet)) return;
   deps.store.log(jobId, { step: "work_started", agent: agent.wallet });
   const spender = spenderOf(agent.wallet);
   const balance = await deps.balance(agent.wallet);
   const limit = () =>
     deps.ledger.spentNanoUsd(spender) +
-    budgetNanoUsd(
-      balance,
-      unsettled(deps, agent),
-      deps.ledger.spentNanoUsd(spender),
+    Math.min(
+      inferenceBudget(
+        agent,
+        balance,
+        unsettled(deps, agent),
+        deps.ledger.spentNanoUsd(spender),
+      ),
+      dailyRemaining(deps.ledger, spender),
     );
   const result = await doHostedWork(
     deps.client,
@@ -142,25 +285,19 @@ async function work(
     { description: bid.description, format: bid.format },
     `bid-${bidId}`,
     limit,
-    (run, nanoUsd) =>
-      deps.ledger.append({
-        at: new Date().toISOString(),
-        spender,
-        stage: "skill",
-        run,
-        model: "none",
-        status: 200,
-        input_tokens: 0,
-        output_tokens: 0,
-        cost_nano_usd: nanoUsd,
-        chat_id: null,
-        request_hash: "",
-        response_hash: null,
-      }),
+    (run, nanoUsd) => {
+      if (!deps.client.account)
+        throw new PublicError(
+          "The hosted client cannot serialize skill spending. Work stopped.",
+        );
+      return deps.client.account(() =>
+        chargeHostedSkill(deps.ledger, spender, run, nanoUsd, limit()),
+      );
+    },
     deps.sandbox,
   ).catch((error: Error) => {
-    if (/did not complete/.test(error.message))
-      deps.store.log(jobId, { step: "work_interrupted" });
+    if (error instanceof ModelInterrupted)
+      deps.store.log(jobId, { step: "work_interrupted", agent: agent.wallet });
     throw error;
   });
   deps.store.log(jobId, {
@@ -291,8 +428,37 @@ async function advance(
   }
 }
 
+/** Finished bids can have no claim. Never depend on a still-present claim to credit paid work. */
+export async function reconcilePaidJobs(
+  deps: RunnerDeps,
+  bids: Array<[number, Bid]>,
+  board = new BoardClient(deps.config.rpc),
+) {
+  for (const [, bid] of bids) {
+    if (bid.job_id === null || !["Done", "Claimed"].includes(bid.state))
+      continue;
+    const job = await board.view<Job | null>(
+      "get_job",
+      { job_id: bid.job_id },
+      deps.config.escrow,
+    );
+    if (!job?.worker || !deps.store.get(job.worker)) continue;
+    recordEarnings(
+      deps.store,
+      job.worker,
+      deps.config.escrow,
+      bid.job_id,
+      job,
+      deps.earningsCapYocto ?? "500000000000000000000000",
+    );
+  }
+}
+
 /** One pass over the board. */
-export async function runnerPass(deps: RunnerDeps): Promise<void> {
+export async function runnerPass(
+  deps: RunnerDeps,
+  bidScope?: ReadonlySet<number>,
+): Promise<void> {
   const board = new BoardClient(deps.config.rpc);
   const bids: Array<[number, Bid]> = [];
   for (let from = 0; ; from += 50) {
@@ -301,14 +467,16 @@ export async function runnerPass(deps: RunnerDeps): Promise<void> {
     if (page.length < 50) break;
   }
   const hosted = deps.store.inOrder();
+  await reconcilePaidJobs(deps, bids);
   const busy = new Set<string>();
   for (const [bidId, bid] of bids) {
     const agent =
       bid.claim && hosted.find((a) => a.wallet === bid.claim!.agent);
     if (!agent) continue;
     busy.add(agent.wallet);
+    if (bidScope && !bidScope.has(bidId)) continue;
     try {
-      await advance(deps, agent, bidId, bid);
+      await advance(deps, deps.store.get(agent.wallet)!, bidId, bid);
     } catch (error) {
       deps.log("step_failed", {
         agent: agent.wallet,
@@ -319,10 +487,30 @@ export async function runnerPass(deps: RunnerDeps): Promise<void> {
   }
   // An agent registers itself once it has NEAR. The hashes commit to its public texts and its skills.
   for (const agent of hosted) {
-    if (agent.paused || (await deps.balance(agent.wallet)) < MIN_TO_WORK)
+    if (
+      agent.paused ||
+      agent.pending_settlement_nano_usd ||
+      agent.pending_withdrawal ||
+      agent.skills.some(
+        (skill) => !(SAFE_SKILLS as readonly string[]).includes(skill),
+      ) ||
+      (await deps.balance(agent.wallet)) < MIN_TO_WORK
+    )
       continue;
     if (await board.agent(agent.wallet)) continue;
     try {
+      const latest = deps.store.get(agent.wallet);
+      if (
+        !latest ||
+        latest.paused ||
+        latest.pending_withdrawal ||
+        latest.pending_settlement_nano_usd ||
+        latest.pending_claim_bid !== undefined ||
+        latest.pending_registration
+      )
+        continue;
+      latest.pending_registration = true;
+      deps.store.save(latest);
       const wallet = walletOf(agent, deps.config);
       wallet.hosted = { owner: agent.owner, treasury: deps.treasury };
       const done = await board.register(wallet, {
@@ -332,6 +520,13 @@ export async function runnerPass(deps: RunnerDeps): Promise<void> {
         model: agent.model,
         owner: agent.owner,
       });
+      const registered = deps.store.get(agent.wallet);
+      if (!registered?.pending_registration)
+        throw new PublicError(
+          "The registration record changed. Reconcile before another action.",
+        );
+      delete registered.pending_registration;
+      deps.store.save(registered);
       deps.log("registered", {
         agent: agent.wallet,
         hash: done.transaction_hash,
@@ -345,9 +540,13 @@ export async function runnerPass(deps: RunnerDeps): Promise<void> {
   }
   const now = await board.now();
   for (const [bidId, bid] of bids) {
-    if (bid.state !== "Open") continue;
+    if (bid.state !== "Open" || (bidScope && !bidScope.has(bidId))) continue;
     for (const agent of deps.store.inOrder()) {
-      if (busy.has(agent.wallet)) continue;
+      if (
+        busy.has(agent.wallet) ||
+        dailyRemaining(deps.ledger, spenderOf(agent.wallet)) <= 0
+      )
+        continue;
       const balance = await deps.balance(agent.wallet);
       const refusal = claimRefusal(bid, agent, now, balance);
       if (refusal) continue;
@@ -363,8 +562,21 @@ export async function runnerPass(deps: RunnerDeps): Promise<void> {
       try {
         const wallet = walletOf(agent, deps.config);
         wallet.hosted = { owner: agent.owner, treasury: deps.treasury };
+        const beforeClaim = deps.store.get(agent.wallet);
+        if (
+          !beforeClaim ||
+          beforeClaim.paused ||
+          beforeClaim.pending_withdrawal ||
+          beforeClaim.pending_settlement_nano_usd ||
+          beforeClaim.pending_claim_bid !== undefined ||
+          beforeClaim.pending_registration
+        )
+          continue;
+        beforeClaim.pending_claim_bid = bidId;
+        deps.store.save(beforeClaim);
         const claimed = await board.claim(wallet, bidId);
         const fresh = deps.store.get(agent.wallet) ?? agent;
+        delete fresh.pending_claim_bid;
         fresh.last_claim_at = new Date().toISOString();
         deps.store.save(fresh);
         busy.add(agent.wallet);

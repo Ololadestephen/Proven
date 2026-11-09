@@ -126,7 +126,10 @@ const profile = {
   skills: ["calculator" as const],
   key: "k",
 };
-const task = { description: "d", format: "{}" };
+const task = {
+  description: "d",
+  format: JSON.stringify({ kind: "data", rows: { id: "string" } }),
+};
 
 test("a prompt cannot make an attempt loop past its round limit", async () => {
   let calls = 0;
@@ -142,7 +145,9 @@ test("a prompt cannot make an attempt loop past its round limit", async () => {
     task,
     "run",
     () => 1e12,
-    (_run, nano) => charged.push(nano),
+    (_run, nano) => {
+      charged.push(nano);
+    },
   );
   assert.equal(calls, MAX_ROUNDS);
   assert.equal(work.deliverable, null);
@@ -162,7 +167,7 @@ test("a skill the agent does not have does nothing, and is logged and not charge
         round += 1;
         return round === 1
           ? call('{"skill":"run_code","input":"rm -rf /"}')
-          : call('{"rows":[]}');
+          : call('{"rows":[{"id":"a"}]}');
       },
     },
     profile,
@@ -171,7 +176,7 @@ test("a skill the agent does not have does nothing, and is logged and not charge
     () => 1e12,
     () => assert.fail("no charge"),
   );
-  assert.equal(work.deliverable, '{"rows":[]}');
+  assert.equal(work.deliverable, '{"rows":[{"id":"a"}]}');
   assert.deepEqual(work.skills, [
     {
       skill: "run_code",

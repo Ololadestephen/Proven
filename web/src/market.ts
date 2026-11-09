@@ -1,3 +1,4 @@
+import { readPublicReview } from "../../shared/public-review.ts";
 import { randomBytes } from "node:crypto";
 // Local routes behind the Market page. Reads use the configured network. The relay checks every
 // private text against the job's hashes, so this only passes requests along to its local socket. This
@@ -241,6 +242,12 @@ export async function readMarket() {
       return {
         id,
         ...bid,
+        review_reason: readPublicReview(
+          `${ROOT}runs/private/bid-reviews`,
+          BOARD,
+          id,
+          bid.review,
+        ),
         job: job ? { id: bid.job_id, ...job } : null,
         last_job: ended ? { id: bid.job_id, ...job } : null,
       };
@@ -375,7 +382,7 @@ export async function hostedRoute(
   body?: unknown,
 ): Promise<unknown> {
   if (
-    !/^\/(terms|health|agents|withdraw|agents\/[a-z0-9._-]{2,64}|jobs\/\d{1,12}\/log)$/.test(
+    !/^\/(terms|health|agents|withdraw|(?:agents|enrollment)\/[a-z0-9._-]{2,64}|jobs\/\d{1,12}\/log)$/.test(
       path,
     )
   )

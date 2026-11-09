@@ -1,4 +1,10 @@
 import { JsonRpcProvider } from "near-api-js";
+import { AccountDoesNotExistError } from "near-api-js/rpc-errors";
+
+/** Match the SDK instance used by this provider, including callers in sibling packages. */
+export function isAbsentAccount(error: unknown): boolean {
+  return error instanceof AccountDoesNotExistError;
+}
 import { TESTNET_RPC_URLS } from "./config.ts";
 
 /** Explicit testnet routing: broadcast bytes to one endpoint; read state from another. */

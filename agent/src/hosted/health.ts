@@ -65,8 +65,54 @@ export interface Alert {
     | "low_balance"
     | "budget_near_limit"
     | "unsettled_fee"
-    | "rate_review";
+    | "rate_review"
+    | "low_inference_credit"
+    | "credit_snapshot_unavailable"
+    | "credit_snapshot_stale";
   detail: string;
+}
+
+export interface CreditSnapshot {
+  usd: number;
+  asOf: string;
+  spentSinceUsd: number;
+}
+/** Owner-entered credit, minus this service's ledger since that snapshot. Never a provider balance. */
+export function inferenceCreditAlerts(
+  snapshot: CreditSnapshot | null,
+  now = Date.now(),
+): Alert[] {
+  const at = snapshot ? Date.parse(snapshot.asOf) : NaN;
+  if (
+    !snapshot ||
+    !Number.isFinite(at) ||
+    at > now ||
+    !Number.isFinite(snapshot.usd) ||
+    snapshot.usd < 0 ||
+    !Number.isFinite(snapshot.spentSinceUsd) ||
+    snapshot.spentSinceUsd < 0
+  )
+    return [
+      {
+        kind: "credit_snapshot_unavailable",
+        detail:
+          "NEAR AI credit estimate is unavailable. Check the provider dashboard and record a dated owner credit snapshot.",
+      },
+    ];
+  const alerts: Alert[] = [];
+  if (now - at > 86400000)
+    alerts.push({
+      kind: "credit_snapshot_stale",
+      detail:
+        "The owner-entered NEAR AI credit snapshot is over 24 hours old. Refresh it; this estimate is not the provider's live balance.",
+    });
+  const remaining = Math.max(0, snapshot.usd - snapshot.spentSinceUsd);
+  if (remaining < 1)
+    alerts.push({
+      kind: "low_inference_credit",
+      detail: `Estimated NEAR AI credit is $${remaining.toFixed(2)}, below $1, from an owner-entered snapshot minus local spending. Other services may also use credit; check the provider dashboard.`,
+    });
+  return alerts;
 }
 
 /** A funded job past its deadline, or a delivered one past its verdict window, can be expired by anyone. */
@@ -95,9 +141,13 @@ export async function healthReport(deps: {
   spentNanoUsd: number;
   limitNanoUsd: number;
   nearPriceUsd?: () => Promise<number | null>;
+  monitorInferenceCredit?: boolean;
+  creditSnapshot?: CreditSnapshot | null;
 }): Promise<{ at: string; alerts: Alert[]; expirable_jobs: number[] }> {
   const board = deps.board ?? new BoardClient(deps.config.rpc);
-  const alerts: Alert[] = [];
+  const alerts: Alert[] = deps.monitorInferenceCredit
+    ? inferenceCreditAlerts(deps.creditSnapshot ?? null)
+    : [];
   const now = await board.now();
   const expirable: number[] = [];
   const { next_job_id } = await board.view<{ next_job_id: number }>(
