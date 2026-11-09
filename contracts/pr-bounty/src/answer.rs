@@ -7,7 +7,7 @@ use near_sdk::{AccountId, PromiseError};
 
 /// The verifier's largest answer is under 1 KiB; anything longer is not its answer.
 pub const MAX_OUTPUT_BYTES: usize = 1024;
-const OUTPUT_VERSION: u32 = 2;
+const OUTPUT_VERSION: u32 = 3;
 const OUTPUT_KIND: &str = "proven-pr-bounty-facts";
 const MAX_REF_LEN: usize = 255;
 /// The verifier's own no-result codes. Any other is treated as a malformed answer.
@@ -40,10 +40,10 @@ struct Raw {
     repo: Option<String>,
     op: Option<String>,
     number: Option<u64>,
-    comment_id: Option<u64>,
+    gist_id: Option<String>,
     status: String,
     pull: Option<PullFacts>,
-    comment: Option<CommentFacts>,
+    gist: Option<GistFacts>,
     reason: Option<String>,
 }
 
@@ -62,36 +62,29 @@ pub struct PullFacts {
 
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(crate = "near_sdk::serde", deny_unknown_fields)]
-pub struct CommentFacts {
-    pub repo_id: u64,
-    pub comment_id: u64,
-    pub author_id: u64,
-    pub issue_number: u64,
-    pub created_at: u64,
-    pub updated_at: u64,
+pub struct GistFacts {
+    pub owner_id: u64,
+    pub files: u32,
     pub challenge_matches: bool,
 }
 
 /// What the request asked for, so the answer can be checked against it.
 #[derive(Clone, Copy)]
-pub enum Parsed {
+pub enum Parsed<'a> {
     Pull(u64),
-    Comment(u64),
+    Gist(&'a str),
 }
 
-impl Parsed {
+impl Parsed<'_> {
     pub fn pull(number: u64) -> Self {
         Parsed::Pull(number)
-    }
-    pub fn comment(comment_id: u64) -> Self {
-        Parsed::Comment(comment_id)
     }
 }
 
 pub struct Answer {
     pub request_id: u64,
     pub pull: Option<PullFacts>,
-    pub comment: Option<CommentFacts>,
+    pub gist: Option<GistFacts>,
 }
 
 fn no_result(reason: &str) -> String {
@@ -108,7 +101,7 @@ pub fn parse(
     bounty: u64,
     seq: u64,
     repo: &str,
-    asked: Parsed,
+    asked: Parsed<'_>,
 ) -> Result<Answer, String> {
     let bytes = match result {
         Ok(bytes) => bytes,
@@ -123,13 +116,10 @@ pub fn parse(
         return Err(no_result("malformed"));
     }
     let (op, target) = match asked {
-        Parsed::Pull(number) => (
-            "pull",
-            raw.number == Some(number) && raw.comment_id.is_none(),
-        ),
-        Parsed::Comment(id) => (
-            "comment",
-            raw.comment_id == Some(id) && raw.number.is_none(),
+        Parsed::Pull(number) => ("pull", raw.number == Some(number) && raw.gist_id.is_none()),
+        Parsed::Gist(id) => (
+            "gist",
+            raw.gist_id.as_deref() == Some(id) && raw.number.is_none(),
         ),
     };
     let bound = raw.predecessor.as_ref() == Some(contract)
@@ -145,13 +135,7 @@ pub fn parse(
         return Err(no_result("wrong_binding"));
     }
     let request_id = raw.request_id.unwrap_or_default();
-    match (
-        raw.status.as_str(),
-        raw.reason,
-        raw.pull,
-        raw.comment,
-        asked,
-    ) {
+    match (raw.status.as_str(), raw.reason, raw.pull, raw.gist, asked) {
         ("no_result", Some(reason), None, None, _)
             if VERIFIER_REASONS.contains(&reason.as_str()) =>
         {
@@ -169,13 +153,13 @@ pub fn parse(
             Ok(Answer {
                 request_id,
                 pull: Some(pull),
-                comment: None,
+                gist: None,
             })
         }
-        ("ok", None, None, Some(comment), Parsed::Comment(_)) => Ok(Answer {
+        ("ok", None, None, Some(gist), Parsed::Gist(_)) => Ok(Answer {
             request_id,
             pull: None,
-            comment: Some(comment),
+            gist: Some(gist),
         }),
         _ => Err(no_result("malformed")),
     }

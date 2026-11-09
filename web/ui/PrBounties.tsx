@@ -9,11 +9,15 @@ const TGAS = 10n ** 12n;
 const RUN_GAS = 300n * TGAS;
 const PATH = "/api/market/bounties";
 
+type TransferKind = "Reward" | "Budget";
 interface Transfer {
   to: string;
   amount: string;
   state: "Due" | "Sending" | "Done";
+  attempt: number;
+  outcome: "Unknown" | "Succeeded" | "Failed";
 }
+const GIST_ID = /^[0-9a-f]{1,64}$/;
 interface Bounty {
   buyer: string;
   reward: string;
@@ -39,7 +43,7 @@ interface Bounty {
   claim: {
     wallet: string;
     github_id: string;
-    comment_id: string;
+    gist_id: string;
     request_id: string;
   } | null;
   binding: {
@@ -64,8 +68,12 @@ interface Config {
   network: string;
   verifier_url: string;
   verifier_hash: string;
+  pilot_repo: string;
+  pilot_repo_id: string;
   paused: boolean;
   max_reward: string;
+  max_held: string;
+  held: string;
   run_deposit: string;
   budget_runs: number;
   storage_deposit: string;
@@ -137,8 +145,6 @@ function PostBounty({
 }) {
   const [form, setForm] = useState({
     reward: "0.1",
-    repo: "",
-    repo_id: "",
     issue: "",
     base_ref: "main",
     github_id: "",
@@ -151,6 +157,7 @@ function PostBounty({
     (key: keyof typeof form) => (event: { target: { value: string } }) =>
       setForm({ ...form, [key]: event.target.value });
   const { budget, storage } = costs(config);
+  const room = BigInt(config.max_held) - BigInt(config.held);
   let reward = 0n;
   try {
     reward = parseNearAmount(form.reward, BigInt(config.max_reward));
@@ -166,8 +173,8 @@ function PostBounty({
         method: "post_bounty",
         args: {
           reward: reward.toString(),
-          repo: form.repo.trim(),
-          repo_id: form.repo_id.trim(),
+          repo: config.pilot_repo,
+          repo_id: config.pilot_repo_id,
           issue: Number(form.issue),
           base_ref: form.base_ref.trim(),
           contributor_github_id: form.github_id.trim(),
@@ -190,23 +197,19 @@ function PostBounty({
         The contract pays them if a check finds it merged into{" "}
         <code>{form.base_ref || "the branch"}</code> before the deadline.
       </p>
+      <p>
+        This pilot pays only for issues of{" "}
+        <a
+          href={`https://github.com/${config.pilot_repo}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {config.pilot_repo}
+        </a>{" "}
+        (GitHub repository id {config.pilot_repo_id}), fixed when the contract
+        was deployed.
+      </p>
       <div className="bounty-form">
-        <label>
-          Repository (owner/name)
-          <input
-            value={form.repo}
-            onChange={set("repo")}
-            placeholder="owner/name"
-          />
-        </label>
-        <label>
-          Repository id
-          <input
-            value={form.repo_id}
-            onChange={set("repo_id")}
-            inputMode="numeric"
-          />
-        </label>
         <label>
           Issue number
           <input
@@ -272,18 +275,26 @@ function PostBounty({
         You attach {near(reward + budget + storage)}: the reward {near(reward)},{" "}
         {near(budget)} reserved for the contributor's merge checks (what is left
         comes back to you), and {near(storage)} for the record, which is kept as
-        evidence and not returned.
+        evidence and not returned. The contract can reserve{" "}
+        {near(room > 0n ? room : 0n)} more; payouts and refunds count until
+        their transfer is confirmed.
       </p>
       <button
         type="button"
         className="button button-primary"
-        disabled={busy || reward === 0n}
+        disabled={busy || reward === 0n || reward + budget > room}
         onClick={() => void submit()}
       >
         Post and lock {near(reward + budget + storage)}
       </button>
     </section>
   );
+}
+
+/** The gist id from an id or a gist link such as https://gist.github.com/<user>/<id>. */
+function gistId(input: string): string {
+  const path = input.trim().split(/[?#]/)[0] ?? "";
+  return (path.split("/").filter(Boolean).pop() ?? "").toLowerCase();
 }
 
 function challengeKey(contract: string, id: number, wallet: string) {
@@ -315,7 +326,7 @@ function ClaimAction({
     return saved > nowSecs() + 60 ? saved : null;
   });
   const [challenge, setChallenge] = useState("");
-  const [comment, setComment] = useState("");
+  const [gist, setGist] = useState("");
   useEffect(() => {
     if (!expires) return;
     void api<{ challenge: string }>(
@@ -328,13 +339,13 @@ function ClaimAction({
     setExpires(value);
   };
   const prove = () =>
-    run("Checking your claim comment", async () => {
+    run("Checking your claim gist", async () => {
       await wallet.call({
         receiver: contract,
         method: "prove_claim",
         args: {
           bounty_id: id,
-          comment_id: comment.trim(),
+          gist_id: gistId(gist),
           expires_at: String(expires),
         },
         deposit: BigInt(config.run_deposit),
@@ -359,32 +370,31 @@ function ClaimAction({
       ) : (
         <>
           <p>
-            From your GitHub account, post this as the whole text of a new
-            comment on{" "}
-            <a
-              href={`https://github.com/${bounty.repo}/issues/${bounty.issue}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              issue #{bounty.issue}
-            </a>
-            , before {utc(expires)}. Do not edit it. It names this wallet,{" "}
-            {short(wallet.accountId)}, which becomes the only payout address.
+            Signed in to GitHub as the account with id{" "}
+            {bounty.contributor_github_id}, create a{" "}
+            <a href="https://gist.github.com/" target="_blank" rel="noreferrer">
+              gist
+            </a>{" "}
+            (secret or public) with exactly one file whose whole text is the
+            line below, and prove it before {utc(expires)}. Only you can edit
+            your gist, so repository writers cannot claim for you. The challenge
+            names this wallet, {short(wallet.accountId)}, which becomes the only
+            payout address, and this bounty, repository and issue. Keep the gist
+            until the claim is proved.
           </p>
           <pre className="bounty-challenge">{challenge}</pre>
           <label>
-            The comment's id (the number after <code>#issuecomment-</code> in
-            its link)
+            The gist's id or link (the hex id at the end of its address)
             <input
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              inputMode="numeric"
+              value={gist}
+              onChange={(e) => setGist(e.target.value)}
+              spellCheck={false}
             />
           </label>
           <button
             type="button"
             className="button"
-            disabled={busy || !/^[0-9]{1,20}$/.test(comment.trim())}
+            disabled={busy || !GIST_ID.test(gistId(gist))}
             onClick={() => void prove()}
           >
             Prove the claim ({near(config.run_deposit)}, unused compute
@@ -443,6 +453,12 @@ function Actions({
   const due = [bounty.reward_transfer, bounty.budget_transfer].some(
     (t) => t?.state === "Due",
   );
+  const recoverable = (
+    [
+      ["Reward", bounty.reward_transfer],
+      ["Budget", bounty.budget_transfer],
+    ] as [TransferKind, Transfer | null][]
+  ).filter(([, t]) => t?.state === "Sending" && t.outcome !== "Unknown");
   const ended =
     bounty.status === "Ineligible" ||
     (bounty.status === "Open" && now >= Number(bounty.claim_by) + 15 * 60) ||
@@ -579,8 +595,36 @@ function Actions({
           Resend the failed transfer (anyone, same recipient)
         </button>
       ) : null}
+      {recoverable.map(([kind, t]) => (
+        <button
+          key={kind}
+          type="button"
+          className="button button-secondary"
+          disabled={busy}
+          onClick={() =>
+            void call(
+              "Recording the transfer's result",
+              "recover_transfer",
+              { bounty_id: id, kind },
+              0n,
+            )
+          }
+        >
+          Record the {kind === "Reward" ? "transfer" : "budget transfer"}{" "}
+          {t?.outcome === "Succeeded" ? "as paid" : "as failed, to resend"}{" "}
+          (anyone, no cost, sends nothing)
+        </button>
+      ))}
     </div>
   );
+}
+
+function transferText(t: Transfer): string {
+  if (t.state === "Done") return "done";
+  if (t.state === "Due") return "failed, can be resent";
+  if (t.outcome === "Succeeded") return "sent; its result needs recording";
+  if (t.outcome === "Failed") return "failed; its result needs recording";
+  return "sent, awaiting its result (still reserved)";
 }
 
 function BountyCard(props: {
@@ -640,11 +684,11 @@ function BountyCard(props: {
           {bounty.claim ? (
             <>
               <a
-                href={`${repo}/issues/${bounty.issue}#issuecomment-${bounty.claim.comment_id}`}
+                href={`https://gist.github.com/${bounty.claim.gist_id}`}
                 target="_blank"
                 rel="noreferrer"
               >
-                claim comment
+                claim gist
               </a>
               <Evidence id={bounty.claim.request_id} label="claim run" />
             </>
@@ -679,12 +723,8 @@ function BountyCard(props: {
           ) : null}
           {transfers.map((t) => (
             <span key={`${t.to}-${t.amount}`}>
-              {near(t.amount)} to {short(t.to)}:{" "}
-              {t.state === "Sending"
-                ? "sent, confirmation pending"
-                : t.state === "Due"
-                  ? "failed, can be resent"
-                  : "done"}
+              {near(t.amount)} to {short(t.to)}, attempt {t.attempt}:{" "}
+              {transferText(t)}
             </span>
           ))}
         </dd>
@@ -754,9 +794,11 @@ export function PrBounties({
           Every check attaches {near(runCost)}; OutLayer keeps about 0.0011 and
           returns the rest to whoever paid. A bounty locks its reward,{" "}
           {near(budget)} reserved for the contributor's own checks, and{" "}
-          {near(storage)} of storage. Pilot: one public repository, maintainers
-          on the owner's allowlist
-          {config.paused ? "; posting is paused" : ""}.
+          {near(storage)} of storage. Pilot: one public repository,{" "}
+          <code>{config.pilot_repo}</code> (id {config.pilot_repo_id}),
+          maintainers on the owner's allowlist
+          {config.paused ? "; posting is paused" : ""}. A contributor proves
+          their GitHub account with a gist they own, not with a comment.
         </p>
       </section>
       {wallet && poster && !config.paused ? (

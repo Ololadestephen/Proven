@@ -1,8 +1,8 @@
 //! Proven PR merge bounties: automatic payout after an attested GitHub merge check.
 //!
-//! A maintainer posts a bounty for one issue of one public repository and one contributor, and
-//! locks a NEAR reward. The contributor proves control of their GitHub account with a one-time
-//! challenge comment, which fixes the payout wallet. The maintainer nominates the pull request,
+//! A maintainer posts a bounty for one issue of the pilot repository, fixed at deployment, and one
+//! contributor, and locks a NEAR reward. The contributor proves control of their GitHub account
+//! with a gist they own carrying an expiring challenge, which fixes the payout wallet. The maintainer nominates the pull request,
 //! which is bound by id only if GitHub shows it open, unmerged, on the agreed branch and by the
 //! contributor. A merge check that finds that pull request merged before the deadline pays the
 //! reward to the recorded wallet in the same callback. Otherwise the bounty refunds the maintainer
@@ -48,8 +48,9 @@ const NANOS_PER_SEC: u64 = 1_000_000_000;
 const GAS_FOR_OUTLAYER: Gas = Gas::from_tgas(150);
 const GAS_FOR_CLAIM_CALLBACK: Gas = Gas::from_tgas(30);
 /// Enough to read the answer and, when it pays, start two transfers with their callbacks.
-const GAS_FOR_CHECK_CALLBACK: Gas = Gas::from_tgas(60);
+const GAS_FOR_CHECK_CALLBACK: Gas = Gas::from_tgas(80);
 const GAS_FOR_TRANSFER_CALLBACK: Gas = Gas::from_tgas(10);
+const GAS_FOR_OUTCOME_CALLBACK: Gas = Gas::from_tgas(5);
 const GAS_FOR_CANCEL: Gas = Gas::from_tgas(50);
 pub const MIN_PREPAID_GAS_FOR_RUN: Gas = Gas::from_tgas(250);
 const RUN_MAX_INSTRUCTIONS: u64 = 5_000_000_000;
@@ -98,17 +99,47 @@ pub enum TransferKind {
 pub enum TransferState {
     /// Owed and not in flight: anyone may send it with `send_due`.
     Due,
-    /// Sent; its callback has not recorded the outcome. Never sent again from this state.
+    /// Sent as attempt `attempt`; its outcome is not recorded yet. Never sent again from this
+    /// state: it moves on only on the runtime's own result for that attempt.
     Sending,
     Done,
 }
 
+/// A payout or refund. Its amount stays reserved against the contract's total cap until the
+/// runtime reports that this exact transfer succeeded.
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Transfer {
     pub to: AccountId,
     pub amount: U128,
     pub state: TransferState,
+    /// Counts sends; each send is a new attempt, and every result names its attempt.
+    pub attempt: u32,
+    /// The runtime's result for the current attempt, written by a second, minimal callback on the
+    /// same transfer receipt. It lets `recover_transfer` finish an attempt whose bookkeeping
+    /// callback did not run, from the runtime's own result for exactly that attempt.
+    pub outcome: TransferOutcome,
+}
+
+impl Transfer {
+    fn due(to: AccountId, amount: u128) -> Self {
+        Self {
+            to,
+            amount: U128(amount),
+            state: TransferState::Due,
+            attempt: 0,
+            outcome: TransferOutcome::Unknown,
+        }
+    }
+}
+
+/// Fixed size, so recording an outcome never grows storage.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransferOutcome {
+    Unknown,
+    Succeeded,
+    Failed,
 }
 
 #[near(serializers = [borsh, json])]
@@ -116,7 +147,8 @@ pub struct Transfer {
 pub struct Claim {
     pub wallet: AccountId,
     pub github_id: U64,
-    pub comment_id: U64,
+    /// The gist that carried the challenge.
+    pub gist_id: String,
     pub claimed_at: U64,
     pub request_id: U64,
 }
@@ -207,6 +239,13 @@ impl Bounty {
             .filter(|run| now.saturating_sub(run.requested_at.0) <= RUN_TIMEOUT_NANOS)
     }
 
+    fn transfer(&self, kind: TransferKind) -> Option<&Transfer> {
+        match kind {
+            TransferKind::Reward => self.reward_transfer.as_ref(),
+            TransferKind::Budget => self.budget_transfer.as_ref(),
+        }
+    }
+
     fn transfer_mut(&mut self, kind: TransferKind) -> &mut Option<Transfer> {
         match kind {
             TransferKind::Reward => &mut self.reward_transfer,
@@ -222,6 +261,8 @@ pub struct Config {
     pub network: String,
     pub verifier_url: String,
     pub verifier_hash: String,
+    pub pilot_repo: String,
+    pub pilot_repo_id: U64,
     pub paused: bool,
     pub max_reward: U128,
     pub max_held: U128,
@@ -241,11 +282,16 @@ pub struct PrBounty {
     network: String,
     verifier_url: String,
     verifier_hash: String,
+    /// The one repository this pilot pays for, by `owner/name` and GitHub's stable id, fixed at
+    /// deployment by the owner.
+    pilot_repo: String,
+    pilot_repo_id: u64,
     paused: bool,
     max_reward: u128,
     max_held: u128,
     max_open_per_buyer: u32,
-    /// Rewards and budgets owed and not yet sent.
+    /// Rewards and budgets owed and not yet confirmed paid out: every amount stays here until the
+    /// runtime reports its transfer succeeded, so the total cap holds while transfers are in flight.
     held: u128,
     posters: LookupSet<AccountId>,
     open_by_buyer: LookupMap<AccountId, u32>,
@@ -253,6 +299,15 @@ pub struct PrBounty {
     /// GitHub pull request id -> the bounty it is bound to. Never removed.
     used_prs: LookupMap<u64, BountyId>,
     next_seq: u64,
+}
+
+/// The arguments of both transfer callbacks.
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct TransferArgs {
+    bounty_id: BountyId,
+    kind: TransferKind,
+    attempt: u32,
 }
 
 /// The verifier's input. Optional members are left out for the other operation.
@@ -269,7 +324,7 @@ struct RunInput<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     number: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    comment_id: Option<u64>,
+    gist_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     challenge: Option<&'a str>,
 }
@@ -325,6 +380,8 @@ impl PrBounty {
         network: String,
         verifier_url: String,
         verifier_hash: String,
+        pilot_repo: String,
+        pilot_repo_id: U64,
         max_reward: U128,
         max_held: U128,
         max_open_per_buyer: u32,
@@ -341,12 +398,16 @@ impl PrBounty {
             is_sha256_hex(&verifier_hash),
             "verifier_hash must be 64 lowercase hex characters"
         );
+        require!(is_repo(&pilot_repo), "pilot_repo must be owner/name");
+        require!(pilot_repo_id.0 > 0, "pilot_repo_id is required");
         let mut contract = Self {
             owner,
             outlayer,
             network,
             verifier_url,
             verifier_hash,
+            pilot_repo,
+            pilot_repo_id: pilot_repo_id.0,
             paused: false,
             max_reward: 0,
             max_held: 0,
@@ -431,11 +492,11 @@ impl PrBounty {
             open < self.max_open_per_buyer,
             "this maintainer has too many open bounties"
         );
-        require!(is_repo(&repo), "repo must be owner/name");
         require!(
-            repo_id.0 > 0 && issue > 0 && contributor_github_id.0 > 0,
-            "ids are required"
+            repo_id.0 == self.pilot_repo_id && repo == self.pilot_repo,
+            "this pilot only pays for its approved repository"
         );
+        require!(issue > 0 && contributor_github_id.0 > 0, "ids are required");
         require!(
             !base_ref.is_empty()
                 && base_ref.len() <= MAX_REF_LEN
@@ -490,7 +551,7 @@ impl PrBounty {
 
     /// Withdraws a bounty nobody has claimed. A claim proof still in flight then finds the
     /// bounty cancelled and changes nothing.
-    pub fn cancel(&mut self, bounty_id: BountyId) -> Promise {
+    pub fn cancel(&mut self, bounty_id: BountyId) {
         let bounty = self.bounty(bounty_id);
         require!(
             env::predecessor_account_id() == bounty.buyer,
@@ -500,34 +561,29 @@ impl PrBounty {
             bounty.status == Status::Open,
             "only an unclaimed bounty can be cancelled"
         );
-        self.start_refund(bounty_id, Status::Cancelled)
+        self.start_refund(bounty_id, Status::Cancelled);
     }
 
     // ---- Contributor: claim ----
 
-    /// The text the contributor posts, alone, as a comment on the bounty's issue.
+    /// The text the contributor puts, alone, as the only file of a gist on their GitHub account.
+    /// It names this network, contract, bounty, repository, issue, wallet, GitHub id and expiry.
     pub fn claim_challenge(
         &self,
         bounty_id: BountyId,
         wallet: AccountId,
         expires_at: U64,
     ) -> String {
-        let bounty = self.bounty(bounty_id);
-        self.challenge(
-            bounty_id,
-            &wallet,
-            bounty.contributor_github_id.0,
-            expires_at.0,
-        )
+        self.challenge(bounty_id, self.bounty(bounty_id), &wallet, expires_at.0)
     }
 
-    /// Starts the claim proof for the calling wallet: the verifier reads `comment_id`. Attach
+    /// Starts the claim proof for the calling wallet: the verifier reads gist `gist_id`. Attach
     /// exactly 0.01 NEAR; OutLayer returns the unused part to the caller.
     #[payable]
     pub fn prove_claim(
         &mut self,
         bounty_id: BountyId,
-        comment_id: U64,
+        gist_id: String,
         expires_at: U64,
     ) -> Promise {
         let wallet = env::predecessor_account_id();
@@ -540,7 +596,10 @@ impl PrBounty {
             env::prepaid_gas() >= MIN_PREPAID_GAS_FOR_RUN,
             "attach at least 250 Tgas"
         );
-        require!(comment_id.0 > 0, "comment_id is required");
+        require!(
+            is_gist_id(&gist_id),
+            "gist_id must be the gist's lowercase hex id"
+        );
         let bounty = self.bounty(bounty_id).clone();
         require!(
             bounty.status == Status::Open,
@@ -555,51 +614,38 @@ impl PrBounty {
             now < expires && expires <= now.saturating_add(secs_to_nanos(CHALLENGE_TTL_SECS)),
             "expires_at must be in the future and at most one hour ahead"
         );
-        let challenge = self.challenge(
-            bounty_id,
-            &wallet,
-            bounty.contributor_github_id.0,
-            expires_at.0,
-        );
+        let challenge = self.challenge(bounty_id, &bounty, &wallet, expires_at.0);
         let seq = self.next_seq();
         let input = self.input(
             bounty_id,
             seq,
             &bounty.repo,
-            "comment",
+            "gist",
             None,
-            Some(comment_id.0),
+            Some(&gist_id),
             Some(&challenge),
         );
         log(
             "claim_requested",
             bounty_id,
-            &format!("seq={seq} wallet={wallet} comment={}", comment_id.0),
+            &format!("seq={seq} wallet={wallet} gist={gist_id}"),
         );
         let callback = Self::ext(env::current_account_id())
             .with_static_gas(GAS_FOR_CLAIM_CALLBACK)
             .with_unused_gas_weight(0)
-            .on_claim(
-                bounty_id,
-                U64(seq),
-                wallet.clone(),
-                comment_id,
-                expires_at,
-                U64(now),
-            );
+            .on_claim(bounty_id, U64(seq), wallet.clone(), gist_id, U64(now));
         self.run(input, &wallet, RUN_DEPOSIT).then(callback)
     }
 
-    /// The result of a claim proof. Only the first accepted proof fixes the claim.
+    /// The result of a claim proof. Only the first accepted proof fixes the claim. The expiry was
+    /// checked when the proof started, and the challenge the verifier compared names it.
     #[private]
-    #[allow(clippy::too_many_arguments)]
     pub fn on_claim(
         &mut self,
         bounty_id: BountyId,
         seq: U64,
         wallet: AccountId,
-        comment_id: U64,
-        expires_at: U64,
+        gist_id: String,
         requested_at: U64,
     ) -> String {
         let result = env::promise_result_checked(0, answer::MAX_OUTPUT_BYTES);
@@ -624,31 +670,18 @@ impl PrBounty {
                 bounty_id,
                 seq.0,
                 &bounty.repo,
-                Parsed::comment(comment_id.0),
+                Parsed::Gist(&gist_id),
             ) {
                 Err(reason) => reason,
                 Ok(answer) => {
                     request_id = Some(answer.request_id);
-                    let facts = answer.comment.expect("parse returns the asked operation");
-                    let window_start = expires_at.0.saturating_sub(CHALLENGE_TTL_SECS);
-                    let posted_secs = bounty.posted_at.0 / NANOS_PER_SEC;
-                    let mismatch = if facts.repo_id != bounty.repo_id.0 {
-                        Some("repo_id")
-                    } else if facts.issue_number != bounty.issue {
-                        Some("issue")
-                    } else if facts.comment_id != comment_id.0 {
-                        Some("comment_id")
-                    } else if facts.author_id != bounty.contributor_github_id.0 {
-                        Some("author_id")
+                    let facts = answer.gist.expect("parse returns the asked operation");
+                    let mismatch = if facts.owner_id != bounty.contributor_github_id.0 {
+                        Some("owner_id")
+                    } else if facts.files != 1 {
+                        Some("ambiguous")
                     } else if !facts.challenge_matches {
                         Some("challenge")
-                    } else if facts.updated_at != facts.created_at {
-                        Some("edited")
-                    } else if facts.created_at < window_start
-                        || facts.created_at > expires_at.0
-                        || facts.created_at < posted_secs
-                    {
-                        Some("challenge_time")
                     } else {
                         None
                     };
@@ -658,7 +691,7 @@ impl PrBounty {
                             bounty.claim = Some(Claim {
                                 wallet: wallet.clone(),
                                 github_id: bounty.contributor_github_id,
-                                comment_id,
+                                gist_id: gist_id.clone(),
                                 claimed_at: U64(now),
                                 request_id: U64(answer.request_id),
                             });
@@ -931,7 +964,7 @@ impl PrBounty {
     /// Refunds the maintainer once the bounty can no longer pay: never claimed by `claim_by`
     /// (plus the run timeout), claimed but unbound after `bind_by`, bound but unpaid after
     /// `merge_deadline` plus grace, or ineligible. Waits while a check is live.
-    pub fn settle(&mut self, bounty_id: BountyId) -> Promise {
+    pub fn settle(&mut self, bounty_id: BountyId) {
         let now = env::block_timestamp();
         let bounty = self.bounty(bounty_id);
         let idle = bounty.live_run(now).is_none();
@@ -945,62 +978,103 @@ impl PrBounty {
             _ => false,
         };
         require!(due, "this bounty cannot be refunded yet");
-        self.start_refund(bounty_id, Status::Refunded)
+        self.start_refund(bounty_id, Status::Refunded);
     }
 
-    /// Sends again any transfer of this bounty whose earlier attempt failed, to the same account.
-    pub fn send_due(&mut self, bounty_id: BountyId) -> Promise {
-        let mut promises: Vec<Promise> = Vec::new();
-        for kind in [TransferKind::Reward, TransferKind::Budget] {
-            let due = self.bounty(bounty_id).clone();
-            let transfer = match kind {
-                TransferKind::Reward => due.reward_transfer,
-                TransferKind::Budget => due.budget_transfer,
-            };
-            if transfer.as_ref().map(|t| t.state) == Some(TransferState::Due) {
-                promises.push(self.send(bounty_id, kind));
-            }
+    /// Sends again any transfer of this bounty whose last attempt is known to have failed, to the
+    /// same account and for the same amount, as a new attempt.
+    pub fn send_due(&mut self, bounty_id: BountyId) {
+        let bounty = self.bounty(bounty_id).clone();
+        let due: Vec<TransferKind> = [
+            (TransferKind::Reward, bounty.reward_transfer),
+            (TransferKind::Budget, bounty.budget_transfer),
+        ]
+        .into_iter()
+        .filter(|(_, t)| t.as_ref().map(|t| t.state) == Some(TransferState::Due))
+        .map(|(kind, _)| kind)
+        .collect();
+        require!(!due.is_empty(), "no transfer is due");
+        for kind in due {
+            self.send(bounty_id, kind);
         }
-        let mut promises = promises.into_iter();
-        let first = promises
-            .next()
-            .unwrap_or_else(|| env::panic_str("no transfer is due"));
-        promises.fold(first, |all, next| all.and(next))
     }
 
-    /// Records a transfer's outcome. A failed transfer becomes due again, to the same account.
+    /// Finishes a transfer whose bookkeeping callback did not run, from the outcome the runtime
+    /// delivered for that same attempt: a success releases its reservation once, a failure
+    /// makes it due again. Without a recorded outcome nothing changes, however long it has
+    /// been. Anyone can call it; calling it again finds nothing to finish.
+    pub fn recover_transfer(&mut self, bounty_id: BountyId, kind: TransferKind) -> bool {
+        let transfer = self
+            .bounty(bounty_id)
+            .transfer(kind)
+            .cloned()
+            .unwrap_or_else(|| env::panic_str("no such transfer"));
+        require!(
+            transfer.state == TransferState::Sending,
+            "this transfer is not waiting for its outcome"
+        );
+        let sent = match transfer.outcome {
+            TransferOutcome::Succeeded => true,
+            TransferOutcome::Failed => false,
+            TransferOutcome::Unknown => {
+                env::panic_str("no outcome is recorded for this transfer's attempt")
+            }
+        };
+        let finished = self.finish_attempt(bounty_id, kind, transfer.attempt, sent);
+        log(
+            "transfer_recovered",
+            bounty_id,
+            &format!("kind={kind:?} attempt={} sent={sent}", transfer.attempt),
+        );
+        finished
+    }
+
+    /// Bookkeeping for one transfer attempt: success releases the reservation; failure makes the
+    /// transfer due again, still reserved. Returns whether it changed anything.
     #[private]
     #[cfg_attr(
         feature = "fault-transfer-callback",
         allow(unreachable_code, unused_variables)
     )]
-    pub fn on_transfer(&mut self, bounty_id: BountyId, kind: TransferKind) -> bool {
+    pub fn on_transfer(&mut self, bounty_id: BountyId, kind: TransferKind, attempt: u32) -> bool {
         #[cfg(feature = "fault-transfer-callback")]
-        env::panic_str("fault injection: the transfer callback fails");
+        env::panic_str("fault injection: the transfer bookkeeping callback fails");
         let sent = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
-        let mut returned = 0;
+        let finished = self.finish_attempt(bounty_id, kind, attempt, sent);
+        log(
+            "transfer_resolved",
+            bounty_id,
+            &format!("kind={kind:?} attempt={attempt} sent={sent} finished={finished}"),
+        );
+        finished
+    }
+
+    /// Records the runtime's result for one transfer attempt and nothing else: a fixed-size
+    /// write, no arithmetic, no storage growth, no panic path. It is the evidence
+    /// `recover_transfer` uses if `on_transfer` did not run.
+    #[private]
+    #[cfg_attr(
+        feature = "fault-outcome-callback",
+        allow(unreachable_code, unused_variables)
+    )]
+    pub fn on_transfer_outcome(&mut self, bounty_id: BountyId, kind: TransferKind, attempt: u32) {
+        #[cfg(feature = "fault-outcome-callback")]
+        env::panic_str("fault injection: the transfer outcome callback fails");
+        let sent = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
         if let Some(bounty) = u32::try_from(bounty_id)
             .ok()
             .and_then(|i| self.bounties.get_mut(i))
         {
             if let Some(transfer) = bounty.transfer_mut(kind) {
-                if transfer.state == TransferState::Sending {
-                    if sent {
-                        transfer.state = TransferState::Done;
+                if transfer.attempt == attempt && transfer.outcome == TransferOutcome::Unknown {
+                    transfer.outcome = if sent {
+                        TransferOutcome::Succeeded
                     } else {
-                        transfer.state = TransferState::Due;
-                        returned = transfer.amount.0;
-                    }
+                        TransferOutcome::Failed
+                    };
                 }
             }
         }
-        self.held += returned;
-        log(
-            "transfer_resolved",
-            bounty_id,
-            &format!("kind={kind:?} sent={sent}"),
-        );
-        sent
     }
 
     /// Forwards OutLayer's `cancel_stale_execution` for a run this contract requested; OutLayer
@@ -1041,6 +1115,8 @@ impl PrBounty {
             network: self.network.clone(),
             verifier_url: self.verifier_url.clone(),
             verifier_hash: self.verifier_hash.clone(),
+            pilot_repo: self.pilot_repo.clone(),
+            pilot_repo_id: U64(self.pilot_repo_id),
             paused: self.paused,
             max_reward: U128(self.max_reward),
             max_held: U128(self.max_held),
@@ -1062,8 +1138,10 @@ impl PrBounty {
         self.used_prs.get(&pr_id.0).copied()
     }
 
-    /// The contract's balance beyond what it owes and what its storage needs. It starts as the
-    /// operator's float; an unexplained rise means a transfer failed without its callback running.
+    /// The contract's balance beyond what it still owes (including transfers not yet confirmed)
+    /// and what its storage needs. It starts as the operator's float. While a transfer is in
+    /// flight its amount has left the balance but is still owed, so this reads low until the
+    /// outcome is recorded.
     pub fn get_free_balance(&self) -> U128 {
         let storage = env::storage_byte_cost().saturating_mul(u128::from(env::storage_usage()));
         U128(
@@ -1124,17 +1202,22 @@ impl PrBounty {
         self.next_seq
     }
 
+    /// `proven-claim:` + hex SHA-256 of everything the claim binds.
     fn challenge(
         &self,
         bounty_id: BountyId,
+        bounty: &Bounty,
         wallet: &AccountId,
-        github_id: u64,
         expires_at: u64,
     ) -> String {
         let message = format!(
-            "proven-pr-bounty-claim:v1|{}|{}|{bounty_id}|{wallet}|{github_id}|{expires_at}",
+            "proven-pr-bounty-claim:v2|{}|{}|{bounty_id}|{}|{}|{}|{wallet}|{}|{expires_at}",
             self.network,
-            env::current_account_id()
+            env::current_account_id(),
+            bounty.repo,
+            bounty.repo_id.0,
+            bounty.issue,
+            bounty.contributor_github_id.0,
         );
         let digest = env::sha256(message.as_bytes());
         let mut out = String::with_capacity(CHALLENGE_PREFIX.len() + 64);
@@ -1153,12 +1236,12 @@ impl PrBounty {
         repo: &str,
         op: &'static str,
         number: Option<u64>,
-        comment_id: Option<u64>,
+        gist_id: Option<&str>,
         challenge: Option<&str>,
     ) -> String {
         let contract = env::current_account_id();
         serde_json::to_string(&RunInput {
-            v: 2,
+            v: 3,
             network: &self.network,
             contract: &contract,
             bounty: bounty_id,
@@ -1166,7 +1249,7 @@ impl PrBounty {
             op,
             repo,
             number,
-            comment_id,
+            gist_id,
             challenge,
         })
         .expect("serializable")
@@ -1252,8 +1335,8 @@ impl PrBounty {
         self.run(input, &payer, RUN_DEPOSIT).then(callback)
     }
 
-    /// The reward to the recorded wallet and the unused budget to the maintainer, each recorded as
-    /// sent before it is sent.
+    /// The reward to the recorded wallet and the unused budget to the maintainer. Both stay
+    /// reserved until their transfers are confirmed.
     fn start_payout(&mut self, bounty_id: BountyId) {
         let bounty = self.bounty_mut(bounty_id);
         let wallet = bounty
@@ -1265,44 +1348,32 @@ impl PrBounty {
         let (buyer, reward, budget) = (bounty.buyer.clone(), bounty.reward.0, bounty.budget.0);
         bounty.status = Status::Paid;
         bounty.budget = U128(0);
-        bounty.reward_transfer = Some(Transfer {
-            to: wallet,
-            amount: U128(reward),
-            state: TransferState::Due,
-        });
+        bounty.reward_transfer = Some(Transfer::due(wallet, reward));
         if budget > 0 {
-            bounty.budget_transfer = Some(Transfer {
-                to: buyer.clone(),
-                amount: U128(budget),
-                state: TransferState::Due,
-            });
+            bounty.budget_transfer = Some(Transfer::due(buyer.clone(), budget));
         }
         self.close_for_buyer(&buyer);
-        self.send(bounty_id, TransferKind::Reward).detach();
+        self.send(bounty_id, TransferKind::Reward);
         if budget > 0 {
-            self.send(bounty_id, TransferKind::Budget).detach();
+            self.send(bounty_id, TransferKind::Budget);
         }
     }
 
-    fn start_refund(&mut self, bounty_id: BountyId, status: Status) -> Promise {
+    fn start_refund(&mut self, bounty_id: BountyId, status: Status) {
         let bounty = self.bounty_mut(bounty_id);
         let buyer = bounty.buyer.clone();
         let amount = bounty.reward.0 + bounty.budget.0;
         bounty.status = status;
         bounty.budget = U128(0);
         bounty.live = None;
-        bounty.reward_transfer = Some(Transfer {
-            to: buyer.clone(),
-            amount: U128(amount),
-            state: TransferState::Due,
-        });
+        bounty.reward_transfer = Some(Transfer::due(buyer.clone(), amount));
         self.close_for_buyer(&buyer);
         log(
             "refund_started",
             bounty_id,
             &format!("status={status:?} amount={amount}"),
         );
-        self.send(bounty_id, TransferKind::Reward)
+        self.send(bounty_id, TransferKind::Reward);
     }
 
     fn close_for_buyer(&mut self, buyer: &AccountId) {
@@ -1311,8 +1382,10 @@ impl PrBounty {
             .insert(buyer.clone(), open.saturating_sub(1));
     }
 
-    /// Marks a due transfer as sent, takes it off what the contract holds, and sends it.
-    fn send(&mut self, bounty_id: BountyId, kind: TransferKind) -> Promise {
+    /// Sends a due transfer as a new attempt, with two callbacks on the same transfer receipt:
+    /// `on_transfer` does the bookkeeping and `on_transfer_outcome` only records the result. The
+    /// amount stays reserved in `held` until a success is confirmed.
+    fn send(&mut self, bounty_id: BountyId, kind: TransferKind) {
         let bounty = self.bounty_mut(bounty_id);
         let transfer = bounty
             .transfer_mut(kind)
@@ -1323,26 +1396,89 @@ impl PrBounty {
             "this transfer is not due"
         );
         transfer.state = TransferState::Sending;
-        let (to, amount) = (transfer.to.clone(), transfer.amount.0);
-        self.held -= amount;
+        transfer.attempt += 1;
+        transfer.outcome = TransferOutcome::Unknown;
+        let (to, amount, attempt) = (transfer.to.clone(), transfer.amount.0, transfer.attempt);
         log(
             "transfer_sent",
             bounty_id,
-            &format!("kind={kind:?} to={to} amount={amount}"),
+            &format!("kind={kind:?} attempt={attempt} to={to} amount={amount}"),
         );
-        Promise::new(to)
-            .transfer(NearToken::from_yoctonear(amount))
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(GAS_FOR_TRANSFER_CALLBACK)
-                    .with_unused_gas_weight(0)
-                    .on_transfer(bounty_id, kind),
-            )
+        let args = serde_json::to_vec(&TransferArgs {
+            bounty_id,
+            kind,
+            attempt,
+        })
+        .expect("serializable");
+        let me = env::current_account_id();
+        let zero = NearToken::from_yoctonear(0);
+        let payment = env::promise_batch_create(&to);
+        env::promise_batch_action_transfer(payment, NearToken::from_yoctonear(amount));
+        env::promise_then(
+            payment,
+            me.clone(),
+            "on_transfer",
+            &args,
+            zero,
+            GAS_FOR_TRANSFER_CALLBACK,
+        );
+        env::promise_then(
+            payment,
+            me,
+            "on_transfer_outcome",
+            &args,
+            zero,
+            GAS_FOR_OUTCOME_CALLBACK,
+        );
+    }
+
+    /// Applies one attempt's result if that attempt is still the one in flight. Returns whether
+    /// it changed anything, so a duplicate or late result is a no-op.
+    fn finish_attempt(
+        &mut self,
+        bounty_id: BountyId,
+        kind: TransferKind,
+        attempt: u32,
+        sent: bool,
+    ) -> bool {
+        let Some(bounty) = u32::try_from(bounty_id)
+            .ok()
+            .and_then(|i| self.bounties.get_mut(i))
+        else {
+            return false;
+        };
+        let Some(transfer) = bounty.transfer_mut(kind) else {
+            return false;
+        };
+        if transfer.state != TransferState::Sending || transfer.attempt != attempt {
+            return false;
+        }
+        transfer.outcome = if sent {
+            TransferOutcome::Succeeded
+        } else {
+            TransferOutcome::Failed
+        };
+        if sent {
+            transfer.state = TransferState::Done;
+            let amount = transfer.amount.0;
+            self.held = self.held.saturating_sub(amount);
+        } else {
+            transfer.state = TransferState::Due;
+        }
+        true
     }
 }
 
 fn show(id: Option<u64>) -> String {
     id.map_or_else(|| "none".to_string(), |id| id.to_string())
+}
+
+/// A gist id as GitHub issues them: lowercase hex, at most 64 characters.
+fn is_gist_id(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn is_sha256_hex(value: &str) -> bool {

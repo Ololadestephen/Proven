@@ -6,16 +6,16 @@
 //! - `pull`: `GET /repos/<owner>/<name>/pulls/<number>`, giving the base repository id, the pull
 //!   request id and number, the author id, the base branch, the state, the merge flag and
 //!   `merged_at` in Unix seconds (the probe verifier's parser, unchanged);
-//! - `comment`: `GET /repos/<owner>/<name>` for the repository id, then
-//!   `GET /repos/<owner>/<name>/issues/comments/<id>`, giving the comment id, the author id, the
-//!   issue it is on, its creation and update times, and whether its whole text is exactly the
-//!   claim challenge the contract sent.
+//! - `gist`: `GET /gists/<id>`, giving the gist's owner id, how many files it has, and whether it
+//!   has exactly one complete file whose text is exactly the claim challenge the contract sent.
+//!   Only a gist's owner can change it, so, unlike an issue comment, a repository's writers
+//!   cannot put words in a contributor's gist.
 //!
 //! Every request goes to the fixed host `api.github.com` without a credential, follows no
-//! redirect and reads a bounded body (see `proven_pr_verifier`). The answer echoes the network,
-//! contract, bounty, request sequence number, operation and target, plus the worker's predecessor
-//! and request id. It never prints the comment text, a title, a description or GitHub's error text,
-//! and it judges nothing: the contract decides.
+//! redirect and reads a bounded body. The answer echoes the network, contract, bounty, request
+//! sequence number, operation and target, plus the worker's predecessor and request id. It never
+//! prints a gist's text, a title, a description or GitHub's error text, and it judges nothing:
+//! the contract decides.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -31,12 +31,13 @@ pub use probe::{
     BETWEEN_BYTES_TIMEOUT_SECS, CONNECT_TIMEOUT_SECS, FIRST_BYTE_TIMEOUT_SECS, MAX_BODY_BYTES,
     MAX_REQUEST_BYTES, USER_AGENT,
 };
-use probe::{is_account_id, is_repo, unix_seconds};
+use probe::{is_account_id, is_repo};
 
-pub const OUTPUT_VERSION: u32 = 2;
+pub const OUTPUT_VERSION: u32 = 3;
 pub const OUTPUT_KIND: &str = "proven-pr-bounty-facts";
 pub const CHALLENGE_PREFIX: &str = "proven-claim:";
 const CHALLENGE_HEX_LEN: usize = 64;
+const MAX_GIST_ID_LEN: usize = 64;
 
 /// What the contract asks for. Unknown members are refused; each operation takes only its own.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -50,14 +51,14 @@ struct RawRequest {
     op: String,
     repo: String,
     number: Option<u64>,
-    comment_id: Option<u64>,
+    gist_id: Option<String>,
     challenge: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
     Pull { number: u64 },
-    Comment { comment_id: u64, challenge: String },
+    Gist { gist_id: String, challenge: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,23 +71,22 @@ pub struct Request {
     pub op: Op,
 }
 
-/// The facts read from a claim comment and its repository.
+/// The facts read from a claim gist.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommentFacts {
-    pub repo_id: u64,
-    pub comment_id: u64,
-    pub author_id: u64,
-    pub issue_number: u64,
-    pub created_at: u64,
-    pub updated_at: u64,
-    /// The comment's whole text, trimmed of surrounding whitespace, equals the challenge.
+pub struct GistFacts {
+    /// `owner.id`: the account that owns the gist, the only one that can change it.
+    pub owner_id: u64,
+    /// How many files the gist has. A claim needs exactly one.
+    pub files: u32,
+    /// The gist has exactly one file, not truncated, whose whole text (trimmed of surrounding
+    /// whitespace) equals the challenge.
     pub challenge_matches: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     Pull(PullFacts),
-    Comment(CommentFacts),
+    Gist(GistFacts),
 }
 
 pub fn parse_request(bytes: &[u8]) -> Result<Request, Reason> {
@@ -101,17 +101,14 @@ pub fn parse_request(bytes: &[u8]) -> Result<Request, Reason> {
     if !common {
         return Err(Reason::BadRequest);
     }
-    let op = match (raw.op.as_str(), raw.number, raw.comment_id, raw.challenge) {
+    let op = match (raw.op.as_str(), raw.number, raw.gist_id, raw.challenge) {
         ("pull", Some(number), None, None) if (1..=u64::from(u32::MAX)).contains(&number) => {
             Op::Pull { number }
         }
-        ("comment", None, Some(comment_id), Some(challenge))
-            if comment_id > 0 && is_challenge(&challenge) =>
+        ("gist", None, Some(gist_id), Some(challenge))
+            if is_gist_id(&gist_id) && is_challenge(&challenge) =>
         {
-            Op::Comment {
-                comment_id,
-                challenge,
-            }
+            Op::Gist { gist_id, challenge }
         }
         _ => return Err(Reason::BadRequest),
     };
@@ -135,70 +132,69 @@ pub fn is_challenge(value: &str) -> bool {
     })
 }
 
+/// A gist id as GitHub issues them: lowercase hex (older gists have decimal ids, also hex digits).
+pub fn is_gist_id(value: &str) -> bool {
+    (1..=MAX_GIST_ID_LEN).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 pub fn pull_path(repo: &str, number: u64) -> String {
     format!("/repos/{repo}/pulls/{number}")
 }
 
-pub fn repo_path(repo: &str) -> String {
-    format!("/repos/{repo}")
+pub fn gist_path(gist_id: &str) -> String {
+    format!("/gists/{gist_id}")
 }
 
-pub fn comment_path(repo: &str, comment_id: u64) -> String {
-    format!("/repos/{repo}/issues/comments/{comment_id}")
-}
-
-/// The repository's stable id, from `GET /repos/<owner>/<name>`. A private repository, or one
-/// whose canonical name differs from the one asked for, is malformed.
-pub fn parse_repo(body: &[u8], repo: &str) -> Result<u64, Reason> {
-    let value = object(body)?;
-    let id = id(&value["id"])?;
-    let full_name = text(&value["full_name"])?;
-    let private = flag(&value["private"])?;
-    if private || !full_name.eq_ignore_ascii_case(repo) {
+/// The facts of one gist, from `GET /gists/<id>`. GitHub's answer must be about the gist asked
+/// for, with a known owner and a complete file list; every file must be complete.
+pub fn parse_gist(body: &[u8], gist_id: &str, challenge: &str) -> Result<GistFacts, Reason> {
+    if body.len() > MAX_BODY_BYTES {
+        return Err(Reason::Oversized);
+    }
+    let value: Value = serde_json::from_slice(body).map_err(|_| Reason::Malformed)?;
+    if !value.is_object() {
         return Err(Reason::Malformed);
     }
-    Ok(id)
-}
-
-/// The facts of one issue comment, from `GET /repos/<owner>/<name>/issues/comments/<id>`. The
-/// comment must sit on an issue of `repo`, by GitHub's own `issue_url`.
-pub fn parse_comment(
-    body: &[u8],
-    repo_id: u64,
-    repo: &str,
-    challenge: &str,
-) -> Result<CommentFacts, Reason> {
-    let value = object(body)?;
-    let issue_url = text(&value["issue_url"])?;
-    let prefix = format!("https://{API_HOST}/repos/{repo}/issues/");
-    let issue_number = match issue_url.get(..prefix.len()) {
-        Some(head) if head.eq_ignore_ascii_case(&prefix) => {
-            let tail = &issue_url[prefix.len()..];
-            if tail.is_empty() || !tail.bytes().all(|b| b.is_ascii_digit()) {
-                return Err(Reason::Malformed);
-            }
-            tail.parse::<u64>().map_err(|_| Reason::Malformed)?
-        }
-        _ => return Err(Reason::Malformed),
-    };
-    let body_text = match &value["body"] {
+    match &value["id"] {
         Value::Null => return Err(Reason::Incomplete),
-        Value::String(s) => s.as_str(),
+        Value::String(id) if id == gist_id => {}
+        _ => return Err(Reason::Malformed),
+    }
+    let owner_id = match &value["owner"] {
+        Value::Null => return Err(Reason::Incomplete),
+        owner => match &owner["id"] {
+            Value::Null => return Err(Reason::Incomplete),
+            id => id.as_u64().filter(|n| *n > 0).ok_or(Reason::Malformed)?,
+        },
+    };
+    // A list GitHub cut short is not the whole gist.
+    match &value["truncated"] {
+        Value::Bool(false) | Value::Null => {}
+        _ => return Err(Reason::Malformed),
+    }
+    let files = match &value["files"] {
+        Value::Null => return Err(Reason::Incomplete),
+        Value::Object(files) => files,
         _ => return Err(Reason::Malformed),
     };
-    let facts = CommentFacts {
-        repo_id,
-        comment_id: id(&value["id"])?,
-        author_id: id(&value["user"]["id"])?,
-        issue_number,
-        created_at: time(&value["created_at"])?,
-        updated_at: time(&value["updated_at"])?,
-        challenge_matches: body_text.trim() == challenge,
-    };
-    if issue_number == 0 || facts.updated_at < facts.created_at {
-        return Err(Reason::Malformed);
+    let mut texts = Vec::with_capacity(files.len());
+    for file in files.values() {
+        let complete = matches!(file["truncated"], Value::Bool(false));
+        match (&file["content"], complete) {
+            (Value::String(text), true) => texts.push(text.as_str()),
+            (Value::Null, _) => return Err(Reason::Incomplete),
+            _ => return Err(Reason::Malformed),
+        }
     }
-    Ok(facts)
+    let count = u32::try_from(texts.len()).map_err(|_| Reason::Malformed)?;
+    Ok(GistFacts {
+        owner_id,
+        files: count,
+        challenge_matches: count == 1 && texts[0].trim() == challenge,
+    })
 }
 
 /// The one line this program prints. A request that could not be read is answered without a
@@ -225,9 +221,9 @@ pub fn render(
                 out["op"] = json!("pull");
                 out["number"] = json!(number);
             }
-            Op::Comment { comment_id, .. } => {
-                out["op"] = json!("comment");
-                out["comment_id"] = json!(comment_id);
+            Op::Gist { gist_id, .. } => {
+                out["op"] = json!("gist");
+                out["gist_id"] = json!(gist_id);
             }
         }
     }
@@ -240,12 +236,10 @@ pub fn render(
                 "merged": f.merged, "merged_at": f.merged_at,
             });
         }
-        Ok(Answer::Comment(f)) => {
+        Ok(Answer::Gist(f)) => {
             out["status"] = json!("ok");
-            out["comment"] = json!({
-                "repo_id": f.repo_id, "comment_id": f.comment_id, "author_id": f.author_id,
-                "issue_number": f.issue_number, "created_at": f.created_at,
-                "updated_at": f.updated_at, "challenge_matches": f.challenge_matches,
+            out["gist"] = json!({
+                "owner_id": f.owner_id, "files": f.files, "challenge_matches": f.challenge_matches,
             });
         }
         Err(reason) => {
@@ -254,48 +248,4 @@ pub fn render(
         }
     }
     out.to_string()
-}
-
-fn object(body: &[u8]) -> Result<Value, Reason> {
-    if body.len() > MAX_BODY_BYTES {
-        return Err(Reason::Oversized);
-    }
-    let value: Value = serde_json::from_slice(body).map_err(|_| Reason::Malformed)?;
-    if value.is_object() {
-        Ok(value)
-    } else {
-        Err(Reason::Malformed)
-    }
-}
-
-fn id(value: &Value) -> Result<u64, Reason> {
-    match value {
-        Value::Null => Err(Reason::Incomplete),
-        Value::Number(_) => value.as_u64().filter(|n| *n > 0).ok_or(Reason::Malformed),
-        _ => Err(Reason::Malformed),
-    }
-}
-
-fn text(value: &Value) -> Result<String, Reason> {
-    match value {
-        Value::Null => Err(Reason::Incomplete),
-        Value::String(s) if !s.is_empty() => Ok(s.clone()),
-        _ => Err(Reason::Malformed),
-    }
-}
-
-fn flag(value: &Value) -> Result<bool, Reason> {
-    match value {
-        Value::Null => Err(Reason::Incomplete),
-        Value::Bool(b) => Ok(*b),
-        _ => Err(Reason::Malformed),
-    }
-}
-
-fn time(value: &Value) -> Result<u64, Reason> {
-    match value {
-        Value::Null => Err(Reason::Incomplete),
-        Value::String(s) => unix_seconds(s).ok_or(Reason::Malformed),
-        _ => Err(Reason::Malformed),
-    }
 }

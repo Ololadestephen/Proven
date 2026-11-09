@@ -1,0 +1,37 @@
+{
+  "url": "https://api.github.com/gists/0123456789abcdef0123456789abcdef",
+  "id": "0123456789abcdef0123456789abcdef",
+  "node_id": "G_kwSYNTHETIC",
+  "git_pull_url": "https://gist.github.com/0123456789abcdef0123456789abcdef.git",
+  "html_url": "https://gist.github.com/0123456789abcdef0123456789abcdef",
+  "files": {
+    "proven-claim.txt": {
+      "filename": "proven-claim.txt",
+      "type": "text/plain",
+      "language": "Text",
+      "raw_url": "https://gist.githubusercontent.com/example-contributor/0123456789abcdef0123456789abcdef/raw/proven-claim.txt",
+      "size": 77,
+      "truncated": false,
+      "content": "proven-claim:1111111111111111111111111111111111111111111111111111111111111111\n",
+      "encoding": "utf-8"
+    }
+  },
+  "public": false,
+  "created_at": "2026-11-10T09:00:05Z",
+  "updated_at": "2026-11-10T09:00:05Z",
+  "description": "",
+  "comments": 0,
+  "user": null,
+  "owner": { "login": "example-contributor", "id": 900000001, "type": "User", "site_admin": false },
+  "forks": [],
+  "history": [
+    {
+      "user": { "login": "example-contributor", "id": 900000001, "type": "User", "site_admin": false },
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "committed_at": "2026-11-10T09:00:05Z",
+      "change_status": { "total": 1, "additions": 1, "deletions": 0 },
+      "url": "https://api.github.com/gists/0123456789abcdef0123456789abcdef/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "truncated": false
+}

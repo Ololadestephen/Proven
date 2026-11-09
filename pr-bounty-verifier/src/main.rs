@@ -5,8 +5,8 @@
 extern crate proven_pr_bounty_verifier as proven_pr_verifier;
 
 use proven_pr_bounty_verifier::{
-    comment_path, parse_comment, parse_pull, parse_repo, parse_request, pull_path, render,
-    repo_path, Answer, Op, Reason, Request, RunContext, MAX_REQUEST_BYTES,
+    gist_path, parse_gist, parse_pull, parse_request, pull_path, render, Answer, Op, Reason,
+    Request, RunContext, MAX_REQUEST_BYTES,
 };
 use std::io::{Read, Write};
 
@@ -41,13 +41,9 @@ fn answer(request: &Request) -> Result<Answer, Reason> {
             let body = fetch(&pull_path(&request.repo, *number))?;
             parse_pull(&body).map(Answer::Pull)
         }
-        Op::Comment {
-            comment_id,
-            challenge,
-        } => {
-            let repo_id = parse_repo(&fetch(&repo_path(&request.repo))?, &request.repo)?;
-            let body = fetch(&comment_path(&request.repo, *comment_id))?;
-            parse_comment(&body, repo_id, &request.repo, challenge).map(Answer::Comment)
+        Op::Gist { gist_id, challenge } => {
+            let body = fetch(&gist_path(gist_id))?;
+            parse_gist(&body, gist_id, challenge).map(Answer::Gist)
         }
     }
 }

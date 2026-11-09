@@ -10,7 +10,8 @@ use serde_json::Value as Json;
 use verifier::{PullFacts as VPull, Reason, RunContext};
 
 const URL: &str = "https://test.fastfs.io/proven.testnet/outlayer.testnet/verifier.wasm";
-const HASH: &str = "75a43fb03170017304f2bf53eb21d7d77bd630741ea568f649a4de1efac3948d";
+const HASH: &str = "6df5a630107bef075bdd09203d64bbd26ec072e6edfd329b2f946a534c4e32fa";
+const GIST: &str = "0123456789abcdef0123456789abcdef";
 const REPO: &str = "proven-test/bounty-pilot";
 const REPO_ID: u64 = 800_000_001;
 const ISSUE: u64 = 3;
@@ -86,6 +87,8 @@ fn contract() -> PrBounty {
         "testnet".into(),
         URL.into(),
         HASH.into(),
+        REPO.into(),
+        U64(REPO_ID),
         U128(2 * REWARD),
         U128(5 * REWARD),
         3,
@@ -125,27 +128,26 @@ fn ctx(id: u64) -> RunContext {
     RunContext::from_vars(Some(this().to_string()), Some(id.to_string()))
 }
 
-fn comment_facts(created_at: u64) -> verifier::CommentFacts {
-    verifier::CommentFacts {
-        repo_id: REPO_ID,
-        comment_id: 77,
-        author_id: GH,
-        issue_number: ISSUE,
-        created_at,
-        updated_at: created_at,
+fn gist_facts() -> verifier::GistFacts {
+    verifier::GistFacts {
+        owner_id: GH,
+        files: 1,
         challenge_matches: true,
     }
 }
 
-fn comment_answer(bounty: BountyId, seq: u64, facts: verifier::CommentFacts) -> Json {
-    let op = verifier::Op::Comment {
-        comment_id: 77,
+fn gist_op() -> verifier::Op {
+    verifier::Op::Gist {
+        gist_id: GIST.into(),
         challenge: format!("proven-claim:{}", "0".repeat(64)),
-    };
+    }
+}
+
+fn gist_answer(bounty: BountyId, seq: u64, facts: verifier::GistFacts) -> Json {
     let line = verifier::render(
-        Some(&request(bounty, seq, op)),
+        Some(&request(bounty, seq, gist_op())),
         &ctx(15_100 + seq),
-        Ok(verifier::Answer::Comment(facts)),
+        Ok(verifier::Answer::Gist(facts)),
     );
     serde_json::from_str(&line).unwrap()
 }
@@ -197,7 +199,7 @@ fn ok(value: &Json) -> PromiseResult {
 }
 
 /// One edit to a reply's facts, for table-driven cases.
-type CommentEdit = Box<dyn Fn(&mut verifier::CommentFacts) + Send>;
+type GistEdit = Box<dyn Fn(&mut verifier::GistFacts) + Send>;
 type PullEdit = Box<dyn Fn(&mut VPull) + Send + Sync>;
 
 const T_CLAIM: u64 = START + 600 * SEC;
@@ -206,19 +208,15 @@ const EXPIRES: u64 = START_S + 600 + 1_800;
 /// Proves the claim at T_CLAIM with `answer`, returning the callback's outcome.
 fn claim_with(c: &mut PrBounty, id: BountyId, answer: PromiseResult) -> String {
     act(wallet(), RUN_DEPOSIT, T_CLAIM);
-    let _ = c.prove_claim(id, U64(77), U64(EXPIRES));
+    let _ = c.prove_claim(id, GIST.into(), U64(EXPIRES));
     callback(T_CLAIM + 10 * SEC, answer);
-    c.on_claim(id, U64(1), wallet(), U64(77), U64(EXPIRES), U64(T_CLAIM))
+    c.on_claim(id, U64(1), wallet(), GIST.into(), U64(T_CLAIM))
 }
 
 fn claimed() -> (PrBounty, BountyId) {
     let mut c = contract();
     let id = post(&mut c);
-    let outcome = claim_with(
-        &mut c,
-        id,
-        ok(&comment_answer(id, 1, comment_facts(START_S + 900))),
-    );
+    let outcome = claim_with(&mut c, id, ok(&gist_answer(id, 1, gist_facts())));
     assert_eq!(outcome, "claimed");
     (c, id)
 }
@@ -406,11 +404,7 @@ fn the_pause_stops_new_bounties_only() {
     act(owner(), NearToken::from_yoctonear(0), START);
     c.set_paused(true);
     assert_eq!(
-        claim_with(
-            &mut c,
-            id,
-            ok(&comment_answer(id, 1, comment_facts(START_S + 900)))
-        ),
+        claim_with(&mut c, id, ok(&gist_answer(id, 1, gist_facts()))),
         "claimed"
     );
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -430,12 +424,26 @@ fn only_the_owner_pauses() {
 // ---- Claims ----
 
 #[test]
-fn the_challenge_binds_network_contract_bounty_wallet_id_and_expiry() {
+fn the_challenge_binds_network_contract_bounty_repo_issue_wallet_id_and_expiry() {
     let mut c = contract();
     let id = post(&mut c);
     act(stranger(), NearToken::from_yoctonear(0), START);
     let base = c.claim_challenge(id, wallet(), U64(EXPIRES));
     assert!(base.starts_with("proven-claim:") && base.len() == 13 + 64);
+    let expected = format!(
+        "proven-pr-bounty-claim:v2|testnet|{}|{id}|{REPO}|{REPO_ID}|{ISSUE}|{}|{GH}|{EXPIRES}",
+        this(),
+        wallet()
+    );
+    let digest: String = env::sha256(expected.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(
+        base,
+        format!("proven-claim:{digest}"),
+        "the exact message is documented"
+    );
     assert_ne!(
         base,
         c.claim_challenge(id, stranger(), U64(EXPIRES)),
@@ -454,7 +462,7 @@ fn the_challenge_binds_network_contract_bounty_wallet_id_and_expiry() {
         "another bounty"
     );
     act(wallet(), RUN_DEPOSIT, T_CLAIM);
-    let _ = c.prove_claim(id, U64(77), U64(EXPIRES));
+    let _ = c.prove_claim(id, GIST.into(), U64(EXPIRES));
     let (args, deposit) = outlayer_call();
     assert_eq!(deposit, RUN_DEPOSIT);
     assert_eq!(args["source"]["WasmUrl"]["hash"], HASH);
@@ -462,95 +470,62 @@ fn the_challenge_binds_network_contract_bounty_wallet_id_and_expiry() {
     assert_eq!(args["payer_account_id"], wallet().to_string());
     assert!(args.get("secrets_ref").is_none());
     let input: Json = serde_json::from_str(args["input_data"].as_str().unwrap()).unwrap();
-    assert_eq!(input["op"], "comment");
+    assert_eq!(input["v"], 3);
+    assert_eq!(input["op"], "gist");
+    assert_eq!(input["gist_id"], GIST);
     assert_eq!(input["challenge"], base);
     assert_eq!(input["network"], "testnet");
     assert_eq!(input["contract"], this().to_string());
 }
 
 #[test]
-fn an_accepted_claim_fixes_the_wallet_and_github_id() {
+fn an_accepted_claim_fixes_the_wallet_github_id_and_gist() {
     let (c, id) = claimed();
     let claim = c.get_bounty(id).unwrap().claim.unwrap();
     assert_eq!(
         (
             claim.wallet,
             claim.github_id.0,
-            claim.comment_id.0,
+            claim.gist_id.as_str(),
             claim.request_id.0
         ),
-        (wallet(), GH, 77, 15_101)
+        (wallet(), GH, GIST, 15_101)
     );
     assert_eq!(c.get_bounty(id).unwrap().status, Status::Claimed);
 }
 
 #[test]
 fn claim_proofs_that_do_not_hold_are_refused() {
-    let cases: Vec<(&str, CommentEdit)> = vec![
-        ("mismatch:author_id", Box::new(|f| f.author_id = OTHER_GH)),
-        ("mismatch:issue", Box::new(|f| f.issue_number = ISSUE + 1)),
-        ("mismatch:repo_id", Box::new(|f| f.repo_id = REPO_ID + 1)),
+    let cases: Vec<(&str, GistEdit)> = vec![
+        ("mismatch:owner_id", Box::new(|f| f.owner_id = OTHER_GH)),
+        ("mismatch:ambiguous", Box::new(|f| f.files = 2)),
+        (
+            "mismatch:ambiguous",
+            Box::new(|f| {
+                f.files = 0;
+                f.challenge_matches = false;
+            }),
+        ),
+        // The verifier compared the gist with this wallet's challenge for this bounty and expiry:
+        // a gist made for another wallet, bounty, contract or expiry does not match.
         (
             "mismatch:challenge",
             Box::new(|f| f.challenge_matches = false),
-        ),
-        (
-            "mismatch:edited",
-            Box::new(|f| f.updated_at = f.created_at + 5),
-        ),
-        (
-            "mismatch:challenge_time",
-            Box::new(|f| {
-                f.created_at = EXPIRES - CHALLENGE_TTL_SECS - 1;
-                f.updated_at = f.created_at;
-            }),
-        ),
-        (
-            "mismatch:challenge_time",
-            Box::new(|f| {
-                f.created_at = EXPIRES + 1;
-                f.updated_at = f.created_at;
-            }),
         ),
     ];
     for (expected, edit) in cases {
         isolated(move || {
             let mut c = contract();
             let id = post(&mut c);
-            let mut facts = comment_facts(START_S + 900);
+            let mut facts = gist_facts();
             edit(&mut facts);
             assert_eq!(
-                claim_with(&mut c, id, ok(&comment_answer(id, 1, facts))),
+                claim_with(&mut c, id, ok(&gist_answer(id, 1, facts))),
                 expected
             );
             assert_eq!(c.get_bounty(id).unwrap().status, Status::Open);
         });
     }
-}
-
-#[test]
-fn a_comment_written_before_the_bounty_was_posted_is_refused() {
-    let mut c = contract();
-    let id = post(&mut c);
-    // Inside the challenge hour but before posting.
-    let early = START_S - 10;
-    let mut facts = comment_facts(early);
-    facts.updated_at = early;
-    act(wallet(), RUN_DEPOSIT, START + 5 * SEC);
-    let expires = START_S + 30;
-    let _ = c.prove_claim(id, U64(77), U64(expires));
-    callback(START + 15 * SEC, ok(&comment_answer(id, 1, facts)));
-    assert_eq!(
-        c.on_claim(
-            id,
-            U64(1),
-            wallet(),
-            U64(77),
-            U64(expires),
-            U64(START + 5 * SEC)
-        ),
-        "mismatch:challenge_time"
-    );
 }
 
 #[test]
@@ -562,47 +537,45 @@ fn a_claim_answer_bound_to_anything_else_is_no_result() {
         ("predecessor", Json::from("other.testnet")),
         ("predecessor", Json::Null),
         ("network", Json::from("mainnet")),
-        ("comment_id", Json::from(78)),
+        ("gist_id", Json::from("fedcba9876543210fedcba9876543210")),
         ("repo", Json::from("proven-test/other")),
+        ("op", Json::from("pull")),
+        ("v", Json::from(2)),
         ("request_id", Json::Null),
     ];
     for (member, value) in edits {
         isolated(move || {
             let mut c = contract();
             let id = post(&mut c);
-            let mut answer = comment_answer(id, 1, comment_facts(START_S + 900));
+            let mut answer = gist_answer(id, 1, gist_facts());
             answer[member] = value.clone();
-            assert_eq!(
-                claim_with(&mut c, id, ok(&answer)),
-                "no_result:wrong_binding",
-                "{member}={value}"
+            let outcome = claim_with(&mut c, id, ok(&answer));
+            assert!(
+                outcome == "no_result:wrong_binding" || outcome == "no_result:malformed",
+                "{member}={value}: {outcome}"
             );
+            assert_eq!(c.get_bounty(id).unwrap().status, Status::Open);
         });
     }
 }
 
 #[test]
 fn upstream_failures_and_bad_replies_are_no_result() {
-    let comment_op = verifier::Op::Comment {
-        comment_id: 77,
-        challenge: format!("proven-claim:{}", "0".repeat(64)),
-    };
     let cases: Vec<(PromiseResult, &'static str)> = vec![
         (
-            ok(&no_result_answer(
-                0,
-                1,
-                comment_op.clone(),
-                Reason::RateLimited,
-            )),
+            ok(&no_result_answer(0, 1, gist_op(), Reason::RateLimited)),
             "no_result:rate_limited",
         ),
         (
-            ok(&no_result_answer(0, 1, comment_op.clone(), Reason::Timeout)),
+            ok(&no_result_answer(0, 1, gist_op(), Reason::Timeout)),
             "no_result:timeout",
         ),
         (
-            ok(&no_result_answer(0, 1, comment_op, Reason::Incomplete)),
+            ok(&no_result_answer(0, 1, gist_op(), Reason::NotFound)),
+            "no_result:not_found",
+        ),
+        (
+            ok(&no_result_answer(0, 1, gist_op(), Reason::Incomplete)),
             "no_result:incomplete",
         ),
         (
@@ -610,7 +583,7 @@ fn upstream_failures_and_bad_replies_are_no_result() {
             "no_result:no_output",
         ),
         (
-            PromiseResult::Successful(b"{\"v\":2,".to_vec()),
+            PromiseResult::Successful(b"{\"v\":3,".to_vec()),
             "no_result:malformed",
         ),
         (
@@ -629,34 +602,39 @@ fn upstream_failures_and_bad_replies_are_no_result() {
     }
     let mut c = contract();
     let id = post(&mut c);
-    let mut unknown = comment_answer(id, 1, comment_facts(START_S + 900));
+    let mut unknown = gist_answer(id, 1, gist_facts());
     unknown["status"] = Json::from("no_result");
-    unknown.as_object_mut().unwrap().remove("comment");
+    unknown.as_object_mut().unwrap().remove("gist");
     unknown["reason"] = Json::from("GitHub says: pay up");
     assert_eq!(claim_with(&mut c, id, ok(&unknown)), "no_result:malformed");
+    let mut extra = gist_answer(id, 1, gist_facts());
+    extra["gist"]["content"] = Json::from("proven-claim:…");
+    assert_eq!(
+        claim_with(&mut c, id, ok(&extra)),
+        "no_result:malformed",
+        "no text is accepted back"
+    );
 }
 
 #[test]
-fn a_late_claim_result_is_stale_and_a_second_claim_is_ignored() {
+fn a_late_claim_result_is_stale_and_a_replayed_proof_is_ignored() {
     let mut c = contract();
     let id = post(&mut c);
     act(wallet(), RUN_DEPOSIT, T_CLAIM);
-    let _ = c.prove_claim(id, U64(77), U64(EXPIRES));
+    let _ = c.prove_claim(id, GIST.into(), U64(EXPIRES));
     callback(
         T_CLAIM + RUN_TIMEOUT_NANOS + 1,
-        ok(&comment_answer(id, 1, comment_facts(START_S + 900))),
+        ok(&gist_answer(id, 1, gist_facts())),
     );
     assert_eq!(
-        c.on_claim(id, U64(1), wallet(), U64(77), U64(EXPIRES), U64(T_CLAIM)),
+        c.on_claim(id, U64(1), wallet(), GIST.into(), U64(T_CLAIM)),
         "no_result:stale"
     );
     let (mut c, id) = claimed();
-    callback(
-        T_CLAIM + 20 * SEC,
-        ok(&comment_answer(id, 1, comment_facts(START_S + 900))),
-    );
+    // The same proof again, now for another wallet: the bounty is already claimed.
+    callback(T_CLAIM + 20 * SEC, ok(&gist_answer(id, 1, gist_facts())));
     assert_eq!(
-        c.on_claim(id, U64(1), stranger(), U64(77), U64(EXPIRES), U64(T_CLAIM)),
+        c.on_claim(id, U64(1), stranger(), GIST.into(), U64(T_CLAIM)),
         "ignored:not_open"
     );
     assert_eq!(c.get_bounty(id).unwrap().claim.unwrap().wallet, wallet());
@@ -668,7 +646,7 @@ fn claims_start_before_claim_by() {
     let mut c = contract();
     let id = post(&mut c);
     act(wallet(), RUN_DEPOSIT, CLAIM_BY * SEC);
-    let _ = c.prove_claim(id, U64(77), U64(CLAIM_BY + 60));
+    let _ = c.prove_claim(id, GIST.into(), U64(CLAIM_BY + 60));
 }
 
 #[test]
@@ -677,7 +655,25 @@ fn challenges_expire_within_an_hour() {
     let mut c = contract();
     let id = post(&mut c);
     act(wallet(), RUN_DEPOSIT, T_CLAIM);
-    let _ = c.prove_claim(id, U64(77), U64(START_S + 600 + 3_601));
+    let _ = c.prove_claim(id, GIST.into(), U64(START_S + 600 + 3_601));
+}
+
+#[test]
+#[should_panic(expected = "expires_at must be in the future")]
+fn an_expired_challenge_cannot_be_proved() {
+    let mut c = contract();
+    let id = post(&mut c);
+    act(wallet(), RUN_DEPOSIT, T_CLAIM);
+    let _ = c.prove_claim(id, GIST.into(), U64(T_CLAIM / SEC));
+}
+
+#[test]
+#[should_panic(expected = "gist_id must be")]
+fn a_gist_id_must_be_plain_hex() {
+    let mut c = contract();
+    let id = post(&mut c);
+    act(wallet(), RUN_DEPOSIT, T_CLAIM);
+    let _ = c.prove_claim(id, "../repos/x".into(), U64(EXPIRES));
 }
 
 // ---- Nomination ----
@@ -741,20 +737,13 @@ fn a_pull_request_bound_to_one_bounty_cannot_be_bound_to_another() {
     let (mut c, first) = bound();
     let second = post(&mut c);
     act(wallet(), RUN_DEPOSIT, T_CLAIM);
-    let _ = c.prove_claim(second, U64(77), U64(EXPIRES));
+    let _ = c.prove_claim(second, GIST.into(), U64(EXPIRES));
     callback(
         T_CLAIM + 10 * SEC,
-        ok(&comment_answer(second, 3, comment_facts(START_S + 900))),
+        ok(&gist_answer(second, 3, gist_facts())),
     );
     assert_eq!(
-        c.on_claim(
-            second,
-            U64(3),
-            wallet(),
-            U64(77),
-            U64(EXPIRES),
-            U64(T_CLAIM)
-        ),
+        c.on_claim(second, U64(3), wallet(), GIST.into(), U64(T_CLAIM)),
         "claimed"
     );
     assert_eq!(
@@ -846,10 +835,14 @@ fn a_merge_before_the_deadline_pays_the_recorded_wallet_once() {
     assert_eq!(b.status, Status::Paid);
     assert_eq!(b.merge.unwrap().merged_at.0, merged_at);
     assert_eq!(b.reward_transfer.unwrap().state, TransferState::Sending);
-    assert_eq!(c.get_config().held.0, 0);
+    assert_eq!(
+        c.get_config().held.0,
+        REWARD + budget(),
+        "reserved until the transfers are confirmed"
+    );
     act(stranger(), NearToken::from_yoctonear(0), T_CHECK + 20 * SEC);
     let again = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = c.settle(id);
+        c.settle(id);
     }));
     assert!(again.is_err(), "a paid bounty cannot be refunded");
 }
@@ -872,7 +865,7 @@ fn a_merge_at_or_after_the_deadline_is_ineligible_even_inside_the_grace_period()
     );
     assert_eq!(c.get_bounty(id).unwrap().status, Status::Ineligible);
     act(stranger(), NearToken::from_yoctonear(0), at + 20 * SEC);
-    let _ = c.settle(id);
+    c.settle(id);
     assert_eq!(transfers(), vec![(buyer().to_string(), REWARD + budget())]);
     assert_eq!(c.get_bounty(id).unwrap().status, Status::Refunded);
 }
@@ -1070,7 +1063,7 @@ fn a_check_started_before_the_window_ends_settles_and_holds_off_the_refund() {
     let seq = c.get_bounty(id).unwrap().live.unwrap().seq.0;
     act(stranger(), NearToken::from_yoctonear(0), end + SEC);
     let waiting = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = c.settle(id);
+        c.settle(id);
     }));
     assert!(waiting.is_err(), "the refund waits for the live check");
     callback(
@@ -1100,7 +1093,7 @@ fn a_bound_bounty_refunds_after_the_window_once_no_check_is_live() {
         NearToken::from_yoctonear(0),
         end - SEC + RUN_TIMEOUT_NANOS + SEC,
     );
-    let _ = c.settle(id);
+    c.settle(id);
     assert_eq!(transfers(), vec![(buyer().to_string(), REWARD + budget())]);
     let b = c.get_bounty(id).unwrap();
     assert_eq!((b.status, b.live.is_none()), (Status::Refunded, true));
@@ -1120,7 +1113,7 @@ fn an_unclaimed_bounty_refunds_only_after_claim_by_plus_the_run_timeout() {
     let id = post(&mut c);
     act(stranger(), NearToken::from_yoctonear(0), CLAIM_BY * SEC);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = c.settle(id);
+        c.settle(id);
     }))
     .is_err());
     act(
@@ -1128,7 +1121,7 @@ fn an_unclaimed_bounty_refunds_only_after_claim_by_plus_the_run_timeout() {
         NearToken::from_yoctonear(0),
         CLAIM_BY * SEC + RUN_TIMEOUT_NANOS,
     );
-    let _ = c.settle(id);
+    c.settle(id);
     assert_eq!(transfers(), vec![(buyer().to_string(), REWARD + budget())]);
 }
 
@@ -1136,7 +1129,7 @@ fn an_unclaimed_bounty_refunds_only_after_claim_by_plus_the_run_timeout() {
 fn a_claimed_but_unbound_bounty_refunds_after_bind_by() {
     let (mut c, id) = claimed();
     act(stranger(), NearToken::from_yoctonear(0), BIND_BY * SEC);
-    let _ = c.settle(id);
+    c.settle(id);
     assert_eq!(c.get_bounty(id).unwrap().status, Status::Refunded);
 }
 
@@ -1146,16 +1139,16 @@ fn the_maintainer_cancels_only_before_a_claim() {
     let id = post(&mut c);
     act(stranger(), NearToken::from_yoctonear(0), START);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = c.cancel(id);
+        c.cancel(id);
     }))
     .is_err());
     act(buyer(), NearToken::from_yoctonear(0), START);
-    let _ = c.cancel(id);
+    c.cancel(id);
     assert_eq!(c.get_bounty(id).unwrap().status, Status::Cancelled);
     let (mut c, id) = claimed();
     act(buyer(), NearToken::from_yoctonear(0), T_NOMINATE);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = c.cancel(id);
+        c.cancel(id);
     }))
     .is_err());
 }
@@ -1165,15 +1158,12 @@ fn a_claim_landing_after_cancellation_changes_nothing() {
     let mut c = contract();
     let id = post(&mut c);
     act(wallet(), RUN_DEPOSIT, T_CLAIM);
-    let _ = c.prove_claim(id, U64(77), U64(EXPIRES));
+    let _ = c.prove_claim(id, GIST.into(), U64(EXPIRES));
     act(buyer(), NearToken::from_yoctonear(0), T_CLAIM + SEC);
-    let _ = c.cancel(id);
-    callback(
-        T_CLAIM + 10 * SEC,
-        ok(&comment_answer(id, 1, comment_facts(START_S + 900))),
-    );
+    c.cancel(id);
+    callback(T_CLAIM + 10 * SEC, ok(&gist_answer(id, 1, gist_facts())));
     assert_eq!(
-        c.on_claim(id, U64(1), wallet(), U64(77), U64(EXPIRES), U64(T_CLAIM)),
+        c.on_claim(id, U64(1), wallet(), GIST.into(), U64(T_CLAIM)),
         "ignored:not_open"
     );
     assert_eq!(c.get_bounty(id).unwrap().status, Status::Cancelled);
@@ -1198,66 +1188,307 @@ fn paid() -> (PrBounty, BountyId) {
     (c, id)
 }
 
-#[test]
-fn a_failed_payout_becomes_due_and_is_resent_to_the_same_wallet() {
-    let (mut c, id) = paid();
-    callback(T_CHECK + 20 * SEC, PromiseResult::Failed);
-    assert!(!c.on_transfer(id, TransferKind::Reward));
-    let b = c.get_bounty(id).unwrap();
-    assert_eq!(b.reward_transfer.unwrap().state, TransferState::Due);
-    assert_eq!(
-        c.get_config().held.0,
-        REWARD,
-        "the failed reward is held again"
+/// Delivers one transfer callback: the bookkeeping one (`on_transfer`) or the outcome-only one.
+fn bookkeeping(
+    c: &mut PrBounty,
+    id: BountyId,
+    kind: TransferKind,
+    attempt: u32,
+    sent: bool,
+    at: u64,
+) -> bool {
+    callback(
+        at,
+        if sent {
+            PromiseResult::Successful(vec![])
+        } else {
+            PromiseResult::Failed
+        },
     );
-    act(stranger(), NearToken::from_yoctonear(0), T_CHECK + 30 * SEC);
-    let _ = c.send_due(id);
-    assert_eq!(transfers(), vec![(wallet().to_string(), REWARD)]);
-    callback(T_CHECK + 40 * SEC, PromiseResult::Successful(vec![]));
-    assert!(c.on_transfer(id, TransferKind::Reward));
-    assert_eq!(
-        c.get_bounty(id).unwrap().reward_transfer.unwrap().state,
-        TransferState::Done
+    c.on_transfer(id, kind, attempt)
+}
+
+fn outcome_only(
+    c: &mut PrBounty,
+    id: BountyId,
+    kind: TransferKind,
+    attempt: u32,
+    sent: bool,
+    at: u64,
+) {
+    callback(
+        at,
+        if sent {
+            PromiseResult::Successful(vec![])
+        } else {
+            PromiseResult::Failed
+        },
     );
-    assert_eq!(c.get_config().held.0, 0);
+    c.on_transfer_outcome(id, kind, attempt);
+}
+
+fn reward(c: &PrBounty, id: BountyId) -> Transfer {
+    c.get_bounty(id).unwrap().reward_transfer.unwrap()
+}
+
+fn held(c: &PrBounty) -> u128 {
+    c.get_config().held.0
 }
 
 #[test]
-fn a_failed_refund_is_resent_to_the_maintainer() {
+fn a_transfer_stays_reserved_until_its_success_is_confirmed() {
+    let (mut c, id) = paid();
+    assert_eq!(
+        held(&c),
+        REWARD + budget(),
+        "both transfers are in flight and reserved"
+    );
+    assert_eq!(reward(&c, id).attempt, 1);
+    assert!(bookkeeping(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        1,
+        true,
+        T_CHECK + 20 * SEC
+    ));
+    assert_eq!(
+        held(&c),
+        budget(),
+        "the reward is released once, on its confirmed success"
+    );
+    assert!(
+        !bookkeeping(
+            &mut c,
+            id,
+            TransferKind::Reward,
+            1,
+            true,
+            T_CHECK + 21 * SEC
+        ),
+        "a duplicate"
+    );
+    assert!(
+        !bookkeeping(
+            &mut c,
+            id,
+            TransferKind::Reward,
+            1,
+            false,
+            T_CHECK + 22 * SEC
+        ),
+        "a contradiction"
+    );
+    assert_eq!(held(&c), budget(), "nothing released twice");
+    assert_eq!(reward(&c, id).state, TransferState::Done);
+}
+
+#[test]
+fn a_failed_payout_stays_reserved_and_is_resent_to_the_same_wallet_as_a_new_attempt() {
+    let (mut c, id) = paid();
+    assert!(bookkeeping(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        1,
+        false,
+        T_CHECK + 20 * SEC
+    ));
+    let failed = reward(&c, id);
+    assert_eq!(
+        (failed.state, failed.outcome, failed.to.clone()),
+        (TransferState::Due, TransferOutcome::Failed, wallet())
+    );
+    assert_eq!(held(&c), REWARD + budget(), "still reserved, counted once");
+    act(stranger(), NearToken::from_yoctonear(0), T_CHECK + 30 * SEC);
+    c.send_due(id);
+    assert_eq!(transfers(), vec![(wallet().to_string(), REWARD)]);
+    let resent = reward(&c, id);
+    assert_eq!(
+        (resent.state, resent.attempt, resent.outcome),
+        (TransferState::Sending, 2, TransferOutcome::Unknown)
+    );
+    // The first attempt's late results change nothing about the second.
+    assert!(!bookkeeping(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        1,
+        true,
+        T_CHECK + 31 * SEC
+    ));
+    outcome_only(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        1,
+        true,
+        T_CHECK + 31 * SEC,
+    );
+    assert_eq!(reward(&c, id).outcome, TransferOutcome::Unknown);
+    assert!(bookkeeping(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        2,
+        true,
+        T_CHECK + 40 * SEC
+    ));
+    assert_eq!(held(&c), budget());
+}
+
+#[test]
+fn a_failed_refund_stays_reserved_and_is_resent_to_the_maintainer() {
     let mut c = contract();
     let id = post(&mut c);
     act(buyer(), NearToken::from_yoctonear(0), START);
-    let _ = c.cancel(id);
-    callback(START + SEC, PromiseResult::Failed);
-    c.on_transfer(id, TransferKind::Reward);
+    c.cancel(id);
+    assert_eq!(held(&c), REWARD + budget());
+    assert!(bookkeeping(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        1,
+        false,
+        START + SEC
+    ));
+    assert_eq!(held(&c), REWARD + budget());
     act(stranger(), NearToken::from_yoctonear(0), START + 2 * SEC);
-    let _ = c.send_due(id);
+    c.send_due(id);
     assert_eq!(transfers(), vec![(buyer().to_string(), REWARD + budget())]);
+    assert!(bookkeeping(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        2,
+        true,
+        START + 3 * SEC
+    ));
+    assert_eq!(held(&c), 0);
 }
 
 #[test]
-fn a_transfer_whose_outcome_is_unknown_is_never_sent_again() {
+fn recovery_uses_only_the_recorded_outcome_of_the_current_attempt() {
+    // Success recorded, bookkeeping lost: recovery releases the reservation once.
     let (mut c, id) = paid();
-    // The callback has not run: the transfer stays `Sending`, and nothing is due.
+    outcome_only(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        1,
+        true,
+        T_CHECK + 20 * SEC,
+    );
     act(stranger(), NearToken::from_yoctonear(0), T_CHECK + 30 * SEC);
-    let resend = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = c.send_due(id);
+    assert!(c.recover_transfer(id, TransferKind::Reward));
+    assert_eq!(reward(&c, id).state, TransferState::Done);
+    assert_eq!(held(&c), budget());
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            c.recover_transfer(id, TransferKind::Reward);
+        }))
+        .is_err(),
+        "a second recovery finds nothing"
+    );
+    assert!(
+        !bookkeeping(
+            &mut c,
+            id,
+            TransferKind::Reward,
+            1,
+            true,
+            T_CHECK + 40 * SEC
+        ),
+        "the late bookkeeping is a no-op"
+    );
+    assert_eq!(held(&c), budget());
+
+    // Failure recorded, bookkeeping lost: recovery makes it due, still reserved; nothing is sent.
+    let (mut c, id) = paid();
+    outcome_only(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        1,
+        false,
+        T_CHECK + 20 * SEC,
+    );
+    act(stranger(), NearToken::from_yoctonear(0), T_CHECK + 30 * SEC);
+    assert!(c.recover_transfer(id, TransferKind::Reward));
+    assert!(transfers().is_empty(), "recovery itself never sends");
+    assert_eq!(reward(&c, id).state, TransferState::Due);
+    assert_eq!(held(&c), REWARD + budget());
+    c.send_due(id);
+    assert_eq!(transfers(), vec![(wallet().to_string(), REWARD)]);
+}
+
+#[test]
+fn without_a_recorded_outcome_nothing_is_resent_or_released_however_long_it_waits() {
+    let (mut c, id) = paid();
+    act(
+        stranger(),
+        NearToken::from_yoctonear(0),
+        T_CHECK + 365 * 24 * 3_600 * SEC,
+    );
+    for attempt in [
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.send_due(id))).is_err(),
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            c.recover_transfer(id, TransferKind::Reward);
+        }))
+        .is_err(),
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.settle(id))).is_err(),
+    ] {
+        assert!(attempt);
+    }
+    assert_eq!(reward(&c, id).state, TransferState::Sending);
+    assert_eq!(held(&c), REWARD + budget());
+}
+
+#[test]
+fn the_total_cap_counts_transfers_until_they_are_confirmed() {
+    let mut c = contract();
+    act(owner(), NearToken::from_yoctonear(0), START);
+    // Room for exactly one bounty's reward and budget.
+    c.set_caps(U128(REWARD), U128(REWARD + budget()), 3);
+    let id = post(&mut c);
+    act(buyer(), NearToken::from_yoctonear(0), START);
+    c.cancel(id);
+    // The refund is in flight: the contract's balance may already be lower, but the cap is not freed.
+    let blocked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        post(&mut c);
     }));
-    assert!(resend.is_err());
-    assert_eq!(
-        c.get_bounty(id).unwrap().reward_transfer.unwrap().state,
-        TransferState::Sending
+    assert!(
+        blocked.is_err(),
+        "no posting into apparent headroom while a transfer is unresolved"
     );
-    // A duplicate success callback after `Done` changes nothing either.
-    callback(T_CHECK + 40 * SEC, PromiseResult::Successful(vec![]));
-    c.on_transfer(id, TransferKind::Reward);
-    callback(T_CHECK + 41 * SEC, PromiseResult::Failed);
-    c.on_transfer(id, TransferKind::Reward);
-    assert_eq!(
-        c.get_bounty(id).unwrap().reward_transfer.unwrap().state,
-        TransferState::Done
-    );
-    assert_eq!(c.get_config().held.0, 0);
+    // It fails: still reserved, still blocked, and counted once.
+    assert!(bookkeeping(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        1,
+        false,
+        START + SEC
+    ));
+    assert_eq!(held(&c), REWARD + budget());
+    let still_blocked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        post(&mut c);
+    }));
+    assert!(still_blocked.is_err());
+    // Resent and confirmed: the capacity comes back once, and one new bounty fits again.
+    act(stranger(), NearToken::from_yoctonear(0), START + 2 * SEC);
+    c.send_due(id);
+    assert!(bookkeeping(
+        &mut c,
+        id,
+        TransferKind::Reward,
+        2,
+        true,
+        START + 3 * SEC
+    ));
+    assert_eq!(held(&c), 0);
+    post(&mut c);
+    assert_eq!(held(&c), REWARD + budget());
 }
 
 #[test]
@@ -1282,4 +1513,40 @@ fn caps_are_bounded_by_the_hard_maximums() {
         );
     }))
     .is_err());
+}
+
+#[test]
+fn only_the_approved_repository_can_be_posted() {
+    let attempts: [(&str, u64); 3] = [
+        ("someone/else", REPO_ID + 1),
+        ("someone/else", REPO_ID),
+        (REPO, REPO_ID + 1),
+    ];
+    for (repo, repo_id) in attempts {
+        isolated(move || {
+            let mut c = contract();
+            act(buyer(), post_deposit(), START);
+            let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                c.post_bounty(
+                    U128(REWARD),
+                    repo.into(),
+                    U64(repo_id),
+                    ISSUE,
+                    "main".into(),
+                    U64(GH),
+                    U64(CLAIM_BY),
+                    U64(BIND_BY),
+                    U64(DEADLINE),
+                    U64(GRACE),
+                );
+            }));
+            assert!(refused.is_err(), "{repo} {repo_id}");
+            assert_eq!(c.get_config().bounty_count, 0);
+        });
+    }
+    let c = contract();
+    assert_eq!(
+        (c.get_config().pilot_repo, c.get_config().pilot_repo_id.0),
+        (REPO.to_string(), REPO_ID)
+    );
 }
