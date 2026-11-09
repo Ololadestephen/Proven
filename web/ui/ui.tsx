@@ -68,6 +68,15 @@ function JobCard({
         <span className="record-open record-preview-label">
           Recorded evidence
         </span>
+      ) : network === "mainnet" ? (
+        <a
+          className="record-open"
+          href={MAINNET_EVIDENCE[fake ? "fake" : "honest"]}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {fake ? "Open the refund" : "Open the payout"}
+        </a>
       ) : (
         <a className="record-open" href={`/evidence#job-${id}`}>
           Open job {id}
@@ -76,11 +85,17 @@ function JobCard({
     </SpotlightCard>
   );
 }
+/** The payout and refund transactions of mainnet jobs 0 and 1, as the README records them. */
+const MAINNET_EVIDENCE = {
+  honest:
+    "https://nearblocks.io/txns/EN12aW3U5p1ZN3AULFj9tNHc7P5UKipyzyb1fRJsYpss",
+  fake: "https://nearblocks.io/txns/6bYMFE5Wzi2oXiB5qDCm2j3CLynCnJs3sqjk9xyLUZKk",
+};
 function RecordedJobs() {
   return (
     <div className="record-grid">
-      <JobCard id={35} />
-      <JobCard id={36} fake />
+      <JobCard id={0} network="mainnet" />
+      <JobCard id={1} fake network="mainnet" />
     </div>
   );
 }

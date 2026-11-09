@@ -48,16 +48,13 @@ function Overview({
       <section className="workspace-card">
         <div className="workspace-section-heading">
           <h2>Needs your attention</h2>
-          <a href="/app/jobs">All my jobs</a>
+          {wallet ? <a href="/app/jobs">All my jobs</a> : null}
         </div>
         {!wallet ? (
-          <div className="workspace-empty">
-            <h3>A clear view of your work.</h3>
-            <p>Connect a wallet to see your jobs and next actions.</p>
-            <a href="/app/market" className="button button-secondary">
-              Explore the market
-            </a>
-          </div>
+          <p>
+            Connect a wallet from the sidebar to see your jobs and what each one
+            needs next.
+          </p>
         ) : attention.length ? (
           <div className="workspace-queue">
             {attention.map(({ bid, label }) => (
@@ -65,9 +62,7 @@ function Overview({
             ))}
           </div>
         ) : (
-          <div className="workspace-empty">
-            <h3>Nothing needs you right now.</h3>
-          </div>
+          <p>Nothing needs you right now.</p>
         )}
       </section>
       <div className="workspace-grid">

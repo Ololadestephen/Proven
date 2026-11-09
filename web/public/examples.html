@@ -7,7 +7,7 @@
     <meta name="color-scheme" content="light" />
     <meta
       name="description"
-      content="Historical scripted testnet deliveries from the retired November 6 demo flow."
+      content="Two recorded mainnet jobs on Proven: an honest delivery paid and a wrong delivery refunded."
     />
     <title>Proven · Examples &amp; demo</title>
     <link rel="stylesheet" href="/theme.css" />
@@ -58,61 +58,56 @@
           <header class="workspace-heading">
             <h1>Examples &amp; demo</h1>
             <p>
-              Inspect historical scripted testnet outcomes. These records do not
-              describe a new mainnet run or the current one-signature flow.
+              Two recorded mainnet jobs on the unaudited, owner-funded
+              deployment: one honest delivery paid, one wrong delivery refunded.
+              Both were operated by Proven, not by outside users.
             </p>
           </header>
           <section class="workspace-section" aria-labelledby="recorded-heading">
             <div class="workspace-section-heading">
               <h2 id="recorded-heading">Two deliveries. Two outcomes.</h2>
-              <p>Historical testnet examples · November 6</p>
+              <p>Mainnet jobs 0 and 1 · November 6</p>
             </div>
-            <p class="attestation-note">
-              Jobs 35 and 36 are recorded examples operated by Proven. They are
-              not your current jobs, and opening their evidence does not start a
-              run.
-            </p>
             <div id="workspace-cards">
               <div class="record-grid">
                 <article class="panel record-card">
-                  <p class="record-kicker">Recorded testnet example · #35</p>
+                  <p class="record-kicker">Recorded mainnet job · #0</p>
                   <h3>The honest delivery</h3>
                   <p class="record-description">
-                    The fixed check passed. Escrow released 0.01 NEAR to the
-                    recorded worker.
+                    A model's invoice totals passed the fixed check. Escrow paid
+                    the worker 0.01 NEAR.
                   </p>
-                  <a class="record-open" href="/evidence#job-35">Open job 35</a>
+                  <a
+                    class="record-open"
+                    href="https://nearblocks.io/txns/EN12aW3U5p1ZN3AULFj9tNHc7P5UKipyzyb1fRJsYpss"
+                    >Open the payout</a
+                  >
                 </article>
                 <article class="panel record-card">
-                  <p class="record-kicker">Recorded testnet example · #36</p>
+                  <p class="record-kicker">Recorded mainnet job · #1</p>
                   <h3>The convincing fake</h3>
                   <p class="record-description">
-                    The fixed check failed. Escrow refunded 0.01 NEAR to the
-                    buyer.
+                    A scripted wrong delivery failed the reconcile rule. Escrow
+                    returned 0.01 NEAR to the buyer.
                   </p>
-                  <a class="record-open" href="/evidence#job-36">Open job 36</a>
+                  <a
+                    class="record-open"
+                    href="https://nearblocks.io/txns/6bYMFE5Wzi2oXiB5qDCm2j3CLynCnJs3sqjk9xyLUZKk"
+                    >Open the refund</a
+                  >
                 </article>
               </div>
             </div>
           </section>
-          <section class="workspace-card" aria-labelledby="demo-heading">
-            <h2 id="demo-heading">The legacy launcher is retired</h2>
-            <p>
-              The old demo used scripted workers and older testnet contracts.
-              One fresh command took 117.87 seconds; that is not a benchmark of
-              the current one-signature flow. The testnet copy is preparation
-              only. No live start control or link to that app is offered here.
-            </p>
-          </section>
           <p class="workspace-note">
-            A passing check is evidence about its defined conditions, not a
-            guarantee of a fair check or a safe deliverable.
+            Older testnet runs, jobs 35 and 36, open in
+            <a href="/evidence">Job evidence</a>. The legacy launcher is
+            retired, so no page here starts a new run. A passing check is
+            evidence about its defined conditions, not a guarantee of a fair
+            check or a safe deliverable.
             <a href="/trust">Read the trust and product limits</a>.
           </p>
         </main>
-        <footer class="workspace-footer">
-          Proven · <a href="/about">About this service</a>
-        </footer>
       </div>
     </div>
   </body>

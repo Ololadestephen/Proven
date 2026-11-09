@@ -176,10 +176,7 @@
     line-height: 1.8;
   }
   .empty-state {
-    padding: 28px 5px 40px;
-  }
-  .empty-state h2 {
-    font-size: 26px;
+    padding: 21px;
   }
 }
 @media (max-width: 390px) {

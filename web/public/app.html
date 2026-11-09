@@ -68,7 +68,6 @@
             aria-labelledby="lookup-heading"
           >
             <div class="lookup-title">
-              <span class="section-number" aria-hidden="true">01</span>
               <div>
                 <h2 id="lookup-heading">Open a job</h2>
                 <p>Read its current public state. No wallet required.</p>
@@ -101,14 +100,11 @@
                 </button>
               </div>
               <p id="lookup-help" class="small-note">
-                Job lookups only read public state. The separate live demo is
-                opt-in.
+                Job lookups only read public state.
               </p>
             </form>
             <div class="recorded-jobs">
-              <span class="small-label"
-                >Existing recorded jobs · read live</span
-              >
+              <span class="small-label">Recorded testnet jobs</span>
               <div class="quick-buttons">
                 <button
                   class="button button-quiet"
@@ -124,7 +120,7 @@
                   Job 36
                 </button>
               </div>
-              <p>These open existing jobs. They do not run a new demo.</p>
+              <p>These read existing jobs. They do not start a run.</p>
             </div>
           </section>
 
@@ -149,17 +145,11 @@
             class="empty-state"
             aria-labelledby="empty-heading"
           >
-            <div class="empty-symbol" aria-hidden="true">[ &nbsp;#&nbsp; ]</div>
-            <p class="eyebrow">Evidence begins with a job</p>
-            <h2 id="empty-heading">A clear view of the current state.</h2>
+            <h2 id="empty-heading">No job open yet.</h2>
             <p>
-              Enter a job ID or open a recorded example to inspect its funds,
-              commitments, verdict, and attestation checks.
+              Enter a job ID or open a recorded job to see its funds,
+              commitments, verdict and attestation checks.
             </p>
-            <div class="empty-details">
-              <span>Public job data</span><span>Stored request IDs</span
-              ><span>Explicit trust limits</span>
-            </div>
           </section>
 
           <section
@@ -233,14 +223,9 @@
           <p class="workspace-note">
             This is a read-only snapshot.
             <a href="/trust">Read the evidence’s trust limits</a>, or
-            <a href="/examples"
-              >explore recorded examples and the separate live demo</a
-            >.
+            <a href="/examples">see the recorded mainnet jobs</a>.
           </p>
         </main>
-        <footer class="workspace-footer">
-          Proven · <a href="/about">About this service</a>
-        </footer>
       </div>
     </div>
   </body>

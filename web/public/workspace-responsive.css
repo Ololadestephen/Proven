@@ -19,6 +19,12 @@
   .workspace-app .main-content {
     padding-top: 23px;
   }
+  /* The heading stays on the left and its link on the right, as on desktop. An older rule stacks
+   * them in a column, which the centring then puts in the middle. */
+  .workspace-app .workspace-section-heading {
+    flex-direction: row;
+    align-items: baseline;
+  }
   /* On a phone the sidebar is a menu, and the network and wallet open with it. */
   .workspace-app
     .app-sidebar:has(.workspace-navigation-panel[data-open="false"])
@@ -47,9 +53,6 @@
   }
   .workspace-app .workspace-row-actions {
     justify-content: flex-start;
-  }
-  .workspace-app .workspace-footer {
-    padding-inline: 18px;
   }
 }
 @media (max-width: 390px) {

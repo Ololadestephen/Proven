@@ -23,6 +23,7 @@ export function MarketLayout({
   /** The board would accept a post from this visitor: the market is open, or they are a listed buyer. */
   canPostJob: boolean;
 }) {
+  const showPost = active !== "post" && canPostJob;
   return (
     <div className="app-frame workspace-app">
       <a className="skip-link" href="#workspace-content">
@@ -52,22 +53,21 @@ export function MarketLayout({
       </aside>
       <div className="app-area">
         <main className="shell main-content market" id="workspace-content">
-          <header className="workspace-heading">
-            <div className="workspace-heading-row">
-              <h1>{title}</h1>
-              {active !== "post" && canPostJob && (
-                <a className="button button-primary" href="/app/post">
-                  Post a job
-                </a>
-              )}
-            </div>
-            {subtitle && <p>{subtitle}</p>}
-          </header>
+          {title || showPost ? (
+            <header className="workspace-heading">
+              <div className="workspace-heading-row">
+                {title ? <h1>{title}</h1> : <span />}
+                {showPost ? (
+                  <a className="button button-primary" href="/app/post">
+                    Post a job
+                  </a>
+                ) : null}
+              </div>
+              {subtitle && <p>{subtitle}</p>}
+            </header>
+          ) : null}
           <div className="workspace-content">{children}</div>
         </main>
-        <footer className="workspace-footer">
-          Proven · <a href="/about">About this service</a>
-        </footer>
       </div>
     </div>
   );

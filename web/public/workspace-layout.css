@@ -171,10 +171,3 @@
   font-size: 13px;
   line-height: 1.8;
 }
-.workspace-app .workspace-footer {
-  padding: 18px 40px 25px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.6;
-  text-align: center;
-}

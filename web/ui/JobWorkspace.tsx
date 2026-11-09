@@ -178,7 +178,7 @@ export function JobWorkspace({
             )}{" "}
             · Bid {bid.id}
           </span>
-          <h2>{bidTitle(bid)}</h2>
+          <h1>{bidTitle(bid)}</h1>
         </div>
         <div className="job-head-side">
           <strong>{showNear(bid.amount)}</strong>
@@ -223,13 +223,7 @@ export function JobWorkspace({
         <>
           <p className="market-description">{bid.description}</p>
           <BidReview review={bid.review} reason={bid.review_reason} />
-          {bid.finished ? (
-            <p className="post-hint">
-              This bid has ended and its storage went back to the buyer. The
-              full description and format stay in the transaction that posted
-              it; their hashes are below.
-            </p>
-          ) : (
+          {bid.finished ? null : (
             <details>
               <summary>Public format: every field a check may look at</summary>
               <pre className="market-pre">{bid.format}</pre>
@@ -252,11 +246,13 @@ export function JobWorkspace({
             </div>
             <div>
               <dt>Buyer</dt>
-              <dd>{bid.buyer}</dd>
+              <dd title={bid.buyer}>{short(bid.buyer)}</dd>
             </div>
             <div>
               <dt>Worker</dt>
-              <dd>{worker ?? "No worker has claimed this job."}</dd>
+              <dd title={worker ?? undefined}>
+                {worker ? short(worker) : "No worker has claimed this job."}
+              </dd>
             </div>
             <div>
               <dt>Buyer’s record, from the chain</dt>
@@ -313,6 +309,13 @@ export function JobWorkspace({
       {tab === "evidence" ? (
         <section>
           <h2>Job evidence</h2>
+          {bid.finished ? (
+            <p className="post-hint">
+              This bid has ended and its storage went back to the buyer. The
+              full description and format stay in the transaction that posted
+              it; their hashes are below.
+            </p>
+          ) : null}
           <dl className="market-facts">
             <div>
               <dt>Buyer</dt>
@@ -437,7 +440,7 @@ function JobResult({ bid }: { bid: MarketBid }) {
     return (
       <div className="job-result job-result-pass" role="status">
         <strong>Passed and paid.</strong> {showNear(job.amount)} went to{" "}
-        {last?.worker ?? job.worker}. Checked by{" "}
+        {short(last?.worker ?? job.worker ?? "the worker")}. Checked by{" "}
         {proof(job.verdict_request_id ?? last?.verdict_request_id)}. The unused
         checking budget and attempt fees go back to the buyer.
       </div>

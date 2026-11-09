@@ -32,11 +32,12 @@ export function appRoute(path: string, hash = ""): AppRoute {
       subtitle: "",
     };
   const bid = /^\/app\/bids\/([0-9]{1,10})$/.exec(path);
+  // A job page's own title is its heading, so the layout shows none of its own.
   if (bid)
     return {
       section: "jobs",
       bidId: Number(bid[1]),
-      title: "Job",
+      title: "",
       subtitle: "",
     };
   return {

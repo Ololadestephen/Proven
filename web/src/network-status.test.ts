@@ -125,7 +125,7 @@ test("static pages have no stale caps, testnet app link or retired live-start co
     new URL("../public/examples.html", import.meta.url),
     "utf8",
   );
-  assert.match(examples, /legacy launcher is retired/);
+  assert.match(examples, /legacy launcher is\s+retired/);
   assert.ok(!examples.includes('id="demo-start"'));
   assert.ok(!examples.includes('src="/demo.js"'));
 });

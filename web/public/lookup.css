@@ -12,11 +12,6 @@
   align-items: flex-start;
   gap: 13px;
 }
-.section-number {
-  color: var(--purple);
-  font: 11px var(--mono);
-  margin-top: 5px;
-}
 .lookup h2 {
   font-size: 18px;
   font-weight: 600;
@@ -100,8 +95,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 19px 2px 30px;
-  font: 10px var(--mono);
+  margin: 16px 2px 18px;
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.8;
 }
 .feedback-dot {
@@ -116,45 +112,22 @@
 .feedback[data-state="error"] .feedback-dot {
   background: var(--coral);
 }
+/* Before a job is open: one plain card, like an empty state elsewhere in the app. */
 .empty-state {
-  padding: 35px 24px 75px;
-  text-align: center;
-  max-width: 600px;
-  margin: 0 auto;
-}
-.empty-symbol {
-  font: 26px var(--mono);
-  color: #8a9d86;
-  margin-bottom: 24px;
-}
-.empty-state .eyebrow {
-  color: var(--purple);
-  margin-bottom: 12px;
+  padding: 25px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
 }
 .empty-state h2 {
-  font-size: 27px;
-  font-weight: 550;
-  letter-spacing: -0.6px;
-  margin-bottom: 13px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
 }
-.empty-state > p:last-of-type {
-  max-width: 450px;
-  margin: auto;
+.empty-state > p {
+  max-width: 540px;
+  margin: 8px 0 0;
   font-size: 13px;
   line-height: 1.8;
   color: var(--muted);
-}
-.empty-details {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 18px;
-  margin-top: 25px;
-  font: 9px var(--mono);
-  color: var(--muted);
-}
-.empty-details span::before {
-  content: "+";
-  margin-right: 6px;
-  color: var(--purple);
 }

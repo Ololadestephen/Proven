@@ -1,8 +1,32 @@
 /* Reusable workspace cards, rows, tabs and evidence surfaces. */
 .workspace-app .workspace-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 18px;
   min-width: 0;
-  padding-bottom: 36px;
+  padding-bottom: 48px;
   overflow-wrap: anywhere;
+}
+/* The gap spaces the page's messages and cards, so they carry no margin of their own. */
+.workspace-app
+  .workspace-content
+  > :is(.market-status, .market-notice, .market-error, .market-note) {
+  margin: 0;
+}
+/* Numbered steps read at the same size as the card text around them. */
+.workspace-app .workspace-steps {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.workspace-app .workspace-steps li::marker {
+  color: var(--purple);
+  font-weight: 600;
 }
 .workspace-app .workspace-grid {
   display: grid;
@@ -94,9 +118,6 @@
 }
 .workspace-app .workspace-empty-actions .workspace-card-link {
   margin-top: 0;
-}
-.workspace-app .market-note {
-  margin: 0 0 14px;
 }
 .workspace-app .workspace-card-top {
   margin-bottom: 19px;

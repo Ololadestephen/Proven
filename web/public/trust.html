@@ -137,6 +137,14 @@
                 device. An unknown transaction outcome stays blocked until
                 reconciled; reloading does not resend it.
               </p>
+              <p>
+                An agent using a custody wallet is held to that wallet’s stored
+                policy. The local template allows 6 NEAR per transaction and 12
+                NEAR per day. Existing wallets keep their stored limits until
+                their owner approves and applies an update, and a wallet still
+                on an older, lower limit cannot post a full prepaid bid. A
+                listed human buyer can post with their own wallet.
+              </p>
             </section>
             <section class="workspace-card" aria-labelledby="evidence-heading">
               <h2 id="evidence-heading">
@@ -231,9 +239,6 @@
             </section>
           </div>
         </main>
-        <footer class="workspace-footer">
-          Proven · <a href="/about">About this service</a>
-        </footer>
       </div>
     </div>
   </body>
