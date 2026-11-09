@@ -1,11 +1,8 @@
 import { NETWORK_LINES } from "./network.ts";
 import type { ReactNode } from "react";
+import { SidebarMore } from "./SidebarMore.tsx";
 import { WorkspaceNavigation } from "./WorkspaceNavigation.tsx";
-import {
-  APP_NAVIGATION,
-  SUPPORT_NAVIGATION,
-  type WorkspaceSection,
-} from "./navigation-state.ts";
+import { APP_NAVIGATION, type WorkspaceSection } from "./navigation-state.ts";
 
 export function MarketLayout({
   walletControls,
@@ -40,15 +37,17 @@ export function MarketLayout({
           items={APP_NAVIGATION}
           defaultSection={active}
           activeSection={active}
-          secondaryItems={SUPPORT_NAVIGATION}
         />
         <div className="sidebar-account">
-          <p className="sidebar-status">
-            {NETWORK_LINES.map((line) => (
-              <span key={line}>{line}</span>
-            ))}
+          {/* Only the network's name here; its full status, including the mainnet disclosure,
+           * is in the three-dots menu. */}
+          <p className="sidebar-status" title={NETWORK_LINES.join(" · ")}>
+            <span>{NETWORK_LINES[0]}</span>
           </p>
-          {walletControls}
+          <div className="sidebar-account-row">
+            {walletControls}
+            <SidebarMore lines={NETWORK_LINES} active={active} />
+          </div>
         </div>
       </aside>
       <div className="app-area">

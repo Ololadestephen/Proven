@@ -6,7 +6,8 @@ import {
 } from "./network-status.ts";
 
 /** Presentation only: textContent cannot turn chain data into executable page content. A label marked
- * `data-market-summary="lines"` gets the sidebar's short lines; any other gets the one-line summary. */
+ * `data-market-summary="lines"` gets the full status as short lines, `"network"` gets only the
+ * network's name, and any other gets the one-line summary. */
 export async function showMarketStatus(
   root: Pick<Document, "querySelectorAll">,
   read: typeof fetch = fetch,
@@ -30,18 +31,41 @@ export async function showMarketStatus(
   const description = marketDescription(settings);
   const lines = marketStatusLines(settings);
   for (const label of labels) {
-    if (label.dataset?.marketSummary !== "lines") {
+    const mode = label.dataset?.marketSummary;
+    if (mode !== "lines" && mode !== "network") {
       label.textContent = description;
       continue;
     }
+    const shown = mode === "network" ? lines.slice(0, 1) : lines;
     label.replaceChildren(
-      ...lines.map((line) => {
+      ...shown.map((line) => {
         const span = label.ownerDocument.createElement("span");
         span.textContent = line;
         return span;
       }),
     );
+    if (mode === "network") label.title = lines.join(" · ");
   }
 }
 
-if (typeof document !== "undefined") void showMarketStatus(document);
+/** Static pages' three-dots menu closes on a click outside it, or Escape. */
+function closeMenusOutside(document: Document) {
+  const close = (event: Event) => {
+    for (const menu of document.querySelectorAll<HTMLDetailsElement>(
+      "details.sidebar-more[open]",
+    )) {
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") continue;
+        menu.open = false;
+        menu.querySelector("summary")?.focus();
+      } else if (!menu.contains(event.target as Node)) menu.open = false;
+    }
+  };
+  document.addEventListener("pointerdown", close);
+  document.addEventListener("keydown", close);
+}
+
+if (typeof document !== "undefined") {
+  void showMarketStatus(document);
+  closeMenusOutside(document);
+}

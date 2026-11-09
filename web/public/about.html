@@ -42,17 +42,39 @@
               ><span class="nav-icon" aria-hidden="true">◇</span>My jobs</a
             >
           </nav>
-          <nav class="workspace-secondary-nav" aria-label="Support navigation">
-            <a href="/guide">How Proven works</a>
-            <a href="/examples">Examples &amp; demo</a>
-            <a href="/trust">Trust &amp; limits</a>
-            <a href="/about" aria-current="page">About this service</a>
-          </nav>
         </div>
         <div class="sidebar-account">
-          <p class="sidebar-status" data-market-summary="lines">
-            <span>Market status is loading from the board and escrow.</span>
-          </p>
+          <div class="sidebar-account-row">
+            <p class="sidebar-status" data-market-summary="network">
+              <span>Network</span>
+            </p>
+            <details class="sidebar-more">
+              <summary
+                class="button button-secondary"
+                aria-label="More: guide, examples, trust and limits"
+                title="More"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <circle cx="5" cy="12" r="1.7" />
+                  <circle cx="12" cy="12" r="1.7" />
+                  <circle cx="19" cy="12" r="1.7" />
+                </svg>
+              </summary>
+              <div class="sidebar-more-menu">
+                <nav aria-label="Help and information">
+                  <a href="/guide">Guide</a>
+                  <a href="/examples">Examples &amp; demo</a>
+                  <a href="/trust">Trust &amp; limits</a>
+                  <a href="/about" aria-current="page">About this service</a>
+                </nav>
+                <p class="sidebar-more-status" data-market-summary="lines">
+                  <span
+                    >Market status is loading from the board and escrow.</span
+                  >
+                </p>
+              </div>
+            </details>
+          </div>
         </div>
       </aside>
       <div class="app-area">

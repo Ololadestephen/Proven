@@ -10,12 +10,6 @@
   .workspace-app .workspace-menu-content {
     display: flex;
   }
-  .workspace-app .workspace-secondary-nav {
-    gap: 2px;
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid var(--line);
-  }
   .workspace-app .main-content {
     padding-top: 23px;
   }
@@ -34,6 +28,12 @@
   .workspace-app .sidebar-account {
     margin-top: 12px;
     padding-inline: 0;
+  }
+  /* The sidebar sits at the top of a phone screen, so its menus open downwards. */
+  .workspace-app .sidebar-more-menu,
+  .workspace-app .sidebar-account .wallet-menu {
+    top: calc(100% + 6px);
+    bottom: auto;
   }
   .workspace-app .workspace-heading h1 {
     font-size: 29px;

@@ -4,11 +4,7 @@ import { WorkspaceNavigation } from "./WorkspaceNavigation.tsx";
 import { AnimatedList } from "./react-bits/AnimatedList.tsx";
 import { StarBorder } from "./react-bits/StarBorder.tsx";
 import "./ui.css";
-import {
-  APP_NAVIGATION,
-  SUPPORT_NAVIGATION,
-  type WorkspaceSection,
-} from "./navigation-state.ts";
+import { APP_NAVIGATION, type WorkspaceSection } from "./navigation-state.ts";
 
 /** What each recorded job showed, read from its escrow record. Mainnet jobs 0 and 1 settled on
  * November 6 on proven-escrow.near; testnet jobs 35 and 36 are the ones the evidence reader opens. */
@@ -154,7 +150,6 @@ if (navigation)
   createRoot(navigation).render(
     <WorkspaceNavigation
       items={APP_NAVIGATION}
-      secondaryItems={SUPPORT_NAVIGATION}
       activeSection={
         (navigation.dataset.workspaceSection as WorkspaceSection) || "lookup"
       }

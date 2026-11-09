@@ -19,25 +19,6 @@
   flex-direction: column;
   min-width: 0;
 }
-.workspace-app .workspace-secondary-nav {
-  display: grid;
-  gap: 3px;
-  margin-top: auto;
-  padding-top: 32px;
-}
-.workspace-app .workspace-secondary-nav a {
-  padding: 9px 13px;
-  border-radius: 8px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-  text-decoration: none;
-}
-.workspace-app .workspace-secondary-nav a:hover,
-.workspace-app .workspace-secondary-nav a[aria-current] {
-  color: var(--purple);
-  background: #efedff;
-}
 /* Static pages wrap the navigation in a placeholder; it fills the column like the app's own panel. */
 .workspace-app #workspace-navigation {
   display: flex;
@@ -45,30 +26,34 @@
   flex-direction: column;
   min-height: 0;
 }
-/* The network and the wallet sit at the foot of the sidebar, under the help links. */
+/* The foot of the sidebar: the network's name, the wallet, and a three-dots menu for help pages. */
 .workspace-app .sidebar-account {
+  position: relative;
   display: grid;
-  gap: 14px;
+  gap: 12px;
   margin-top: 16px;
   padding: 16px 13px 0;
   border-top: 1px solid var(--line);
 }
-.workspace-app .sidebar-status {
-  display: grid;
-  gap: 3px;
-  margin: 0;
+.workspace-app .sidebar-account-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.5;
 }
-.workspace-app .sidebar-status > span:first-child {
+.workspace-app .sidebar-account-row > .market-wallet,
+.workspace-app .sidebar-account-row > .sidebar-status {
+  flex: 1;
+  min-width: 0;
+}
+.workspace-app .sidebar-status {
+  margin: 0;
   color: var(--ink);
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.5;
 }
-.workspace-app .sidebar-status > span:first-child::before {
+.workspace-app .sidebar-status > span::before {
   display: inline-block;
   width: 6px;
   height: 6px;
@@ -81,7 +66,6 @@
 .workspace-app .sidebar-account .market-wallet {
   display: grid;
   gap: 8px;
-  min-width: 0;
 }
 .workspace-app .sidebar-account .market-wallet details,
 .workspace-app .sidebar-account .market-wallet summary,
@@ -94,6 +78,76 @@
   min-height: 38px;
   padding: 9px 14px;
   font-size: 12px;
+}
+.workspace-app .sidebar-more {
+  flex: none;
+  margin: 0;
+}
+.workspace-app .sidebar-more summary {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  padding: 0;
+  list-style: none;
+  cursor: pointer;
+}
+.workspace-app .sidebar-more summary::-webkit-details-marker {
+  display: none;
+}
+.workspace-app .sidebar-more summary svg {
+  width: 18px;
+  height: 18px;
+}
+.workspace-app .sidebar-more[open] summary {
+  border-color: var(--purple);
+  color: var(--purple);
+}
+/* Opens upwards over the navigation, as wide as the sidebar's foot, so it never leaves the sidebar. */
+.workspace-app .sidebar-more-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  display: grid;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 8px 24px rgb(20 20 40 / 12%);
+}
+.workspace-app .sidebar-more-menu nav {
+  display: grid;
+  gap: 2px;
+}
+.workspace-app .sidebar-more-menu a {
+  padding: 9px 11px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  text-decoration: none;
+}
+.workspace-app .sidebar-more-menu a:hover,
+.workspace-app .sidebar-more-menu a[aria-current] {
+  color: var(--purple);
+  background: #efedff;
+}
+.workspace-app .sidebar-more-status {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 10px 11px 4px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.workspace-app .sidebar-more-status > span:first-child {
+  color: var(--ink);
+  font-weight: 600;
 }
 .workspace-app .app-area {
   display: flex;
