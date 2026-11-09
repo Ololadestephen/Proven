@@ -46,6 +46,8 @@ export const SAFE_SKILLS = [
   "csv_to_json",
   "wat_compile",
   "run_function",
+  "table_aggregate",
+  "extract",
 ] as const;
 /** Run in a disposable sandbox on a separate isolated machine. See deploy/sandbox. */
 export const CODE_SKILLS = [
@@ -69,6 +71,9 @@ export const SKILL_PRICES: Record<Skill, number> = {
   csv_to_json: SKILL_USE_NANO_USD,
   wat_compile: FUNCTION_SKILL_USE_NANO_USD,
   run_function: FUNCTION_SKILL_USE_NANO_USD,
+  table_aggregate: SKILL_USE_NANO_USD,
+  // Each pattern runs in its own worker thread.
+  extract: FUNCTION_SKILL_USE_NANO_USD,
   run_code: CODE_SKILL_USE_NANO_USD,
   run_tests: CODE_SKILL_USE_NANO_USD,
   read_repo: CODE_SKILL_USE_NANO_USD,
@@ -91,6 +96,10 @@ export const SKILL_HELP: Record<Skill, string> = {
     'input is WebAssembly text; says whether it compiles and would load as the bid\'s function. On a function bid you may then answer with only {"wat":"<the text>"} and it is compiled for you',
   run_function:
     'input is {"wat":"<WebAssembly text>","cases":[[arguments],...]} with up to 64 cases; returns what the function gives for each, by the verifier\'s rules. Only on a function bid',
+  table_aggregate:
+    'input is {"op":"totals","rows":[...],"fields":["amount"],"group_by":"supplier"} for exact count, sum, min and max (group_by optional); {"op":"reconcile","rows":[...],"items":"lines","item_field":"amount","total_field":"total","key_field":"id"} for rows whose items do not add up to their total; or {"op":"duplicates","rows":[...],"field":"id"}. Write numbers above 2^53 or with decimals as strings',
+  extract:
+    'input is {"text":"...","pattern":"<regular expression>","flags":"i","normalise":{"1":"cents","date":"date_dmy"}}; returns each match\'s groups by number and name. Normalisers: trim, lower, upper, number, number_comma_decimal, cents, cents_comma_decimal, date_ymd, date_dmy, date_mdy. A value that cannot be normalised exactly becomes null',
   run_code: CODE_SKILL_HELP,
   run_tests: CODE_SKILL_HELP,
   read_repo: CODE_SKILL_HELP,

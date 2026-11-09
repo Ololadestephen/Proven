@@ -7,9 +7,12 @@ import {
   watCompile,
   type SkillOutcome,
 } from "./function-skill.ts";
+import { extract, tableAggregate } from "./data-skills.ts";
 
 const MAX_INPUT = 64 * 1024;
 const MAX_RESULT = 4 * 1024;
+/** Rows of a data job are often more than 4 KB, and a partial table is never returned. */
+export const MAX_CSV_RESULT = 16 * 1024;
 
 export function knowledgeSearch(knowledge: string, query: string): string {
   const words = new Set(
@@ -264,6 +267,10 @@ export async function runSkill(
       return watCompile(input, context.format, context.functionSkill);
     case "run_function":
       return runFunction(input, context.format, context.functionSkill);
+    case "table_aggregate":
+      return done(tableAggregate(input));
+    case "extract":
+      return extract(input);
   }
 }
 
@@ -305,7 +312,7 @@ export function csvToJson(text: string): string {
     Object.fromEntries(header.map((name, at) => [name, cells[at] ?? ""])),
   );
   const result = JSON.stringify(out);
-  return result.length <= MAX_RESULT
+  return result.length <= MAX_CSV_RESULT
     ? result
-    : "Error: CSV result exceeds the size limit; no partial JSON was returned.";
+    : "Error: CSV result exceeds 16 KB; no partial JSON was returned. Convert fewer rows at a time.";
 }

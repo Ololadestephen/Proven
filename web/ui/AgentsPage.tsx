@@ -12,6 +12,8 @@ const SAFE_SKILLS = new Set([
   "csv_to_json",
   "wat_compile",
   "run_function",
+  "table_aggregate",
+  "extract",
 ]);
 
 interface Terms {

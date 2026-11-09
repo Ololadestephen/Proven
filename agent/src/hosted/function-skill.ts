@@ -5,7 +5,7 @@
 // verifier's check run does.
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Worker } from "node:worker_threads";
+import { runInWorker } from "./worker-run.ts";
 
 const DEFAULT_PATH = fileURLToPath(
   new URL("../../assets/function-skill.wasm", import.meta.url),
@@ -72,34 +72,13 @@ export function callFunctionSkill(
   timeLimitMs = TIME_LIMIT_MS,
 ): Promise<string> {
   const module = skillModule(path);
-  return new Promise<string>((resolve, reject) => {
-    const worker = new Worker(WORKER, {
-      eval: true,
-      workerData: { module, input: request },
-      resourceLimits: {
-        maxOldGenerationSizeMb: 64,
-        maxYoungGenerationSizeMb: 16,
-      },
-    });
-    let settled = false;
-    const finish = (done: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      void worker.terminate();
-      done();
-    };
-    const timer = setTimeout(
-      () =>
-        finish(() => reject(new Error("The function skill took too long."))),
-      timeLimitMs,
-    );
-    worker.once("message", (answer: string) => finish(() => resolve(answer)));
-    worker.once("error", (error) => finish(() => reject(error)));
-    worker.once("exit", (code) =>
-      finish(() => reject(new Error(`The function skill stopped (${code}).`))),
-    );
-  });
+  return runInWorker(
+    WORKER,
+    { module, input: request },
+    timeLimitMs,
+    "function skill",
+    true,
+  );
 }
 
 /** The parts of an answer this side reads. Numbers are never read from it, so none is rounded. */
