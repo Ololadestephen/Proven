@@ -147,7 +147,8 @@ test("the status bundle is served locally under the static read-only CSP", async
   const script = await fetch(base + "/build/market-status.js");
   assert.equal(script.status, 200);
   assert.match(script.headers.get("content-type") ?? "", /text\/javascript/);
-  const page = await fetch(base + "/");
+  // A page with the app sidebar loads it; the landing page names no network status.
+  const page = await fetch(base + "/trust");
   assert.match(await page.text(), /src="\/build\/market-status\.js"/);
   const csp = page.headers.get("content-security-policy") ?? "";
   assert.match(csp, /script-src 'self';/);
