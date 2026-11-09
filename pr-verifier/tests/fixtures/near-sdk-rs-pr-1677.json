@@ -1,0 +1,42 @@
+{
+  "url": "https://api.github.com/repos/near/near-sdk-rs/pulls/1677",
+  "id": 5194599338,
+  "number": 1677,
+  "state": "open",
+  "locked": false,
+  "title": "fix(near-sdk-core): bounded types follow-ups from #1651 review",
+  "user": {
+    "id": 59515280,
+    "type": "User"
+  },
+  "body": "Addresses https://github.com/near/near-sdk-rs/pull/1651#discussion_r4371433956.\n\n## Changes\n\n- **Remove JSON deserialization for `BoundedVec`.** It stopped reading after `MAX + 1` array elements, while `BoundedString` has to scan the whole JSON string before it can check its length. serde gives no way to stop inside a string, so the two types had very different rejection costs (up to ~100 TGas). Now every bounded type that reads JSON reads a string and has the same cost. `BoundedVec` still serializes to JSON and keeps its JSON schema, so it works in return values.\n- **Add `BoundedBase64VecU8<MAX>`.** The bounded counterpart of `Base64VecU8`, for byte arguments passed as JSON. `MAX` counts decoded bytes. An oversized base64 string is rejected by its length before decoding. It uses the same Borsh wire format as `Vec<u8>` and converts to and from `BoundedVec<u8, MAX>`.\n- **Split `types/bounded.rs`** into `bounded/{mod, string, vec, base64_vec}.rs`. Each type now has its own tests.\n\n## Breaking changes\n\n`BoundedVec` no longer implements `serde::Deserialize`. All bounded types are behind the `unstable` feature, so stable users are not affected.\n\n## Testing\n\n- `cargo test -p near-sdk-core --features unstable,abi,arbitrary,serde,borsh,schemars-v0_8`\n- `cargo check` for each feature combination, `cargo doc` with `-D warnings`, clippy, and a wasm32 check of `near-sdk --features unstable`\n\n",
+  "created_at": "2026-11-06T21:03:30Z",
+  "updated_at": "2026-11-06T21:42:55Z",
+  "closed_at": null,
+  "merged_at": null,
+  "merge_commit_sha": "7586ba170dea988e44bb5097605dff82497f2be3",
+  "draft": true,
+  "head": {
+    "ref": "feat/bounded-types-follow-ups",
+    "sha": "a58c12d46c9c88839bda7700adde520352c45e64",
+    "repo": {
+      "id": 1448745433,
+      "full_name": "frolvanya/near-sdk-rs"
+    }
+  },
+  "base": {
+    "ref": "master",
+    "sha": "bacd081a0bd648d840b814dab7677e1f3330afbb",
+    "repo": {
+      "id": 190815700,
+      "full_name": "near/near-sdk-rs"
+    }
+  },
+  "merged": false,
+  "mergeable": true,
+  "comments": 1,
+  "commits": 3,
+  "additions": 798,
+  "deletions": 431,
+  "changed_files": 6
+}

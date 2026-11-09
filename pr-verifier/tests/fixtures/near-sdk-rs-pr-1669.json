@@ -1,0 +1,42 @@
+{
+  "url": "https://api.github.com/repos/near/near-sdk-rs/pulls/1669",
+  "id": 5125170190,
+  "number": 1669,
+  "state": "closed",
+  "locked": false,
+  "title": "docs(store): flush, including nested collections, before measuring storage usage",
+  "user": {
+    "id": 163825889,
+    "type": "User"
+  },
+  "body": "## Why\n\nRefs #1665. `env::storage_usage()` doesn't count cached `store` writes, and flushing an outer collection doesn't flush nested ones.\n\n## What\n\nA \"Measuring storage\" section in `store` with a doctest, linked from `env::storage_usage`.\n",
+  "created_at": "2026-11-02T18:13:31Z",
+  "updated_at": "2026-11-04T19:48:26Z",
+  "closed_at": "2026-11-04T19:48:23Z",
+  "merged_at": "2026-11-04T19:48:23Z",
+  "merge_commit_sha": "dad1f088a98157443a63ab75eb50c54ca46a2764",
+  "draft": false,
+  "head": {
+    "ref": "docs/store-measure-storage",
+    "sha": "2a13da10c81612bf6436019c105fe5a5ceca51ba",
+    "repo": {
+      "id": 190815700,
+      "full_name": "near/near-sdk-rs"
+    }
+  },
+  "base": {
+    "ref": "master",
+    "sha": "e19629c8e6381f67a77301379e850ad7b057dc32",
+    "repo": {
+      "id": 190815700,
+      "full_name": "near/near-sdk-rs"
+    }
+  },
+  "merged": true,
+  "mergeable": null,
+  "comments": 3,
+  "commits": 2,
+  "additions": 25,
+  "deletions": 0,
+  "changed_files": 2
+}

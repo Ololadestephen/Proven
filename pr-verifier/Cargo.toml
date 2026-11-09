@@ -1,0 +1,29 @@
+[package]
+name = "proven-pr-verifier"
+version = "0.1.0"
+edition = "2021"
+description = "Proven PR verifier: reads one pull request from GitHub's public REST API and prints its stable ids, base branch and merge time, bound to the request"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+# The program OutLayer runs (wasm32-wasip2): a request on stdin, a compact result on stdout.
+[[bin]]
+name = "proven-pr-verifier"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The version OutLayer's own HTTP examples use (wasi 0.2.2), served by the worker's wasmtime 28.
+[target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
+wasi = "=0.13.3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

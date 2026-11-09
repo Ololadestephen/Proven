@@ -1,0 +1,1 @@
+{"facts":{"author_id":163825889,"base_ref":"master","merged":true,"merged_at":1793821703,"pr_id":5125170190,"pr_number":1669,"repo_id":190815700,"state":"closed"},"kind":"proven-pr-facts","number":1669,"predecessor":"pr-verify.test.near","probe":"pr-verify.test.near","reading":0,"repo":"near/near-sdk-rs","request_id":4242,"status":"ok","v":1}
