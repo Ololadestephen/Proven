@@ -1,6 +1,12 @@
-// The fixed safe skills. Each is a small pure function with bounded input and output. A stranger's prompt
-// can choose when to call one, and with what text, but no code of theirs ever runs here.
+// The fixed safe skills. Each has bounded input and output. A stranger's prompt can choose when to call
+// one, and with what text. No code of theirs runs here, except WebAssembly text a function skill compiles,
+// which runs only in an interpreter with fuel, inside a module with no imports (see function-skill.ts).
 import type { Skill } from "./limits.ts";
+import {
+  runFunction,
+  watCompile,
+  type SkillOutcome,
+} from "./function-skill.ts";
 
 const MAX_INPUT = 64 * 1024;
 const MAX_RESULT = 4 * 1024;
@@ -231,19 +237,34 @@ export function jsonValidator(candidate: string, formatText: string): string {
   return publicFormatCheck(candidate, formatText).message;
 }
 
-export function runSkill(
-  skill: Exclude<Skill, "run_code" | "run_tests" | "read_repo" | "make_patch">,
+export type ServiceSkill = Exclude<
+  Skill,
+  "run_code" | "run_tests" | "read_repo" | "make_patch"
+>;
+
+/** Runs one of this service's own skills. `ran` is false when nothing ran, so nothing is charged. */
+export async function runSkill(
+  skill: ServiceSkill,
   input: string,
-  context: { knowledge: string; format: string },
-): string {
+  context: { knowledge: string; format: string; functionSkill?: string },
+): Promise<SkillOutcome> {
   if (input.length > MAX_INPUT)
-    return "Error: skill input exceeds the size limit.";
-  const text = input;
-  if (skill === "knowledge_search")
-    return knowledgeSearch(context.knowledge, text);
-  if (skill === "calculator") return calculator(text);
-  if (skill === "csv_to_json") return csvToJson(text);
-  return jsonValidator(text, context.format);
+    return { output: "Error: skill input exceeds the size limit.", ran: false };
+  const done = (output: string) => ({ output, ran: true });
+  switch (skill) {
+    case "knowledge_search":
+      return done(knowledgeSearch(context.knowledge, input));
+    case "calculator":
+      return done(calculator(input));
+    case "csv_to_json":
+      return done(csvToJson(input));
+    case "json_validator":
+      return done(jsonValidator(input, context.format));
+    case "wat_compile":
+      return watCompile(input, context.format, context.functionSkill);
+    case "run_function":
+      return runFunction(input, context.format, context.functionSkill);
+  }
 }
 
 /** CSV text to rows, with quoted fields. Pure parsing, bounded in size. */

@@ -19,6 +19,8 @@ runs/
 target/
 node_modules/
 dist/
+# Built by `npm run build:skills` in agent/
+agent/assets/
 .DS_Store
 
 # Local agent tooling (for example the Desloppify skill)

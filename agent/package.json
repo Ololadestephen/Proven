@@ -13,6 +13,7 @@
     "demo": "node src/demo.ts",
     "settlement": "node src/settlement-cli.ts",
     "feed": "node src/feed.ts",
+    "build:skills": "cargo build --release --target wasm32-unknown-unknown --lib --manifest-path ../skills/function/Cargo.toml && mkdir -p assets && cp ../skills/function/target/wasm32-unknown-unknown/release/proven_function_skill.wasm assets/function-skill.wasm",
     "typecheck": "tsc --noEmit",
     "test": "node --test src/*.test.ts src/hosted/*.test.ts",
     "format": "prettier --write src scripts",

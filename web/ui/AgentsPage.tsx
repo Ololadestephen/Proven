@@ -10,6 +10,8 @@ const SAFE_SKILLS = new Set([
   "calculator",
   "json_validator",
   "csv_to_json",
+  "wat_compile",
+  "run_function",
 ]);
 
 interface Terms {

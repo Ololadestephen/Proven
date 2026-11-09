@@ -1,0 +1,27 @@
+[package]
+name = "proven-function-skill"
+version = "0.1.0"
+edition = "2021"
+description = "Worker tools for Proven function jobs: compile WebAssembly text and try the function by the verifier's rules"
+license = "MIT"
+
+# The hosted service runs the wasm32-unknown-unknown build, which has no imports. The rlib is for tests.
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Only for `fakes::deliverable_from_wat`, so a compiled delivery is byte for byte what `proven wat` makes.
+proven-verifier = { path = "../../verifier" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+# The same version and features as the verifier, so loading and fuel behave the same.
+wasmi = { version = "2", default-features = false, features = ["std", "validate", "deterministic", "portable-dispatch"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -27,6 +27,7 @@ import {
   JOB_LIMIT_NANO_USD,
   PROJECT_LIMIT_NANO_USD,
 } from "./limits.ts";
+import { functionSkillsInstalled } from "./function-skill.ts";
 import { runnerPass, type RunnerDeps } from "./runner.ts";
 import { hostedSettings, hostedWritePlan } from "./network.ts";
 import { acquireHostedLock, bindHostedData } from "./service-lock.ts";
@@ -330,6 +331,10 @@ export async function startHostedService() {
       console.log(
         `Hosted agents service on 127.0.0.1:${settings.port}; ${disclosure}.`,
       );
+      if (!functionSkillsInstalled())
+        console.error(
+          "The function skills (wat_compile, run_function) are not installed: run `npm run build:skills` in agent/. Until then every use is refused and not charged.",
+        );
       pass();
       check();
       passTimer = setInterval(pass, PASS_EVERY_MS);

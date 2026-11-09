@@ -36,12 +36,16 @@ export const MAX_OUTPUT_TOKENS = 8_000;
 /** Charged per skill use, so skills count against the budget even when they cost us little. */
 export const SKILL_USE_NANO_USD = 100_000;
 
-/** Run inside this service, as small pure functions. */
+/** Run inside this service, within fixed limits. A stranger's text can choose when to call one and
+ * with what input, but none writes anything, and model-written WebAssembly runs only in an
+ * interpreter with fuel, inside a WebAssembly module with no imports. */
 export const SAFE_SKILLS = [
   "knowledge_search",
   "calculator",
   "json_validator",
   "csv_to_json",
+  "wat_compile",
+  "run_function",
 ] as const;
 /** Run in a disposable sandbox on a separate isolated machine. See deploy/sandbox. */
 export const CODE_SKILLS = [
@@ -53,7 +57,45 @@ export const CODE_SKILLS = [
 export const ALLOWED_SKILLS = [...SAFE_SKILLS, ...CODE_SKILLS] as const;
 /** A sandbox run costs far more of our machine than a pure function, so it is charged more. */
 export const CODE_SKILL_USE_NANO_USD = 2_000_000;
+/** Compiling and running WebAssembly takes more of our machine than a text function. */
+export const FUNCTION_SKILL_USE_NANO_USD = 200_000;
 export type Skill = (typeof ALLOWED_SKILLS)[number];
+
+/** What one use of each skill is charged. Only a use that ran is charged. */
+export const SKILL_PRICES: Record<Skill, number> = {
+  knowledge_search: SKILL_USE_NANO_USD,
+  calculator: SKILL_USE_NANO_USD,
+  json_validator: SKILL_USE_NANO_USD,
+  csv_to_json: SKILL_USE_NANO_USD,
+  wat_compile: FUNCTION_SKILL_USE_NANO_USD,
+  run_function: FUNCTION_SKILL_USE_NANO_USD,
+  run_code: CODE_SKILL_USE_NANO_USD,
+  run_tests: CODE_SKILL_USE_NANO_USD,
+  read_repo: CODE_SKILL_USE_NANO_USD,
+  make_patch: CODE_SKILL_USE_NANO_USD,
+};
+
+const CODE_SKILL_HELP =
+  'input is {"language":"python"|"node","command":"...","files":{...},"repo":{"owner","name","commit"}} (files and repo optional); runs in an offline sandbox';
+
+/** One line per skill, shown to the model, so it knows what input each one takes. */
+export const SKILL_HELP: Record<Skill, string> = {
+  knowledge_search:
+    "input is search words; returns the best matching paragraphs of your knowledge",
+  calculator: "input is one arithmetic expression, for example (12.5 * 4) - 3",
+  json_validator:
+    "input is a candidate result; says whether it fits the public format",
+  csv_to_json:
+    "input is CSV text with a header row; returns the rows as JSON objects",
+  wat_compile:
+    'input is WebAssembly text; says whether it compiles and would load as the bid\'s function. On a function bid you may then answer with only {"wat":"<the text>"} and it is compiled for you',
+  run_function:
+    'input is {"wat":"<WebAssembly text>","cases":[[arguments],...]} with up to 64 cases; returns what the function gives for each, by the verifier\'s rules. Only on a function bid',
+  run_code: CODE_SKILL_HELP,
+  run_tests: CODE_SKILL_HELP,
+  read_repo: CODE_SKILL_HELP,
+  make_patch: CODE_SKILL_HELP,
+};
 
 export function nearToNanoUsd(yocto: bigint): number {
   return Number((yocto * BigInt(USD_PER_NEAR * NANO_USD)) / NEAR);

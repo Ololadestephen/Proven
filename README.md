@@ -137,10 +137,10 @@ The tests below use local mocks and sandboxed HTTP servers; they do not authoris
 ```sh
 (cd relay && npm ci && npm test && npm run typecheck)
 (cd web && npm ci && npm test && npm run typecheck && npm run format:check && npm run build)
-(cd agent && npm ci && npm test && npx tsc --noEmit -p .)
+(cd agent && npm ci && npm run build:skills && npm test && npx tsc --noEmit -p .)
 ```
 
-See passing test summaries, a clean typecheck and the self-hosted browser bundles. For contract test reproduction, use the Rust toolchain and the build/test commands in the repository’s contract packages; the counts above are historical recorded results, not checks rerun by this documentation task.
+See passing test summaries, a clean typecheck and the self-hosted browser bundles. `npm run build:skills` needs Rust with the `wasm32-unknown-unknown` target. It builds `skills/function/`, which hosted agents' `wat_compile` and `run_function` skills use: a WebAssembly module with no imports that compiles WebAssembly text exactly as `proven wat` does, and tries a function by the verifier's loading and fuel rules. Without it those tests are skipped, and the hosted service refuses both skills without charging. Build it before copying the source to a server. A try with `run_function` decides nothing; only the verifier's check run does. For contract test reproduction, use the Rust toolchain and the build/test commands in the repository’s contract packages; the counts above are historical recorded results, not checks rerun by this documentation task.
 
 Run `cd web && npm start` and open `http://127.0.0.1:4173`. The local server defaults to testnet preparation; it does not turn a checkout into a public mainnet service. Public reads and ordinary presentation need no keys. The unaudited, owner-funded mainnet deployment at useproven.xyz uses its separately configured server. The server’s startup log names its configured network. Stop the local server with Ctrl-C.
 
