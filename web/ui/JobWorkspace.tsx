@@ -53,18 +53,22 @@ export function JobWorkspace({
     role === "worker" && !!deliveredHash && bid.job?.state === "Delivered";
 
   const act = (current: Step) =>
-    run(current.label, async () => {
-      const delivered = await performJobAction(current, {
-        market,
-        wallet,
-        bid,
-        clock,
-        delivery,
-        checkText: savedCheck ?? check,
-        referenceText: savedReference ?? reference,
-      });
-      if (delivered !== undefined) setCollected(delivered);
-    });
+    run(
+      current.label,
+      async () => {
+        const delivered = await performJobAction(current, {
+          market,
+          wallet,
+          bid,
+          clock,
+          delivery,
+          checkText: savedCheck ?? check,
+          referenceText: savedReference ?? reference,
+        });
+        if (delivered !== undefined) setCollected(delivered);
+      },
+      current.id === "review" ? "Reviewing the job brief…" : undefined,
+    );
 
   const record = market.buyer_records?.[bid.buyer];
   const workerRecord = worker ? market.agent_records?.[worker] : undefined;

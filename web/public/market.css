@@ -272,3 +272,56 @@
     line-height: 1.8;
   }
 }
+
+.market-toast {
+  position: fixed;
+  z-index: 100;
+  top: max(16px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  width: min(360px, calc(100vw - 32px));
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 8px 28px #19152e24;
+  color: var(--coral);
+  font-size: 14px;
+  animation: market-toast-in 180ms ease-out both;
+}
+.market-toast-progress {
+  color: var(--ink);
+}
+.market-toast-success {
+  color: var(--green);
+}
+.market-toast p {
+  margin: 0;
+}
+.market-toast button {
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+@keyframes market-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .market-toast {
+    animation: none;
+  }
+}

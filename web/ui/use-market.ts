@@ -34,6 +34,15 @@ function readPending(): PendingAction | null {
     };
   }
 }
+async function readFreshMarket(): Promise<Market> {
+  const value = await api<Market>("/api/market");
+  if (value.snapshot_stale)
+    throw new Error(
+      "Wait for the job board to reconnect before starting an action.",
+    );
+  return value;
+}
+
 export function useMarket(bidId?: number) {
   const [market, setMarket] = useState<Market | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -42,6 +51,8 @@ export function useMarket(bidId?: number) {
   const gate = useRef(new ActionGate());
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [boardUnavailable, setBoardUnavailable] = useState(false);
+  const boardFailed = useRef(false);
   const [clock, setClock] = useState(Date.now());
   const { wallet: baseWallet, connect, connecting, dev, useDev } = useWallet();
   const intentRef = useRef<PendingAction | null>(null);
@@ -59,7 +70,7 @@ export function useMarket(bidId?: number) {
                 storage: localStorage,
                 marker,
                 call,
-                readMarket: () => api<Market>("/api/market"),
+                readMarket: readFreshMarket,
                 send: baseWallet.call,
                 onFresh: setMarket,
                 onPending: (value) => {
@@ -73,7 +84,26 @@ export function useMarket(bidId?: number) {
     [baseWallet],
   );
   const refresh = useCallback(async () => {
-    const value = await api<Market>("/api/market");
+    const value = await api<Market>("/api/market")
+      .then((snapshot) => {
+        if (snapshot.snapshot_stale) {
+          setMarket((current) => current ?? snapshot);
+          throw new Error("The job board is temporarily unavailable.");
+        }
+        return snapshot;
+      })
+      .catch((reason: unknown) => {
+        setBoardUnavailable(true);
+        if (!boardFailed.current) {
+          boardFailed.current = true;
+          setError(
+            "We can’t reach the job board right now. We’ll try again shortly.",
+          );
+        }
+        throw reason;
+      });
+    boardFailed.current = false;
+    setBoardUnavailable(false);
     setMarket(value);
     setClock(Date.now());
     const saved = pendingRef.current;
@@ -102,13 +132,18 @@ export function useMarket(bidId?: number) {
     return () => window.removeEventListener("storage", sync);
   }, []);
   useEffect(() => {
-    void refresh().catch((reason) => setError(String(reason.message)));
+    void refresh().catch(() => undefined);
     const timer = setInterval(
       () => void refresh().catch(() => undefined),
       10000,
     );
     return () => clearInterval(timer);
   }, [refresh]);
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => setError(null), 6000);
+    return () => clearTimeout(timer);
+  }, [error]);
   // A confirmation is news for a moment. It should not stay on the page and look like a waiting state.
   useEffect(() => {
     if (!notice) return;
@@ -116,15 +151,21 @@ export function useMarket(bidId?: number) {
       setNotice("Confirmed on the board.");
       return;
     }
-    if (pending) return;
     const timer = setTimeout(() => setNotice(null), 6000);
     return () => clearTimeout(timer);
   }, [notice, pending]);
-  const run: Run = async (label, task) => {
+  const run: Run = async (label, task, progress) => {
     if (!gate.current.enter()) return;
     if (pendingRef.current) {
       setError(
         "An earlier action is still awaiting chain reconciliation. Check its wallet history before sending anything else.",
+      );
+      gate.current.leave();
+      return;
+    }
+    if (boardFailed.current) {
+      setError(
+        "Wait for the job board to reconnect before starting an action.",
       );
       gate.current.leave();
       return;
@@ -134,7 +175,7 @@ export function useMarket(bidId?: number) {
       gate.current.leave();
       return;
     }
-    setBusy(label);
+    setBusy(progress ?? `${label}… check your wallet for any request.`);
     setError(null);
     setNotice(null);
     const readOnly = label === "Collect the work";
@@ -148,7 +189,7 @@ export function useMarket(bidId?: number) {
           createdAt: Date.now(),
         };
       await task();
-      await refresh();
+      await refresh().catch(() => undefined);
       setNotice(
         readOnly
           ? "The delivery is ready below."
@@ -174,7 +215,7 @@ export function useMarket(bidId?: number) {
     const saved = pendingRef.current;
     if (!saved) return;
     setError(null);
-    const fresh = await api<Market>("/api/market");
+    const fresh = await readFreshMarket();
     setMarket(fresh);
     const released = await releaseUnapplied(
       {
@@ -203,6 +244,7 @@ export function useMarket(bidId?: number) {
     pending,
     notice,
     error,
+    boardUnavailable,
     setError,
     clock,
     run,

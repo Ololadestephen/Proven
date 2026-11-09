@@ -5,6 +5,7 @@ export interface Market {
   board: string;
   escrow: string;
   network?: string;
+  snapshot_stale?: boolean;
   buyer_records?: Record<
     string,
     { paid: number; refunded: number; expired: number }
@@ -54,4 +55,8 @@ export interface WalletCallResult {
   posted_bid_id?: number;
 }
 
-export type Run = (label: string, task: () => Promise<void>) => Promise<void>;
+export type Run = (
+  label: string,
+  task: () => Promise<void>,
+  progress?: string,
+) => Promise<void>;

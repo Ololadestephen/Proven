@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MarketLayout } from "./MarketLayout.tsx";
 import { WorkspacePages } from "./WorkspacePages.tsx";
@@ -6,6 +7,19 @@ import { useMarket } from "./use-market.ts";
 import { appRoute } from "./app-route.ts";
 import { canPost } from "./network.ts";
 import "../public/workspace.css";
+function ProgressToast({ message }: { message: string }) {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setVisible(false), 6000);
+    return () => clearTimeout(timer);
+  }, []);
+  return visible ? (
+    <div className="market-toast market-toast-progress">
+      <p role="status">{message}</p>
+    </div>
+  ) : null;
+}
+
 function App() {
   const route = appRoute(location.pathname, location.hash);
   const state = useMarket(route.bidId);
@@ -20,6 +34,7 @@ function App() {
     pending,
     notice,
     error,
+    boardUnavailable,
     setError,
     clock,
     run,
@@ -44,21 +59,23 @@ function App() {
         />
       }
     >
-      {busy ? (
-        <p className="market-status" role="status">
-          {busy}… review any request in your wallet.
-        </p>
-      ) : null}
-      {/* The post page has its own success screen. */}
-      {notice && route.section !== "post" ? (
-        <p className="market-notice" role="status">
-          {notice}
-        </p>
-      ) : null}
       {error ? (
-        <p className="market-error" role="alert">
-          {error}
-        </p>
+        <div className="market-toast">
+          <p role="alert">{error}</p>
+          <button
+            type="button"
+            aria-label="Dismiss notification"
+            onClick={() => setError(null)}
+          >
+            ×
+          </button>
+        </div>
+      ) : busy ? (
+        <ProgressToast key={busy} message={busy} />
+      ) : notice ? (
+        <div className="market-toast market-toast-success">
+          <p role="status">{notice}</p>
+        </div>
       ) : null}
       {pending && !busy ? (
         <section className="workspace-card job-pending">
@@ -85,9 +102,7 @@ function App() {
             <button
               type="button"
               className="button button-secondary"
-              onClick={() =>
-                void refresh().catch((reason) => setError(reason.message))
-              }
+              onClick={() => void refresh().catch(() => undefined)}
             >
               Check again
             </button>
@@ -108,14 +123,32 @@ function App() {
           New jobs and funding are paused on this escrow.
         </p>
       ) : null}
-      <WorkspacePages
-        route={route}
-        market={market}
-        wallet={wallet}
-        run={run}
-        clock={clock}
-        busy={!!busy || !!pending}
-      />
+      {boardUnavailable ? (
+        <section className="workspace-card">
+          <p role="status">
+            {market
+              ? "Showing the last loaded jobs. Actions will resume when the board reconnects."
+              : "The job board is temporarily unavailable. We’ll retry automatically."}
+          </p>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => void refresh().catch(() => undefined)}
+          >
+            Try again
+          </button>
+        </section>
+      ) : null}
+      {market || !boardUnavailable ? (
+        <WorkspacePages
+          route={route}
+          market={market}
+          wallet={wallet}
+          run={run}
+          clock={clock}
+          busy={!!busy || !!pending || boardUnavailable}
+        />
+      ) : null}
     </MarketLayout>
   );
 }
