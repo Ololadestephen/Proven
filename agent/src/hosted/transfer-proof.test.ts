@@ -42,6 +42,23 @@ test("native payment proof binds final success, hash, source, recipient and exac
         actions: [{ Transfer: { deposit: "999" } }],
       },
     },
+    {
+      ...outcome(),
+      transaction: {
+        ...outcome().transaction,
+        actions: [{ Transfer: { deposit: "1001" } }],
+      },
+    },
+    {
+      ...outcome(),
+      transaction: {
+        ...outcome().transaction,
+        actions: [
+          { Transfer: { deposit: "500" } },
+          { Transfer: { deposit: "500" } },
+        ],
+      },
+    },
   ])
     assert.equal(confirmedTransfer(value, expected), false);
 });

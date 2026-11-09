@@ -117,12 +117,23 @@ export function hostedPolicy(escrow: string, owner: string, treasury: string) {
   );
 }
 
+export interface HostedWallet {
+  wallet: string;
+  wallet_id: string;
+  custody_key: string;
+}
+
+export type WalletSetup =
+  | { stage: "registering" }
+  | { stage: "registered" | "storing_policy"; wallet: HostedWallet };
+
 export async function createHostedWallet(
   config: Config,
   owner: string,
   treasury: Account,
   readPolicy = () => readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
-): Promise<{ wallet: string; wallet_id: string; custody_key: string }> {
+  recovery?: { current?: WalletSetup; save: (stage: WalletSetup) => void },
+): Promise<HostedWallet> {
   // Validate before registration, which creates external state even before policy storage.
   const policy = parseHostedPolicy(
     readPolicyText(readPolicy),
@@ -133,21 +144,29 @@ export async function createHostedWallet(
   const outlayer = config.custodyApi.includes("testnet")
     ? "outlayer.testnet"
     : "outlayer.near";
-  const made = await post(config.custodyApi, "/register", {});
-  if (
-    typeof made.api_key !== "string" ||
-    made.api_key.trim().length === 0 ||
-    typeof made.wallet_id !== "string" ||
-    made.wallet_id.trim().length === 0 ||
-    typeof made.near_account_id !== "string" ||
-    !/^[a-f0-9]{64}$/.test(made.near_account_id)
-  )
-    throw new PublicError("OutLayer gave an unexpected registration.");
-  const key = made.api_key;
+  const current = recovery?.current;
+  if (current?.stage === "registering")
+    throw new PublicError(
+      "OutLayer registration needs operator reconciliation. Keep your setup transaction hash and do not pay again.",
+    );
+  const wallet =
+    current?.wallet ??
+    (await registerHostedWallet(config.custodyApi, recovery?.save));
+  if (current?.stage === "storing_policy") {
+    try {
+      await checkHostedPolicy(config, owner, treasury.accountId, wallet);
+    } catch {
+      throw new PublicError(
+        "The wallet policy could not be confirmed. Retry with the same payment or ask the operator to reconcile it.",
+      );
+    }
+    return wallet;
+  }
+  const key = wallet.custody_key;
   const encrypted = await post(
     config.custodyApi,
     "/wallet/v1/encrypt-policy",
-    { wallet_id: made.wallet_id, ...policy },
+    { wallet_id: wallet.wallet_id, ...policy },
     key,
   );
   if (
@@ -201,6 +220,7 @@ export async function createHostedWallet(
       : (quote as { required_deposit?: string }).required_deposit;
   if (!cost || !/^\d+$/.test(cost) || BigInt(cost) > MAX_POLICY_STORAGE)
     throw new PublicError("The policy storage quote is unknown or too high.");
+  recovery?.save({ stage: "storing_policy", wallet });
   const stored = await treasury.callFunctionRaw({
     contractId: outlayer,
     methodName: "store_wallet_policy",
@@ -220,19 +240,49 @@ export async function createHostedWallet(
   });
   if (!(typeof stored.status === "object" && "SuccessValue" in stored.status))
     throw new PublicError("Storing the agent's policy failed.");
-  await post(config.custodyApi, "/wallet/v1/invalidate-cache", {
+  await checkHostedPolicy(config, owner, treasury.accountId, wallet);
+  return wallet;
+}
+
+async function registerHostedWallet(
+  custodyApi: string,
+  save?: (stage: WalletSetup) => void,
+): Promise<HostedWallet> {
+  save?.({ stage: "registering" });
+  const made = await post(custodyApi, "/register", {});
+  if (
+    typeof made.api_key !== "string" ||
+    !made.api_key.trim() ||
+    typeof made.wallet_id !== "string" ||
+    !made.wallet_id.trim() ||
+    typeof made.near_account_id !== "string" ||
+    !/^[a-f0-9]{64}$/.test(made.near_account_id)
+  )
+    throw new PublicError("OutLayer gave an unexpected registration.");
+  const wallet = {
+    wallet: made.near_account_id,
     wallet_id: made.wallet_id,
+    custody_key: made.api_key,
+  };
+  save?.({ stage: "registered", wallet });
+  return wallet;
+}
+
+async function checkHostedPolicy(
+  config: Config,
+  owner: string,
+  treasury: string,
+  wallet: HostedWallet,
+) {
+  const key = wallet.custody_key;
+  await post(config.custodyApi, "/wallet/v1/invalidate-cache", {
+    wallet_id: wallet.wallet_id,
   }).catch(() => undefined);
   assertPolicy(
     await custodyRead(config.custodyApi, key, "/wallet/v1/policy"),
     config.escrow,
-    { owner, treasury: treasury.accountId },
+    { owner, treasury },
   );
-  return {
-    wallet: made.near_account_id,
-    wallet_id: made.wallet_id,
-    custody_key: key,
-  };
 }
 
 /** Sends NEAR from a hosted wallet, in steps the policy allows. The policy refuses any other receiver. */

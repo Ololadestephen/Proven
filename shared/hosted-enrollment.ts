@@ -7,9 +7,13 @@ export interface HostedEnrollment {
 }
 
 /** The owner signs every enrollment setting. JSON keeps embedded delimiters unambiguous. */
-export function enrollmentText(input: HostedEnrollment): string {
+export function enrollmentText(
+  input: HostedEnrollment,
+  setupTransaction?: string,
+): string {
   return JSON.stringify({
-    version: 2,
+    version: setupTransaction === undefined ? 2 : 3,
+    setup_transaction: setupTransaction,
     prompt: input.prompt,
     knowledge: input.knowledge,
     skills: [...new Set(input.skills)].sort(),

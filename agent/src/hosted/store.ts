@@ -13,6 +13,19 @@ import { ALLOWED_SKILLS, type Skill } from "./limits.ts";
 import { PublicError } from "../errors.ts";
 import { isObject } from "../json.ts";
 import type { EarningsRecord } from "./earnings.ts";
+import type { WalletSetup } from "./wallets.ts";
+
+export const SETUP_HASH = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
+
+export interface SetupRecord {
+  owner: string;
+  payload: string;
+  reviews: number;
+  review?: HostedAgent["review"];
+  refused?: string;
+  walletSetup?: WalletSetup;
+  completed?: string;
+}
 
 export interface HostedAgent {
   wallet: string;
@@ -51,6 +64,48 @@ function damaged(): never {
   throw new PublicError(
     "Hosted persistence is damaged or unavailable. Work and spending are stopped; reconcile the stored records.",
   );
+}
+function parseSetup(value: unknown): SetupRecord {
+  if (
+    !isObject(value) ||
+    typeof value.owner !== "string" ||
+    typeof value.payload !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.payload) ||
+    ![0, 1, 2].includes(value.reviews as number) ||
+    (value.refused !== undefined && typeof value.refused !== "string") ||
+    (value.completed !== undefined &&
+      (typeof value.completed !== "string" ||
+        !/^[a-f0-9]{64}$/.test(value.completed)))
+  )
+    return damaged();
+  const review = value.review;
+  if (
+    review !== undefined &&
+    (!isObject(review) ||
+      !["reason", "model", "chat_id", "response_hash"].every(
+        (field) => typeof review[field] === "string",
+      ))
+  )
+    return damaged();
+  const setup = value.walletSetup;
+  if (setup !== undefined) {
+    if (!review || !isObject(setup)) return damaged();
+    if (setup.stage !== "registering") {
+      const wallet = setup.wallet;
+      if (
+        (setup.stage !== "registered" && setup.stage !== "storing_policy") ||
+        !isObject(wallet) ||
+        typeof wallet.wallet !== "string" ||
+        !/^[a-f0-9]{64}$/.test(wallet.wallet) ||
+        typeof wallet.wallet_id !== "string" ||
+        !wallet.wallet_id ||
+        typeof wallet.custody_key !== "string" ||
+        !wallet.custody_key
+      )
+        return damaged();
+    }
+  }
+  return value as unknown as SetupRecord;
 }
 function parseAgent(text: string, wallet: string): HostedAgent {
   let x: unknown;
@@ -147,6 +202,7 @@ function parseAgent(text: string, wallet: string): HostedAgent {
 
 export class HostedStore {
   private readonly dir: string;
+  private readonly activeSetups = new Set<string>();
   constructor(root: string) {
     this.dir = root;
     mkdirSync(join(root, "agents"), { recursive: true, mode: 0o700 });
@@ -187,17 +243,44 @@ export class HostedStore {
         a.wallet.localeCompare(b.wallet),
     );
   }
-  /** A setup fee transaction can pay for one agent only. */
-  claimSetupTransaction(hash: string): boolean {
-    if (!/^[1-9A-HJ-NP-Za-km-z]{32,64}$/.test(hash)) return false;
+  private setupPath(hash: string) {
+    if (!SETUP_HASH.test(hash))
+      throw new PublicError("Invalid setup transaction hash.");
+    return join(this.dir, `setup-${hash}`);
+  }
+  /** The hosted service has an exclusive data-directory lock; hold a per-payment lock across awaits. */
+  async withSetup<T>(hash: string, operation: () => Promise<T>): Promise<T> {
+    if (this.activeSetups.has(hash))
+      throw new PublicError(
+        "This signup is already running. Retry with the same payment shortly.",
+      );
+    this.activeSetups.add(hash);
     try {
-      writeFileSync(join(this.dir, `setup-${hash}`), "", {
-        flag: "wx",
-        mode: 0o600,
-      });
-      return true;
+      return await operation();
+    } finally {
+      this.activeSetups.delete(hash);
+    }
+  }
+  readSetup(hash: string): SetupRecord | "legacy" | null {
+    const path = this.setupPath(hash);
+    try {
+      const text = readFileSync(path, "utf8");
+      // Earlier releases only stored an empty spent marker. Never reuse those payments.
+      return text === "" ? "legacy" : parseSetup(JSON.parse(text));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === "EEXIST") return false;
+      if (missing(error)) return null;
+      return damaged();
+    }
+  }
+  saveSetup(hash: string, record: SetupRecord) {
+    const path = this.setupPath(hash);
+    try {
+      writeFileSync(`${path}.tmp`, JSON.stringify(record), {
+        mode: 0o600,
+        flush: true,
+      });
+      renameSync(`${path}.tmp`, path);
+    } catch {
       return damaged();
     }
   }

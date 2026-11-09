@@ -214,11 +214,19 @@ test("damaged state, logs, deliveries and setup storage fail closed", (t) => {
   mkdirSync(join(root, "logs", "job-2.delivery"));
   assert.throws(() => store.readDelivery(2), /persistence/);
   const hash = "A".repeat(44);
-  assert.equal(store.claimSetupTransaction(hash), true);
-  assert.equal(store.claimSetupTransaction(hash), false);
+  assert.equal(store.readSetup(hash), null);
+  writeFileSync(join(root, `setup-${hash}`), "");
+  assert.equal(store.readSetup(hash), "legacy");
+  writeFileSync(join(root, `setup-${hash}`), "{");
+  assert.throws(() => store.readSetup(hash), /persistence/);
   rmSync(root, { recursive: true, force: true });
   assert.throws(
-    () => store.claimSetupTransaction("B".repeat(44)),
+    () =>
+      store.saveSetup("B".repeat(44), {
+        owner: agent.owner,
+        payload: "a".repeat(64),
+        reviews: 0,
+      }),
     /persistence/,
   );
 });

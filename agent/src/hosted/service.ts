@@ -33,6 +33,7 @@ import { runnerPass, type RunnerDeps } from "./runner.ts";
 import { hostedSettings, hostedWritePlan } from "./network.ts";
 import { acquireHostedLock, bindHostedData } from "./service-lock.ts";
 import { HostedStore, publicView } from "./store.ts";
+import { confirmedTransfer } from "./transfer-proof.ts";
 import { sendFromWallet, treasuryAccount } from "./wallets.ts";
 
 const PASS_EVERY_MS = 20_000;
@@ -132,26 +133,12 @@ export async function buildDeps(
           accountId: owner,
           waitUntil: "FINAL",
         });
-        const tx = outcome.transaction as unknown as {
-          signer_id: string;
-          receiver_id: string;
-          actions: Array<{ Transfer?: { deposit: string } } | string>;
-        };
-        const status = outcome.status as { SuccessValue?: string };
-        const paid = tx.actions.reduce(
-          (sum, action) =>
-            sum +
-            (typeof action === "object" && action.Transfer
-              ? BigInt(action.Transfer.deposit)
-              : 0n),
-          0n,
-        );
-        return (
-          status.SuccessValue !== undefined &&
-          tx.signer_id === owner &&
-          tx.receiver_id === treasuryId &&
-          paid >= amount
-        );
+        return confirmedTransfer(outcome, {
+          hash,
+          from: owner,
+          to: treasuryId,
+          amount: amount.toString(),
+        });
       } catch {
         return false;
       }

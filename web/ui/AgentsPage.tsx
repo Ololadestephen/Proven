@@ -5,6 +5,38 @@ import { COIN, IS_MAINNET } from "./network.ts";
 import { enrollmentText } from "../../shared/hosted-enrollment.ts";
 
 const PATH = "/api/market/hosted";
+const PAYMENT_HASH = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
+const signupKey = (owner: string) => `proven:hosted-signup:${COIN}:${owner}`;
+
+interface SignupDraft {
+  hash: string;
+  prompt: string;
+  knowledge: string;
+  skills: string[];
+  keep_bps: number;
+}
+
+function loadSignup(owner: string): SignupDraft | null {
+  const raw = localStorage.getItem(signupKey(owner));
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as SignupDraft;
+    if (
+      typeof value.hash === "string" &&
+      typeof value.prompt === "string" &&
+      typeof value.knowledge === "string" &&
+      Array.isArray(value.skills) &&
+      value.skills.every((skill) => typeof skill === "string") &&
+      Number.isInteger(value.keep_bps)
+    )
+      return value;
+  } catch {
+    // A damaged draft must never cause a second payment prompt.
+  }
+  throw new Error(
+    "Enter the payment hash from your wallet to resume this signup.",
+  );
+}
 const SAFE_SKILLS = new Set([
   "knowledge_search",
   "calculator",
@@ -88,7 +120,7 @@ function BringYourOwnAgent() {
         Your own agent can use its own wallet, model and tools, and pay for them
         itself. It does not need our hosted agents service.
       </p>
-      <ol>
+      <ol className="workspace-steps">
         <li>Open a bid in the Market and read its public format.</li>
         <li>Connect your wallet, register once, and apply.</li>
         <li>
@@ -103,13 +135,6 @@ function BringYourOwnAgent() {
       <p>
         An agent can do the same steps by itself through the Proven MCP tools,
         described in <code>agent/skill.md</code> in the repository.
-      </p>
-      <p>
-        The local custody policy allows 6 NEAR per transaction and 12 NEAR per
-        day. Existing wallets keep their stored limits until their owner
-        approves and applies an update. A wallet still capped at 0.1 NEAR cannot
-        post the full prepaid bid. A listed human buyer can post with their own
-        wallet.
       </p>
       <p className="market-note">
         Current job limits and buyer access are read from the chain. There may
@@ -147,12 +172,29 @@ function HostedAgents({
   const [knowledge, setKnowledge] = useState("");
   const [skills, setSkills] = useState<string[]>([]);
   const [keepBps, setKeepBps] = useState(0);
-  const [setup, setSetup] = useState<{ owner: string; hash: string } | null>(
-    null,
-  );
+  const [paymentHash, setPaymentHash] = useState("");
+  const [paymentPending, setPaymentPending] = useState(false);
   const [result, setResult] = useState("");
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({});
   const [statusErrors, setStatusErrors] = useState<Record<string, string>>({});
+  const owner = wallet?.accountId;
+  useEffect(() => {
+    setPaymentHash("");
+    setPaymentPending(false);
+    if (!owner) return;
+    try {
+      const draft = loadSignup(owner);
+      if (!draft) return;
+      setPaymentPending(true);
+      setPaymentHash(draft.hash);
+      setPrompt(draft.prompt);
+      setKnowledge(draft.knowledge);
+      setSkills(draft.skills);
+      setKeepBps(draft.keep_bps);
+    } catch {
+      setPaymentPending(true);
+    }
+  }, [owner]);
   useEffect(() => {
     void read<Terms>("/terms")
       .then((loaded) => {
@@ -195,14 +237,6 @@ function HostedAgents({
             "Hosted enrollment is limited to invited pilot accounts.",
           );
       }
-      const paid =
-        (setup?.owner === wallet.accountId ? setup.hash : undefined) ??
-        (await wallet.transfer(
-          terms.treasury,
-          BigInt(Math.round(terms.setup_fee_near * 1000)) * 10n ** 21n,
-        ));
-      // Kept, so a failed signature does not mean paying twice.
-      setSetup({ owner: wallet.accountId, hash: paid });
       const enrollment = {
         prompt,
         knowledge,
@@ -210,7 +244,30 @@ function HostedAgents({
         keep_bps: keepBps,
         min_buyer_paid_share: null,
       };
-      const payload = await sha256(enrollmentText(enrollment));
+      let paid = paymentHash.trim();
+      const key = signupKey(wallet.accountId);
+      if (!paid) {
+        const prior = loadSignup(wallet.accountId);
+        if (prior || paymentPending)
+          throw new Error(
+            "Check your wallet and enter the original setup payment hash before continuing.",
+          );
+        // Record the payment attempt before opening the wallet, including wallets that redirect.
+        localStorage.setItem(key, JSON.stringify({ ...enrollment, hash: "" }));
+        setPaymentPending(true);
+        paid = await wallet.transfer(
+          terms.treasury,
+          BigInt(Math.round(terms.setup_fee_near * 1000)) * 10n ** 21n,
+        );
+      }
+      if (!PAYMENT_HASH.test(paid))
+        throw new Error(
+          "Enter the setup payment transaction hash from your wallet.",
+        );
+      localStorage.setItem(key, JSON.stringify({ ...enrollment, hash: paid }));
+      setPaymentPending(true);
+      setPaymentHash(paid);
+      const payload = await sha256(enrollmentText(enrollment, paid));
       const reply = await api<{
         added: boolean;
         agent_wallet?: string;
@@ -222,7 +279,9 @@ function HostedAgents({
         setup_transaction: paid,
         auth: await signedFor(wallet, "add_agent", payload),
       });
-      setSetup(null);
+      localStorage.removeItem(key);
+      setPaymentPending(false);
+      setPaymentHash("");
       setResult(
         reply.added
           ? `Added. ${reply.next}`
@@ -249,22 +308,132 @@ function HostedAgents({
           the contracts.
         </p>
       ) : null}
-      {problem ? <p className="market-error">{problem}</p> : null}
-      {problem ? <BringYourOwnAgent /> : null}
+      {problem ? (
+        <p className="market-note">
+          Hosted agents are not available right now. You can still bring your
+          own agent.
+        </p>
+      ) : null}
+      {IS_MAINNET || problem ? <BringYourOwnAgent /> : null}
       {result ? <p className="market-notice">{result}</p> : null}
+      {/* Without the service's terms there is no rate, fee or treasury to show or pay. */}
+      {terms ? (
+        <HostedSections
+          terms={terms}
+          agents={agents}
+          wallet={wallet}
+          busy={busy}
+          prompt={prompt}
+          setPrompt={setPrompt}
+          knowledge={knowledge}
+          setKnowledge={setKnowledge}
+          skills={skills}
+          setSkills={setSkills}
+          keepBps={keepBps}
+          setKeepBps={setKeepBps}
+          paymentHash={paymentHash}
+          setPaymentHash={setPaymentHash}
+          paymentPending={paymentPending}
+          clearPending={() => {
+            if (
+              !owner ||
+              !window.confirm(
+                "Start over only if your wallet confirms you did not send the setup payment.",
+              )
+            )
+              return;
+            localStorage.removeItem(signupKey(owner));
+            setPaymentPending(false);
+          }}
+          add={() => void add()}
+          withdraw={(agent) => void withdraw(agent)}
+          fund={(agent) =>
+            void run("Funding the agent", async () => {
+              if (!wallet) throw new Error("Connect a wallet first.");
+              await wallet.transfer(agent.wallet, (4n * 10n ** 24n) / 10n);
+              setResult(`Sent 0.4 ${COIN} to this agent.`);
+            })
+          }
+          statuses={statuses}
+          statusErrors={statusErrors}
+          loadStatus={(walletId) => void loadStatus(walletId)}
+        />
+      ) : problem ? null : (
+        <p role="status" className="market-note">
+          Reading the hosted agents’ terms…
+        </p>
+      )}
+    </div>
+  );
+}
+
+const KEEP_SHARES: string[][] = [
+  ["0", "0%, all to inference"],
+  ["2500", "25%"],
+  ["5000", "50%"],
+  ["10000", "100%, keep it all"],
+];
+
+function HostedSections({
+  terms,
+  agents,
+  wallet,
+  busy,
+  prompt,
+  setPrompt,
+  knowledge,
+  setKnowledge,
+  skills,
+  setSkills,
+  keepBps,
+  setKeepBps,
+  paymentHash,
+  setPaymentHash,
+  paymentPending,
+  clearPending,
+  add,
+  withdraw,
+  fund,
+  statuses,
+  statusErrors,
+  loadStatus,
+}: {
+  terms: Terms;
+  agents: HostedAgent[] | null;
+  wallet: Wallet | null;
+  busy: boolean;
+  prompt: string;
+  setPrompt: (value: string) => void;
+  knowledge: string;
+  setKnowledge: (value: string) => void;
+  skills: string[];
+  setSkills: (update: (now: string[]) => string[]) => void;
+  keepBps: number;
+  setKeepBps: (value: number) => void;
+  paymentHash: string;
+  setPaymentHash: (value: string) => void;
+  paymentPending: boolean;
+  clearPending: () => void;
+  add: () => void;
+  withdraw: (agent: HostedAgent) => void;
+  fund: (agent: HostedAgent) => void;
+  statuses: Record<string, AgentStatus>;
+  statusErrors: Record<string, string>;
+  loadStatus: (wallet: string) => void;
+}) {
+  return (
+    <>
       <section className="workspace-card">
         <h2>Who holds what</h2>
-        <p>{terms?.statement ?? "Reading the terms…"}</p>
+        <p>{terms.statement}</p>
         <h3>The rate</h3>
         <p>
-          <strong>
-            1 NEAR buys ${terms?.usd_per_near ?? "…"} of inference.
-          </strong>{" "}
-          This is our own published rate, not a market one. We set it below the
-          price of NEAR so we can buy the USD credits NEAR AI bills us in. If
-          NEAR falls below ${terms?.rate_review_below_usd ?? "…"}, we review it.
-          The operator buys NEAR AI credits in USD. Funding an agent does not
-          pay NEAR AI directly in NEAR.
+          <strong>1 NEAR buys ${terms.usd_per_near} of inference.</strong> This
+          is our own published rate, not a market one. We set it below the price
+          of NEAR so we can buy the USD credits NEAR AI bills us in. If NEAR
+          falls below ${terms.rate_review_below_usd}, we review it. The operator
+          buys NEAR AI credits in USD. Funding an agent does not pay NEAR AI
+          directly in NEAR.
         </p>
         <p>
           An agent needs at least 0.3 {COIN} to take a job, and 0.27 of that
@@ -275,21 +444,21 @@ function HostedAgents({
           cap. The budget history identifies each credited payment.
         </p>
         <p className="market-note">
-          Inference limits per agent: ${terms?.job_limit_usd ?? "…"} per job, $
-          {terms?.daily_limit_usd ?? "…"} per day, and at most{" "}
-          {terms?.concurrent_jobs ?? "…"} concurrent job(s). The earnings
-          allocation cap is {terms?.earnings_cap_near ?? "…"} NEAR. Tools are
-          fixed safe skills, with no shell, files or network access.
+          Inference limits per agent: ${terms.job_limit_usd} per job, $
+          {terms.daily_limit_usd} per day, and at most {terms.concurrent_jobs}{" "}
+          concurrent job(s). The earnings allocation cap is{" "}
+          {terms.earnings_cap_near} NEAR. Tools are fixed safe skills, with no
+          shell or file access; chain reads use fixed public NEAR endpoints.
         </p>
         <p>
           You can withdraw at any time while the agent holds no claim. What
-          cannot come back: the setup fee ({terms?.setup_fee_near ?? "…"} {COIN}
-          ), inference and skills already used, gas, and any claim deposit.
+          cannot come back: the setup fee ({terms.setup_fee_near} {COIN}),
+          inference and skills already used, gas, and any claim deposit.
         </p>
       </section>
       <section className="workspace-card">
         <h2>Add an agent</h2>
-        {terms?.enrollment_restricted ? (
+        {terms.enrollment_restricted ? (
           <p className="market-note">
             Enrollment is limited to invited pilot accounts.
           </p>
@@ -298,70 +467,127 @@ function HostedAgents({
           Your prompt and knowledge are public, and an AI review screens them.
           The review can only keep an agent out. It never decides payment.
         </p>
-        <label>
-          Prompt (public, up to 8 KB)
-          <textarea
-            rows={5}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-        </label>
-        <label>
-          Share of each payment to keep out of inference
-          <select
-            value={keepBps}
-            onChange={(e) => setKeepBps(Number(e.target.value))}
+        <div className="agent-form">
+          <div className="post-field">
+            <label htmlFor="agent-prompt">Prompt</label>
+            <textarea
+              id="agent-prompt"
+              rows={5}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+            />
+            <span className="post-hint">Public, up to 8 KB.</span>
+          </div>
+          <div className="post-field">
+            <label htmlFor="agent-knowledge">Knowledge</label>
+            <textarea
+              id="agent-knowledge"
+              rows={5}
+              value={knowledge}
+              onChange={(e) => setKnowledge(e.target.value)}
+            />
+            <span className="post-hint">Public, up to 32 KB. Optional.</span>
+          </div>
+          <div className="post-field">
+            <span className="post-label">
+              Share of each payment to keep out of inference
+            </span>
+            <div
+              className="post-choices"
+              role="group"
+              aria-label="Share of each payment to keep out of inference"
+            >
+              {KEEP_SHARES.map(([value, text]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={keepBps === Number(value)}
+                  onClick={() => setKeepBps(Number(value))}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+            <span className="post-hint">
+              The part not kept goes to inference, within the operator’s cap.
+            </span>
+          </div>
+          <div className="post-field">
+            <span className="post-label">Skills</span>
+            <div className="post-choices" role="group" aria-label="Skills">
+              {terms.skills
+                .filter((skill) => SAFE_SKILLS.has(skill))
+                .map((skill) => (
+                  <button
+                    key={skill}
+                    type="button"
+                    aria-pressed={skills.includes(skill)}
+                    onClick={() =>
+                      setSkills((now) =>
+                        now.includes(skill)
+                          ? now.filter((name) => name !== skill)
+                          : [...now, skill],
+                      )
+                    }
+                  >
+                    {skill}
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
+        <details open={paymentPending || undefined}>
+          <summary>Already paid? Resume signup</summary>
+          <div className="post-field">
+            <label htmlFor="agent-payment">
+              Setup payment transaction hash
+            </label>
+            <input
+              id="agent-payment"
+              value={paymentHash}
+              onChange={(event) => setPaymentHash(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <span className="post-hint">
+              Use the same wallet and agent settings. Resuming uses your
+              original payment.
+            </span>
+          </div>
+          {paymentPending && !paymentHash ? (
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={busy}
+              onClick={clearPending}
+            >
+              My wallet confirms no payment was sent
+            </button>
+          ) : null}
+        </details>
+        <div className="agent-submit">
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={
+              busy ||
+              !wallet ||
+              !prompt ||
+              !terms.treasury ||
+              (paymentPending && !paymentHash.trim())
+            }
+            onClick={add}
           >
-            <option value={0}>
-              0% — allocate all to inference, within the cap
-            </option>
-            <option value={2500}>25%</option>
-            <option value={5000}>50%</option>
-            <option value={10000}>100% — keep the whole payment</option>
-          </select>
-        </label>
-        <label>
-          Knowledge (public, up to 32 KB)
-          <textarea
-            rows={5}
-            value={knowledge}
-            onChange={(e) => setKnowledge(e.target.value)}
-          />
-        </label>
-        <fieldset>
-          <legend>Skills</legend>
-          {(terms?.skills ?? [])
-            .filter((skill) => SAFE_SKILLS.has(skill))
-            .map((skill) => (
-              <label key={skill}>
-                <input
-                  type="checkbox"
-                  checked={skills.includes(skill)}
-                  onChange={(e) =>
-                    setSkills((now) =>
-                      e.target.checked
-                        ? [...now, skill]
-                        : now.filter((name) => name !== skill),
-                    )
-                  }
-                />{" "}
-                {skill}
-              </label>
-            ))}
-        </fieldset>
-        <button
-          type="button"
-          className="button button-primary"
-          disabled={busy || !wallet || !prompt || !terms?.treasury}
-          onClick={() => void add()}
-        >
-          Pay the {terms?.setup_fee_near ?? "…"} {COIN} setup fee and add this
-          agent
-        </button>
-        <p className="market-note">
-          Your wallet asks you to approve the payment, then to sign the request.
-          The setup fee is not refunded, even if the review keeps the agent out.
-        </p>
+            {paymentHash.trim()
+              ? "Resume signup with this payment"
+              : `Pay the ${terms.setup_fee_near} ${COIN} setup fee and add this agent`}
+          </button>
+          <span className="post-hint">
+            {wallet
+              ? "Your wallet asks you to approve the payment, then to sign the request. The setup fee is not refunded, even if the review keeps the agent out."
+              : "Connect a wallet from the sidebar to add an agent."}
+          </span>
+        </div>
       </section>
       <section className="workspace-card">
         <h2>Agents, in the order they take jobs</h2>
@@ -375,7 +601,7 @@ function HostedAgents({
           <details
             key={agent.wallet}
             onToggle={(event) => {
-              if (event.currentTarget.open) void loadStatus(agent.wallet);
+              if (event.currentTarget.open) loadStatus(agent.wallet);
             }}
           >
             <summary>
@@ -425,15 +651,7 @@ function HostedAgents({
                 type="button"
                 className="button button-secondary"
                 disabled={busy}
-                onClick={() =>
-                  void run("Funding the agent", async () => {
-                    await wallet.transfer(
-                      agent.wallet,
-                      (4n * 10n ** 24n) / 10n,
-                    );
-                    setResult(`Sent 0.4 ${COIN} to this agent.`);
-                  })
-                }
+                onClick={() => fund(agent)}
               >
                 Send 0.4 {COIN} to this agent
               </button>
@@ -450,7 +668,7 @@ function HostedAgents({
                 type="button"
                 className="button button-secondary"
                 disabled={busy}
-                onClick={() => void withdraw(agent)}
+                onClick={() => withdraw(agent)}
               >
                 Withdraw unused NEAR
               </button>
@@ -458,6 +676,6 @@ function HostedAgents({
           </details>
         ))}
       </section>
-    </div>
+    </>
   );
 }

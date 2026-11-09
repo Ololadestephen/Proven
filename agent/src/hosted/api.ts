@@ -21,9 +21,18 @@ import {
   type Skill,
 } from "./limits.ts";
 import { spenderOf } from "./runner.ts";
-import { publicView, type HostedAgent, type HostedStore } from "./store.ts";
+import {
+  publicView,
+  SETUP_HASH,
+  type HostedAgent,
+  type HostedStore,
+  type SetupRecord,
+} from "./store.ts";
 import { createHostedWallet, sendFromWallet } from "./wallets.ts";
-import { enrollmentText } from "../../../shared/hosted-enrollment.ts";
+import {
+  enrollmentText,
+  type HostedEnrollment,
+} from "../../../shared/hosted-enrollment.ts";
 import { inferenceBudget } from "./earnings.ts";
 import {
   DAILY_LIMIT_NANO_USD,
@@ -48,7 +57,7 @@ export interface ApiDeps {
   enrollmentOwners?: ReadonlySet<string>;
   verifier: RelayVerifier;
   balance: (account: string) => Promise<bigint>;
-  /** True if this finished transaction is `owner` paying the treasury at least `amount`. */
+  /** True if this finalized transaction is one exact setup-fee transfer from the owner. */
   paidTreasury: (
     hash: string,
     owner: string,
@@ -58,19 +67,25 @@ export interface ApiDeps {
   hasActiveClaim: (wallet: string) => Promise<boolean>;
 }
 
-export function addPayload(input: {
-  prompt: string;
-  knowledge: string;
-  skills: string[];
-  min_buyer_paid_share?: number | null;
-  keep_bps?: number;
-}): string {
+export function addPayload(
+  input: {
+    prompt: string;
+    knowledge: string;
+    skills: string[];
+    min_buyer_paid_share?: number | null;
+    keep_bps?: number;
+  },
+  setupTransaction?: string,
+): string {
   return sha256(
-    enrollmentText({
-      ...input,
-      min_buyer_paid_share: input.min_buyer_paid_share ?? null,
-      keep_bps: input.keep_bps ?? 0,
-    }),
+    enrollmentText(
+      {
+        ...input,
+        min_buyer_paid_share: input.min_buyer_paid_share ?? null,
+        keep_bps: input.keep_bps ?? 0,
+      },
+      setupTransaction,
+    ),
   );
 }
 
@@ -117,6 +132,7 @@ export async function addAgent(
     keep_bps?: number;
     auth?: RelayAuth;
   },
+  provision = createHostedWallet,
 ) {
   const owner = String(body.owner ?? "");
   if (!ACCOUNT.test(owner)) throw new PublicError("Invalid owner account.");
@@ -143,67 +159,147 @@ export async function addAgent(
   const keep = body.keep_bps ?? 0;
   if (!Number.isInteger(keep) || keep < 0 || keep > 10000)
     throw new PublicError("keep_bps must be an integer from 0 to 10000.");
+  const hash = body.setup_transaction;
+  if (typeof hash !== "string" || !SETUP_HASH.test(hash))
+    throw new PublicError("Enter the setup payment transaction hash.");
+  const settings = {
+    prompt,
+    knowledge,
+    skills,
+    min_buyer_paid_share: share,
+    keep_bps: keep,
+  };
+  const payload = addPayload(settings, hash);
   const signed = await deps.verifier.verify(
     body.auth,
     [owner],
     "add_agent",
     0,
-    addPayload({
-      prompt,
-      knowledge,
-      skills,
-      min_buyer_paid_share: share,
-      keep_bps: keep,
-    }),
+    payload,
   );
   if (!signed)
     throw new PublicError("Sign this request with the owner's wallet.");
-  if (!(await deps.paidTreasury(body.setup_transaction, owner, SETUP_FEE)))
-    throw new PublicError(
-      `Pay ${Number(SETUP_FEE) / 1e24} NEAR to ${deps.treasury.accountId} from the owner's account first, and give that transaction's hash.`,
+  return deps.store.withSetup(hash, async () => {
+    const stored = deps.store.readSetup(hash);
+    if (stored === "legacy")
+      throw new PublicError(
+        "This payment was used by an earlier release. Ask the operator to reconcile it before paying again.",
+      );
+    if (stored && (stored.owner !== owner || stored.payload !== payload))
+      throw new PublicError(
+        "Resume this payment using its original account and agent settings.",
+      );
+    if (!stored && !(await deps.paidTreasury(hash, owner, SETUP_FEE)))
+      throw new PublicError(
+        "The setup payment could not be confirmed. Check the transaction hash and retry without paying again.",
+      );
+    const record: SetupRecord = stored ?? { owner, payload, reviews: 0 };
+    const save = () => deps.store.saveSetup(hash, record);
+    if (!stored) save();
+    if (record.completed) return added(record.completed);
+    await screenEnrollment(deps, settings, hash, record, save);
+    if (record.refused !== undefined)
+      return { added: false, reason: record.refused };
+    if (!record.review)
+      throw new PublicError("The agent review is unavailable.");
+    const wallet = await provision(
+      deps.config,
+      owner,
+      deps.treasury,
+      undefined,
+      {
+        current: record.walletSetup,
+        save: (stage) => {
+          record.walletSetup = stage;
+          save();
+        },
+      },
     );
-  if (!deps.store.claimSetupTransaction(body.setup_transaction))
-    throw new PublicError("That setup payment has already been used.");
+    saveEnrolledAgent(deps.store, wallet, settings, owner, record.review);
+    record.completed = wallet.wallet;
+    delete record.walletSetup;
+    save();
+    return added(wallet.wallet);
+  });
+}
+
+async function screenEnrollment(
+  deps: ApiDeps,
+  settings: HostedEnrollment,
+  hash: string,
+  record: SetupRecord,
+  save: () => void,
+) {
+  if (record.review || record.refused !== undefined) return;
+  if (record.reviews >= 2)
+    throw new PublicError(
+      "The review needs operator help. Keep your setup transaction hash and do not pay again.",
+    );
+  record.reviews++;
+  save();
   const { answer, call } = await reviewAgent(
     deps.client,
     deps.key,
-    { prompt, knowledge },
-    `add-${sha256(prompt).slice(0, 12)}`,
+    { prompt: settings.prompt, knowledge: settings.knowledge },
+    `add-${hash}`,
     REVIEW_LIMIT_NANO_USD,
   );
-  if (!answer || !answer.allow)
-    return {
-      added: false,
-      reason: answer?.reason ?? "The review gave no usable answer.",
-      note: "The setup fee is not refunded. The review can only keep an agent out; it never decides payment.",
-    };
-  const wallet = await createHostedWallet(deps.config, owner, deps.treasury);
-  const agent: HostedAgent = {
-    ...wallet,
-    owner,
-    prompt,
-    knowledge,
-    skills,
-    model: DEFAULT_MODEL,
-    review: {
+  if (!answer)
+    throw new PublicError(
+      "The review gave no usable answer. Retry with the same payment.",
+    );
+  if (answer.allow)
+    record.review = {
       reason: answer.reason,
       model: call.model,
       chat_id: call.chatId,
       response_hash: call.responseHash,
-    },
-    min_buyer_paid_share: share,
-    keep_bps: keep,
+    };
+  else record.refused = answer.reason;
+  save();
+}
+
+function saveEnrolledAgent(
+  store: HostedStore,
+  wallet: Awaited<ReturnType<typeof createHostedWallet>>,
+  settings: HostedEnrollment,
+  owner: string,
+  review: HostedAgent["review"],
+) {
+  const existing = store.get(wallet.wallet);
+  if (existing) {
+    if (
+      existing.owner !== owner ||
+      existing.wallet_id !== wallet.wallet_id ||
+      existing.custody_key !== wallet.custody_key
+    )
+      throw new PublicError("The wallet record needs operator reconciliation.");
+    return;
+  }
+  const agent: HostedAgent = {
+    ...wallet,
+    owner,
+    prompt: settings.prompt,
+    knowledge: settings.knowledge,
+    skills: settings.skills as Skill[],
+    model: DEFAULT_MODEL,
+    review,
+    min_buyer_paid_share: settings.min_buyer_paid_share,
+    keep_bps: settings.keep_bps,
     earnings: [],
     created_at: new Date().toISOString(),
     last_claim_at: null,
     settled_nano_usd: 0,
     paused: false,
   };
-  deps.store.save(agent);
+  store.save(agent);
+}
+
+function added(wallet: string) {
   return {
     added: true,
-    agent_wallet: agent.wallet,
-    next: `Send NEAR to ${agent.wallet} to fund it. It takes jobs once it holds at least 0.3 NEAR, and needs one registration on the board first.`,
+    agent_wallet: wallet,
+    next: `Send NEAR to ${wallet} to fund it. It takes jobs once it holds at least 0.3 NEAR, and needs one registration on the board first.`,
   };
 }
 
