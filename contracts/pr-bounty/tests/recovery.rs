@@ -724,3 +724,112 @@ async fn while_paused_every_exit_still_works_and_only_posting_stops() -> anyhow:
     env.save_trace("recovery-paused")?;
     Ok(())
 }
+
+#[tokio::test]
+async fn an_empty_float_leaves_checks_refunds_recovery_and_withdrawals_working(
+) -> anyhow::Result<()> {
+    // The float holds exactly one sponsored run.
+    let env = setup_full(FAULT_WASM, "maint", "contrib", None, RUN).await?;
+    let id = post(&env, 9_003, 1, 600, 900, 3_600).await?;
+    let expiring = post(&env, 4, 2, 30, 60, 120).await?;
+    claim_and_bind(&env, id, 1).await?;
+    reply(&env, "reply", Some(pull_reply(&env, id, 3, None))).await?;
+    let r = call(
+        &env.contrib,
+        &env,
+        "check_merge",
+        json!({"bounty_id": id}),
+        0,
+    )
+    .await?;
+    assert!(logged(&r, "outcome=pending"), "{:?}", r.logs());
+    let c = config(&env).await?;
+    assert_eq!(
+        (u(&c["sponsor_float"]), u(&c["sponsor_spent"])),
+        (0, RUN),
+        "the float is empty"
+    );
+    let before = (held(&env).await?, get_bounty(&env, id).await?);
+    let r = call(
+        &env.contrib,
+        &env,
+        "check_merge",
+        json!({"bounty_id": id}),
+        0,
+    )
+    .await?;
+    assert_refused(&r, "the sponsor float cannot pay for this check");
+    assert_eq!(
+        (held(&env).await?, get_bounty(&env, id).await?),
+        before,
+        "the refusal changed nothing"
+    );
+    // A self-funded check pays out; both settlement callbacks are lost; reconcile recovers both.
+    let paid = merged_check(&env, id, 4, false).await?;
+    trace(
+        &env,
+        "empty float: a self-funded check pays out, callbacks lost",
+        &paid,
+        env.stranger.id(),
+    )
+    .await?;
+    let cvault = vault_of(&env, &env.contrib_keys).await?;
+    let mvault = vault_of(&env, &env.maint_keys).await?;
+    for (kind, who) in [("Payout", &env.contrib), ("BudgetReturn", &env.maint)] {
+        sleep_past_ns(&env, sstate(&env, id, kind).await?.2 + PARTY_DELAY_NS).await?;
+        let r = reconcile(&env, who, id, kind, 1).await?;
+        assert_eq!(answer(&r), "deposited", "{kind}");
+    }
+    assert_eq!(
+        held(&env).await?,
+        (REWARD + BUDGET, 0),
+        "only the expiring bounty is still held"
+    );
+    // The expiry refund still works, and every vault withdraws exactly.
+    let claim_by: u64 = get_bounty(&env, expiring).await?["claim_by"]
+        .as_str()
+        .unwrap()
+        .parse()?;
+    wait_past(&env, claim_by + 15 * 60).await?;
+    let r = call(
+        &env.stranger,
+        &env,
+        "settle",
+        json!({"bounty_id": expiring}),
+        0,
+    )
+    .await?;
+    assert!(r.is_success(), "{:?}", r.failures());
+    assert_eq!(settlement(&env, expiring, "Refund").await?["state"], "Done");
+    assert_eq!(held(&env).await?, (0, 0));
+    assert_eq!(
+        info(&env, &mvault).await?.available,
+        BUDGET + REWARD + BUDGET
+    );
+    let p0 = bal(&env, env.payee.id()).await?;
+    withdraw(
+        &env,
+        &env.contrib_keys.backup,
+        &cvault,
+        env.payee.id(),
+        REWARD,
+    )
+    .await?
+    .into_result()?;
+    withdraw(
+        &env,
+        &env.maint_keys.primary,
+        &mvault,
+        env.payee.id(),
+        REWARD + 2 * BUDGET,
+    )
+    .await?
+    .into_result()?;
+    assert_eq!(
+        bal(&env, env.payee.id()).await? - p0,
+        2 * REWARD + 2 * BUDGET
+    );
+    assert_eq!(u(&config(&env).await?["sponsor_float"]), 0);
+    env.save_trace("recovery-empty-float")?;
+    Ok(())
+}

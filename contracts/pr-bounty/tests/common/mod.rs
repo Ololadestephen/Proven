@@ -166,6 +166,17 @@ pub async fn setup_opts(
     contrib_name: &str,
     free: Option<u128>,
 ) -> anyhow::Result<Env> {
+    setup_full(contract_wasm, maint_name, contrib_name, free, FLOAT).await
+}
+
+/// Setup with a chosen sponsor float as well.
+pub async fn setup_full(
+    contract_wasm: &str,
+    maint_name: &str,
+    contrib_name: &str,
+    free: Option<u128>,
+    float: u128,
+) -> anyhow::Result<Env> {
     let sandbox = near_workspaces::sandbox().await?;
     let root = sandbox.root_account()?;
     let vault_code = wasm(VAULT_WASM)?;
@@ -226,7 +237,7 @@ pub async fn setup_opts(
         .into_result()?;
     sponsor
         .call(bounty.id(), "fund_sponsor")
-        .deposit(NearToken::from_yoctonear(FLOAT))
+        .deposit(NearToken::from_yoctonear(float))
         .transact()
         .await?
         .into_result()?;
