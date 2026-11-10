@@ -156,6 +156,21 @@ test("the review shows the repository, issue, suggested branch, deadlines, fees 
   assert.match(html, /Post and lock 0\.129 testnet NEAR/);
 });
 
+test("the review says that an on-time merge is refunded if verification stays unavailable", () => {
+  const html = render({ meta: ready, rewardText: "0.1" });
+  assert.match(
+    html,
+    /A failed look at GitHub changes nothing and can be repeated/,
+  );
+  assert.match(html, /cannot be read at all until 2026-/);
+  assert.match(html, /14 days after the checking window/);
+  assert.match(
+    html,
+    /refunded to you even if the pull request was merged on time/,
+  );
+  assert.match(html, /the refund is final/);
+});
+
 test("preview fees are labelled and the Post button cannot sign", () => {
   const html = render({ meta: ready, rewardText: "0.1" });
   assert.match(html, /Sandbox sample numbers for this preview/);

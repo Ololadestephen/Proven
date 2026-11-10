@@ -68,6 +68,7 @@ test("the link and the reward alone give a complete review", () => {
     claim_by: NOW + 7 * 86400,
     merge_deadline: NOW + 14 * 86400,
     checks_until: NOW + 14 * 86400 + 24 * 3600,
+    hard_refund_at: NOW + 28 * 86400 + 24 * 3600,
     claim_secs: 48 * 3600,
     grace_secs: 24 * 3600,
   });

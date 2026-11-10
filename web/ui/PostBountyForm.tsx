@@ -9,6 +9,7 @@ import {
 } from "./github-issue.ts";
 import {
   ADVANCED_DEFAULTS,
+  REFUND_CAP_SECS,
   duration,
   reviewPosting,
   signingBlock,
@@ -97,6 +98,14 @@ function Summary({ review }: { review: Review }) {
         {duration(d.claim_secs)}. The pull request must be merged before{" "}
         {utc(d.merge_deadline)}; merges are checked until {utc(d.checks_until)}{" "}
         ({duration(d.grace_secs)} grace).
+      </dd>
+      <dt>If checks fail</dt>
+      <dd>
+        A failed look at GitHub changes nothing and can be repeated. If the
+        merge cannot be read at all until {utc(d.hard_refund_at)} (
+        {duration(REFUND_CAP_SECS)} after the checking window), the reward is
+        refunded to you even if the pull request was merged on time, and the
+        refund is final.
       </dd>
       <dt>Fees</dt>
       <dd>

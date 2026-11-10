@@ -72,6 +72,8 @@ export interface Deadlines {
   claim_by: number;
   merge_deadline: number;
   checks_until: number;
+  /** The earliest the maintainer can be refunded without a definite look at the merge. */
+  hard_refund_at: number;
   claim_secs: number;
   grace_secs: number;
 }
@@ -104,6 +106,8 @@ const MAX_GRACE_SECS = 24 * 60 * 60;
 const MAX_DURATION_SECS = 30 * 24 * 60 * 60;
 const MIN_CLAIM_SECS = 60 * 60;
 const MAX_REF_BYTES = 255;
+/** How long past the checking window verification may stay unavailable before a refund opens. */
+export const REFUND_CAP_SECS = 14 * 24 * 60 * 60;
 
 /** A branch name git accepts, in the subset the contract also takes. */
 export function branchProblem(name: string): string | null {
@@ -264,6 +268,7 @@ export function reviewPosting(input: {
         claim_by: now + open,
         merge_deadline: now + merge,
         checks_until: now + merge + grace,
+        hard_refund_at: now + merge + grace + REFUND_CAP_SECS,
         claim_secs: claim,
         grace_secs: grace,
       },
