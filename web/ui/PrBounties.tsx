@@ -1,19 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Run, Wallet } from "./market-types.ts";
 import { NEAR } from "./market-types.ts";
-import { api, randomNonce, short } from "./market-client.ts";
-import { parseNearAmount } from "./near-amount.ts";
+import { api, short } from "./market-client.ts";
 import { COIN, OUTLAYER_API } from "./network.ts";
 import {
   base64,
   challenge as claimChallenge,
   claimMessage,
-  fromHex,
   hex,
-  postingMessage,
   signatureBytes,
   type KeyPair,
-  type PostTerms,
   type Signing,
 } from "./bounty-keys.ts";
 import {
@@ -22,9 +18,10 @@ import {
   type KeyConfirmState,
 } from "./key-confirm-state.ts";
 import { BackupSigner, KeyConfirm } from "./KeyConfirm.tsx";
-import { browserStore, loadCandidates, loadDraft } from "./key-draft.ts";
+import { browserStore, loadCandidates } from "./key-draft.ts";
 import { useKeyDraft } from "./use-key-draft.ts";
-import { postingAttachment } from "./bounty-costs.ts";
+import { PostBountyForm } from "./PostBountyForm.tsx";
+import { PREVIEW_FEES } from "./posting-review.ts";
 import { VaultPanel } from "./VaultPanel.tsx";
 import {
   STATUS_TEXT,
@@ -141,6 +138,38 @@ const nowSecs = () => Math.floor(Date.now() / 1000);
 /** The contract takes base64 signatures; a pasted one may be base58 or hex. */
 const sigB64 = (text: string) => base64(signatureBytes(text));
 
+/** The two-field posting form, with sample fees until the fees are approved. */
+function PostPreview({
+  config,
+  connected,
+  poster,
+}: {
+  config: Config;
+  connected: boolean;
+  poster: boolean;
+}) {
+  const limits = useMemo(
+    () => ({
+      max_reward: BigInt(config.max_reward),
+      room: BigInt(config.max_held) - BigInt(config.held),
+    }),
+    [config.max_reward, config.max_held, config.held],
+  );
+  const pilot = useMemo(
+    () => ({ repo: config.pilot_repo, repo_id: Number(config.pilot_repo_id) }),
+    [config.pilot_repo, config.pilot_repo_id],
+  );
+  return (
+    <PostBountyForm
+      limits={limits}
+      pilot={pilot}
+      fees={PREVIEW_FEES}
+      connected={connected}
+      poster={poster}
+    />
+  );
+}
+
 function Evidence({
   id,
   label,
@@ -165,291 +194,6 @@ export function SponsorNote({ config }: { config: Config }) {
       <code>{config.sponsor}</code>. The maintainer's {near(config.budget)}{" "}
       returns in full to the maintainer's vault.
     </>
-  );
-}
-
-function PostBounty({
-  contract,
-  config,
-  wallet,
-  run,
-  busy,
-  done,
-}: {
-  contract: string;
-  config: Config;
-  wallet: Wallet;
-  run: Run;
-  busy: boolean;
-  done: () => void;
-}) {
-  const [form, setForm] = useState({
-    reward: "0.1",
-    issue: "",
-    base_ref: "main",
-    github_id: "",
-    claim_hours: "24",
-    bind_hours: "48",
-    merge_hours: "168",
-    grace_minutes: "60",
-  });
-  // Proofs prepared before the backup account signed come back with the terms they cover.
-  const [frozen, setFrozen] = useState<{
-    terms: PostTerms;
-    nonce: Uint8Array;
-  } | null>(() => {
-    const d = loadDraft(browserStore(), contract, "post", nowSecs());
-    return d && d.state.actor === wallet.accountId && d.frozen
-      ? { terms: d.frozen.terms as PostTerms, nonce: fromHex(d.frozen.nonce) }
-      : null;
-  });
-  const postingText = (state: KeyConfirmState, signing: Signing) => {
-    const pair = keyPair(state);
-    return frozen && pair && state.actor && state.expiresAt
-      ? postingMessage(
-          config.network,
-          contract,
-          state.actor,
-          frozen.nonce,
-          frozen.terms,
-          pair,
-          state.expiresAt,
-          signing,
-        )
-      : "";
-  };
-  const draft = useKeyDraft({
-    contract,
-    scope: "post",
-    role: "maintainer",
-    connected: wallet.accountId,
-    messages: (state) =>
-      postingText(state, "primary")
-        ? {
-            primary: postingText(state, "primary"),
-            backup: postingText(state, "backup"),
-          }
-        : null,
-    frozen: frozen ? { terms: frozen.terms, nonce: hex(frozen.nonce) } : null,
-  });
-  const { state: keys, dispatch } = draft;
-  const set =
-    (key: keyof typeof form) => (event: { target: { value: string } }) => {
-      setForm({ ...form, [key]: event.target.value });
-      setFrozen(null);
-      dispatch({ type: "clear" });
-    };
-  const budget = BigInt(config.budget);
-  const storage = BigInt(config.storage_deposit);
-  const room = BigInt(config.max_held) - BigInt(config.held);
-  let reward = 0n;
-  try {
-    reward = parseNearAmount(form.reward, BigInt(config.max_reward));
-  } catch {
-    reward = 0n;
-  }
-  const complete =
-    reward > 0n &&
-    reward + budget <= room &&
-    /^[0-9]{1,10}$/.test(form.issue) &&
-    /^[0-9]{1,20}$/.test(form.github_id.trim()) &&
-    form.base_ref.trim() !== "";
-  /** Fixes the terms with absolute deadlines and a fresh nonce that the contract has not seen. */
-  async function freeze() {
-    const now = nowSecs();
-    const hours = (h: string) => String(now + Math.round(Number(h) * 3600));
-    const nonce = randomNonce();
-    const { used } = await api<{ used: boolean }>(
-      `${PATH}/nonce/${wallet.accountId}/${hex(nonce)}`,
-    );
-    if (used) return false;
-    setFrozen({
-      nonce,
-      terms: {
-        reward: reward.toString(),
-        repo: config.pilot_repo,
-        repo_id: config.pilot_repo_id,
-        issue: Number(form.issue),
-        base_ref: form.base_ref.trim(),
-        contributor_github_id: form.github_id.trim(),
-        claim_by: hours(form.claim_hours),
-        bind_by: hours(form.bind_hours),
-        merge_deadline: hours(form.merge_hours),
-        grace_secs: String(Math.round(Number(form.grace_minutes) * 60)),
-      },
-    });
-    return true;
-  }
-  const check = submitCheck(keys, wallet.accountId, nowSecs());
-  const submit = () =>
-    run("Posting the bounty", async () => {
-      const now = submitCheck(keys, wallet.accountId, nowSecs());
-      const pair = keyPair(keys);
-      if (!now.ok || !frozen || !pair) {
-        if (!now.ok) dispatch({ type: "refused", check: now });
-        return;
-      }
-      const { primary, backup } = keys.proofs;
-      await wallet.call({
-        receiver: contract,
-        method: "post_bounty",
-        args: {
-          terms: frozen.terms,
-          keys: pair,
-          proof: {
-            nonce: hex(frozen.nonce),
-            expires_at: String(keys.expiresAt),
-            primary_signature: sigB64(primary?.signature ?? ""),
-            backup_signature: sigB64(backup?.signature ?? ""),
-          },
-        },
-        deposit: postingAttachment(config, BigInt(frozen.terms.reward)).total,
-        gas: 100n * TGAS,
-      });
-      draft.finish();
-      setFrozen(null);
-      done();
-    });
-  return (
-    <section className="workspace-card">
-      <h2>Post a bounty</h2>
-      <p>
-        You are the maintainer. You choose the contributor by their numeric
-        GitHub id, nominate their pull request, and decide whether to merge it.
-        The contract pays their vault if a check finds it merged into{" "}
-        <code>{form.base_ref || "the branch"}</code> before the deadline.
-      </p>
-      <p>
-        This pilot pays only for issues of{" "}
-        <a
-          href={`https://github.com/${config.pilot_repo}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {config.pilot_repo}
-        </a>{" "}
-        (GitHub repository id {config.pilot_repo_id}), fixed when the contract
-        was deployed.
-      </p>
-      <div className="bounty-form">
-        <label>
-          Issue number
-          <input
-            value={form.issue}
-            onChange={set("issue")}
-            inputMode="numeric"
-          />
-        </label>
-        <label>
-          Target branch
-          <input value={form.base_ref} onChange={set("base_ref")} />
-        </label>
-        <label>
-          Contributor's GitHub user id
-          <input
-            value={form.github_id}
-            onChange={set("github_id")}
-            inputMode="numeric"
-          />
-        </label>
-        <label>
-          Reward ({COIN}, at most {near(config.max_reward)})
-          <input
-            value={form.reward}
-            onChange={set("reward")}
-            inputMode="decimal"
-          />
-        </label>
-        <label>
-          Claim within (hours)
-          <input
-            value={form.claim_hours}
-            onChange={set("claim_hours")}
-            inputMode="decimal"
-          />
-        </label>
-        <label>
-          Nominate within (hours)
-          <input
-            value={form.bind_hours}
-            onChange={set("bind_hours")}
-            inputMode="decimal"
-          />
-        </label>
-        <label>
-          Merge before (hours from now)
-          <input
-            value={form.merge_hours}
-            onChange={set("merge_hours")}
-            inputMode="decimal"
-          />
-        </label>
-        <label>
-          Grace for checking (minutes, 10 to 1440)
-          <input
-            value={form.grace_minutes}
-            onChange={set("grace_minutes")}
-            inputMode="numeric"
-          />
-        </label>
-      </div>
-      <KeyConfirm
-        wallet={wallet}
-        contract={contract}
-        vaultCodeHash={config.vault_code_hash}
-        role="maintainer"
-        state={keys}
-        dispatch={dispatch}
-        busy={busy}
-        canPrepare={complete}
-        onPrepare={freeze}
-        candidates={loadCandidates(browserStore(), contract)}
-        message={(pair, signing, actor, expiresAt) =>
-          postingText(
-            {
-              ...keys,
-              primary: pair.primary,
-              backup: pair.backup,
-              actor,
-              expiresAt,
-            },
-            signing,
-          )
-        }
-      />
-      {frozen ? (
-        <p>
-          The proofs cover issue #{frozen.terms.issue} on{" "}
-          <code>{frozen.terms.base_ref}</code>, reward{" "}
-          {near(frozen.terms.reward)}, claim by {utc(frozen.terms.claim_by)},
-          merge before {utc(frozen.terms.merge_deadline)}. Editing the form asks
-          for new proofs.
-        </p>
-      ) : null}
-      <p>
-        You attach {near(reward + budget + storage)}: the reward {near(reward)},{" "}
-        {near(budget)} reserved for merge checks, which returns in full to your
-        vault (<SponsorNote config={config} />
-        ), and {near(storage)} for storage, which pays for the record and the
-        vaults and is not returned. The contract can reserve{" "}
-        {near(room > 0n ? room : 0n)} more; payouts and refunds count until
-        their deposit into the vault is confirmed.
-      </p>
-      <button
-        type="button"
-        className="button button-primary"
-        disabled={busy || !frozen || !check.ok}
-        onClick={() => void submit()}
-      >
-        Post and lock{" "}
-        {near(
-          postingAttachment(
-            config,
-            frozen ? BigInt(frozen.terms.reward) : reward,
-          ).total,
-        )}
-      </button>
-    </section>
   );
 }
 
@@ -1138,16 +882,8 @@ export function PrBounties({
       {wallet ? (
         <BackupSigner wallet={wallet} contract={contract} busy={busy} />
       ) : null}
-      {wallet && poster && !config.paused ? (
-        <PostBounty
-          key={wallet.accountId}
-          contract={contract}
-          config={config}
-          wallet={wallet}
-          run={run}
-          busy={busy}
-          done={done}
-        />
+      {!config.paused ? (
+        <PostPreview config={config} connected={!!wallet} poster={poster} />
       ) : null}
       {bounties.length === 0 ? (
         <p className="workspace-empty">No bounties yet.</p>
