@@ -1,0 +1,13 @@
+[package]
+name = "proven-proto-vault"
+version = "0.1.0"
+edition = "2021"
+description = "Prototype NEP-616 vault: holds NEAR for one recipient and keeps durable per-issuer settlement records"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }

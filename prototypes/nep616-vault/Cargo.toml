@@ -1,0 +1,16 @@
+[workspace]
+# Disposable sandbox prototype of NEP-616 vault settlement. Not used by the production PR bounty
+# contract or the web page; nothing here is deployed or published.
+members = ["vault", "escrow", "actor", "harness"]
+resolver = "2"
+
+[workspace.dependencies]
+near-sdk = { version = "5.30", features = ["deterministic-account-ids"] }
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true

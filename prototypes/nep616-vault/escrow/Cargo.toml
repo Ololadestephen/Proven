@@ -1,0 +1,13 @@
+[package]
+name = "proven-proto-escrow"
+version = "0.1.0"
+edition = "2021"
+description = "Prototype escrow that settles into NEP-616 vaults and reconciles from the vault's sealed record"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }

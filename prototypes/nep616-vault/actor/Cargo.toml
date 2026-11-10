@@ -1,0 +1,13 @@
+[package]
+name = "proven-proto-actor"
+version = "0.1.0"
+edition = "2021"
+description = "Sandbox helper: sends the NEP-616 and global-contract actions near-workspaces cannot send itself"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }
