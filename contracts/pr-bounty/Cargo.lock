@@ -768,6 +768,7 @@ version = "2.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
 dependencies = [
+ "pkcs8",
  "signature",
 ]
 
@@ -780,8 +781,10 @@ dependencies = [
  "curve25519-dalek",
  "ed25519",
  "rand_core 0.6.4",
+ "serde",
  "sha2 0.10.9",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -2633,11 +2636,19 @@ name = "proven-pr-bounty"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "bs58 0.5.1",
+ "ed25519-dalek",
+ "near-global-contracts",
  "near-sdk",
  "near-workspaces",
  "proven-pr-bounty-verifier",
+ "proven-vault",
+ "rand_chacha",
  "reqwest 0.12.28",
  "serde_json",
+ "sha2 0.10.9",
+ "sha3 0.10.9",
  "tokio",
 ]
 
@@ -2649,6 +2660,10 @@ dependencies = [
  "serde_json",
  "wasi 0.13.3+wasi-0.2.2",
 ]
+
+[[package]]
+name = "proven-vault"
+version = "1.0.0"
 
 [[package]]
 name = "quinn"

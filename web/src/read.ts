@@ -48,12 +48,14 @@ export async function readJson(
 }
 
 const RPC = "https://test.rpc.fastnear.com";
-export async function rpc(
-  method: "block" | "query",
+export type RpcMethod = "block" | "query" | "EXPERIMENTAL_tx_status";
+/** The whole JSON-RPC answer, so a caller can tell a missing account from a failed read. */
+export async function rpcAnswer(
+  method: RpcMethod,
   params: unknown,
   transport: typeof fetch,
 ) {
-  const response = object(
+  return object(
     await readJson(RPC, transport, {
       jsonrpc: "2.0",
       id: "proven-read",
@@ -61,6 +63,13 @@ export async function rpc(
       params,
     }),
   );
+}
+export async function rpc(
+  method: RpcMethod,
+  params: unknown,
+  transport: typeof fetch,
+) {
+  const response = await rpcAnswer(method, params, transport);
   if (response.error || !("result" in response))
     throw new ReadError(
       "Testnet RPC could not return this snapshot. No transaction was sent.",

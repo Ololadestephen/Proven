@@ -2,14 +2,14 @@
 name = "proven-mock-outlayer-reply"
 version = "0.1.0"
 edition = "2021"
-description = "Test double of the OutLayer contract that answers request_execution with bytes the test sets, used only by the PR verify probe's sandbox tests"
+description = "Test double of the OutLayer contract that answers request_execution with bytes the test sets, used only by the PR verify probe and PR bounty sandbox tests"
 license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-near-sdk = "5.30"
+near-sdk = { version = "5.30", features = ["deterministic-account-ids"] }
 
 [profile.release]
 codegen-units = 1

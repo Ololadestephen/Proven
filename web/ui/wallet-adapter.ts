@@ -104,29 +104,36 @@ export function adaptWallet(
       return hash;
     },
     async signForRelay(message) {
-      await checkAccount();
       const nonce = randomNonce();
-      const result = await chosen.signMessage({
-        network: NETWORK,
-        signerId: accountId,
-        message,
-        recipient: RELAY_RECIPIENT,
-        nonce,
-      });
-      if (
-        !result ||
-        result.accountId !== accountId ||
-        !result.publicKey ||
-        !result.signature
-      )
-        throw new Error(
-          "The wallet returned a signature for a different or missing account.",
-        );
       return {
-        public_key: result.publicKey,
-        signature_base64: result.signature,
+        ...(await signNep413(message, RELAY_RECIPIENT, nonce)),
         nonce_base64: b64(nonce),
       };
     },
+    signNep413,
   };
+  async function signNep413(
+    message: string,
+    recipient: string,
+    nonce: Uint8Array,
+  ) {
+    await checkAccount();
+    const result = await chosen.signMessage({
+      network: NETWORK,
+      signerId: accountId,
+      message,
+      recipient,
+      nonce,
+    });
+    if (
+      !result ||
+      result.accountId !== accountId ||
+      !result.publicKey ||
+      !result.signature
+    )
+      throw new Error(
+        "The wallet returned a signature for a different or missing account.",
+      );
+    return { public_key: result.publicKey, signature_base64: result.signature };
+  }
 }

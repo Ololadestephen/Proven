@@ -46,6 +46,12 @@ export interface Wallet {
     signature_base64: string;
     nonce_base64: string;
   }>;
+  /** NEP-413 message signing with an explicit recipient and 32-byte nonce. */
+  signNep413(
+    message: string,
+    recipient: string,
+    nonce: Uint8Array,
+  ): Promise<{ public_key: string; signature_base64: string }>;
   signOut(): Promise<void>;
 }
 
