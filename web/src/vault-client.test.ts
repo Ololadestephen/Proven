@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fromHex, hex } from "../ui/bounty-keys.ts";
+import { adaptWallet } from "../ui/wallet-adapter.ts";
+import type { NearWalletBase } from "@hot-labs/near-connect";
 import {
   checkWithdrawal,
   chooseDeadline,
@@ -15,6 +17,7 @@ import {
   encodeInfo,
   encodeRecord,
   mayAuthorizeAgain,
+  sendWithdrawal,
   slotArgs,
   withdrawArgs,
   type Withdrawal,
@@ -34,25 +37,54 @@ const recorded = (name: string) =>
     status: unknown;
     info_after_hex?: string;
   };
-const signed = (r: ReturnType<typeof recorded>) => ({
+type Fixture = ReturnType<typeof recorded>;
+const expected = (r: Fixture) => ({
+  vault: r.vault,
   to: r.to,
   amount: BigInt(r.amount),
   n: BigInt(r.n),
 });
+type Tx = any;
+const clone = (r: Fixture): Tx => structuredClone(r.status);
+const pendingKind = (outcome: { kind: string }) => outcome.kind;
+/** The transfer receipt from the vault to the destination, and the refund back to the vault. */
+const transferOf = (r: Fixture, tx: Tx) =>
+  tx.receipts.find(
+    (x: Tx) => x.predecessor_id === r.vault && x.receiver_id === r.to,
+  );
+const refundOf = (r: Fixture, tx: Tx) =>
+  tx.receipts.find(
+    (x: Tx) => x.predecessor_id === "system" && x.receiver_id === r.vault,
+  );
+const outcomeOf = (tx: Tx, id: string) =>
+  tx.receipts_outcome.find((o: Tx) => o.id === id);
+const withArgs = (tx: Tx, args: Record<string, string>) => {
+  tx.transaction.actions[0].FunctionCall.args = Buffer.from(
+    JSON.stringify(args),
+  ).toString("base64");
+  return tx;
+};
 
-test("a succeeded transfer receipt is delivered, with amount and destination from the receipt", () => {
+test("a finalized transfer tied to the exact withdraw call is delivered", () => {
   const r = recorded("withdrawal-delivered");
-  assert.deepEqual(classifyWithdrawal(r.status, r.vault, signed(r)), {
+  assert.deepEqual(classifyWithdrawal(r.status, expected(r)), {
     kind: "delivered",
     to: r.to,
     amount: BigInt(r.amount),
     n: 1n,
   });
+  assert.equal(
+    classifyWithdrawal(r.status, {
+      ...expected(r),
+      sender: "relayer.test.near",
+    }).kind,
+    "delivered",
+  );
 });
 
-test("a failed transfer receipt is returned to the vault, and the next number is offered", () => {
+test("a failed transfer is returned only with its finalized refund to the vault", () => {
   const r = recorded("withdrawal-returned");
-  assert.deepEqual(classifyWithdrawal(r.status, r.vault, signed(r)), {
+  assert.deepEqual(classifyWithdrawal(r.status, expected(r)), {
     kind: "returned",
     amount: BigInt(r.amount),
     n: 0n,
@@ -62,50 +94,236 @@ test("a failed transfer receipt is returned to the vault, and the next number is
 
 test("a withdraw the vault refused keeps its number and names the reason", () => {
   const r = recorded("withdrawal-refused");
-  const outcome = classifyWithdrawal(r.status, r.vault, signed(r));
+  const outcome = classifyWithdrawal(r.status, expected(r));
   assert.equal(outcome.kind, "refused");
   assert.ok(
     outcome.kind === "refused" && outcome.reason.includes("bad signature"),
   );
   assert.ok(outcome.kind === "refused" && outcome.n === 0n);
+  // A refusal that is not final yet is pending, not refused.
+  const early = clone(r);
+  early.final_execution_status = "EXECUTED_OPTIMISTIC";
+  assert.equal(classifyWithdrawal(early, expected(r)).kind, "pending");
 });
 
-test("a missing or partial outcome is unknown and blocks a new authorization", () => {
+// Regression (review finding 1, first failure, reproduced on 5c72954): evidence that does not
+// match the signed withdrawal, or is not final, was shown as delivered.
+test("delivered needs final evidence matching the signed vault, destination and amount", () => {
   const r = recorded("withdrawal-delivered");
-  const status = r.status as {
-    receipts_outcome: { outcome: { status: unknown } }[];
-  };
-  const partial = structuredClone(status);
-  partial.receipts_outcome = partial.receipts_outcome.slice(0, 1);
-  for (const answer of [null, {}, { receipts: [] }, partial])
-    assert.deepEqual(classifyWithdrawal(answer, r.vault, signed(r)), {
-      kind: "unknown",
-    });
-  const pending = structuredClone(status);
-  (
-    pending.receipts_outcome[1] as { outcome: { status: unknown } }
-  ).outcome.status = {};
-  assert.deepEqual(classifyWithdrawal(pending, r.vault, signed(r)), {
-    kind: "unknown",
-  });
-  // Another contract's transaction is never read as this vault's withdrawal.
-  assert.deepEqual(
-    classifyWithdrawal(r.status, `0s${"0".repeat(40)}`, signed(r)),
-    {
-      kind: "unknown",
-    },
-  );
-  // Unknown with the same number and an open deadline: no new authorization yet.
+  const cases: [string, (tx: Tx) => Tx][] = [
+    [
+      "transfer of another amount",
+      (tx) => {
+        transferOf(r, tx).receipt.Action.actions[0].Transfer.deposit = "1";
+        return tx;
+      },
+    ],
+    [
+      "optimistic answer",
+      (tx) => ({ ...tx, final_execution_status: "EXECUTED_OPTIMISTIC" }),
+    ],
+    [
+      "included only",
+      (tx) => ({ ...tx, final_execution_status: "INCLUDED_FINAL" }),
+    ],
+    [
+      "call arguments of another withdrawal",
+      (tx) =>
+        withArgs(tx, {
+          to: r.to,
+          amount: "1",
+          n: "7",
+          deadline: "1",
+          signature: "00",
+        }),
+    ],
+    [
+      "call arguments to another destination",
+      (tx) =>
+        withArgs(tx, {
+          to: "other.test.near",
+          amount: r.amount,
+          n: r.n,
+          deadline: "1",
+          signature: "00",
+        }),
+    ],
+    [
+      "another method",
+      (tx) => {
+        tx.transaction.actions[0].FunctionCall.method_name = "deposit";
+        return tx;
+      },
+    ],
+    [
+      "transfer not created by the call",
+      (tx) => {
+        const call = outcomeOf(
+          tx,
+          tx.transaction_outcome.outcome.receipt_ids[0],
+        );
+        const id = transferOf(r, tx).receipt_id;
+        call.outcome.receipt_ids = call.outcome.receipt_ids.filter(
+          (x: string) => x !== id,
+        );
+        return tx;
+      },
+    ],
+    [
+      "transfer outcome missing",
+      (tx) => {
+        const id = transferOf(r, tx).receipt_id;
+        tx.receipts_outcome = tx.receipts_outcome.filter(
+          (o: Tx) => o.id !== id,
+        );
+        return tx;
+      },
+    ],
+    [
+      "transfer outcome without a final status",
+      (tx) => {
+        outcomeOf(tx, transferOf(r, tx).receipt_id).outcome.status = {
+          Unknown: null,
+        };
+        return tx;
+      },
+    ],
+    [
+      "a second transfer from the call",
+      (tx) => {
+        const extra = structuredClone(transferOf(r, tx));
+        extra.receipt_id = "Extra111111111111111111111111111111111111111";
+        tx.receipts.push(extra);
+        tx.receipts_outcome.push({
+          ...structuredClone(outcomeOf(tx, transferOf(r, tx).receipt_id)),
+          id: extra.receipt_id,
+        });
+        outcomeOf(
+          tx,
+          tx.transaction_outcome.outcome.receipt_ids[0],
+        ).outcome.receipt_ids.push(extra.receipt_id);
+        return tx;
+      },
+    ],
+    [
+      "call outcome on another account",
+      (tx) => {
+        outcomeOf(
+          tx,
+          tx.transaction_outcome.outcome.receipt_ids[0],
+        ).outcome.executor_id = "other.test.near";
+        return tx;
+      },
+    ],
+    ["malformed receipts", (tx) => ({ ...tx, receipts: "x" })],
+    [
+      "malformed arguments",
+      (tx) => {
+        tx.transaction.actions[0].FunctionCall.args = "not base64 json";
+        return tx;
+      },
+    ],
+  ];
+  for (const [label, mutate] of cases)
+    assert.equal(
+      pendingKind(classifyWithdrawal(mutate(clone(r)), expected(r))),
+      "pending",
+      label,
+    );
+  for (const wrong of [
+    { ...expected(r), amount: BigInt(r.amount) - 1n },
+    { ...expected(r), to: "other.test.near" },
+    { ...expected(r), vault: `0s${"0".repeat(40)}` },
+    { ...expected(r), n: 0n },
+    { ...expected(r), sender: "stranger.test.near" },
+  ])
+    assert.equal(classifyWithdrawal(r.status, wrong).kind, "pending");
+  for (const answer of [null, {}, { receipts: [] }, "text", []])
+    assert.equal(classifyWithdrawal(answer, expected(r)).kind, "pending");
+});
+
+// Regression (review finding 1, second failure, reproduced on 5c72954): a failed transfer was
+// shown as returned before the refund to the vault had finalized.
+test("returned waits for the matching refund to the vault to finalize", () => {
+  const r = recorded("withdrawal-returned");
+  const cases: [string, (tx: Tx) => Tx][] = [
+    [
+      "refund not executed yet, answer optimistic",
+      (tx) => {
+        const id = refundOf(r, tx).receipt_id;
+        tx.receipts_outcome = tx.receipts_outcome.filter(
+          (o: Tx) => o.id !== id,
+        );
+        tx.receipts = tx.receipts.filter((x: Tx) => x.receipt_id !== id);
+        tx.final_execution_status = "EXECUTED_OPTIMISTIC";
+        return tx;
+      },
+    ],
+    [
+      "refund receipt without its outcome",
+      (tx) => {
+        const id = refundOf(r, tx).receipt_id;
+        tx.receipts_outcome = tx.receipts_outcome.filter(
+          (o: Tx) => o.id !== id,
+        );
+        return tx;
+      },
+    ],
+    [
+      "refund for another amount",
+      (tx) => {
+        refundOf(r, tx).receipt.Action.actions[0].Transfer.deposit = "1";
+        return tx;
+      },
+    ],
+    [
+      "refund to another account",
+      (tx) => {
+        refundOf(r, tx).receiver_id = "other.test.near";
+        return tx;
+      },
+    ],
+    [
+      "refund not created by the failed transfer",
+      (tx) => {
+        const t = outcomeOf(tx, transferOf(r, tx).receipt_id);
+        const id = refundOf(r, tx).receipt_id;
+        t.outcome.receipt_ids = t.outcome.receipt_ids.filter(
+          (x: string) => x !== id,
+        );
+        return tx;
+      },
+    ],
+    [
+      "refund failed",
+      (tx) => {
+        outcomeOf(tx, refundOf(r, tx).receipt_id).outcome.status = {
+          Failure: {},
+        };
+        return tx;
+      },
+    ],
+    ["not final", (tx) => ({ ...tx, final_execution_status: "EXECUTED" })],
+  ];
+  for (const [label, mutate] of cases)
+    assert.equal(
+      classifyWithdrawal(mutate(clone(r)), expected(r)).kind,
+      "pending",
+      label,
+    );
+});
+
+test("a pending withdrawal blocks a new authorization until its number moves or it expires", () => {
   assert.equal(
-    mayAuthorizeAgain({ n: 1n, deadline: 2000, outcome: "unknown" }, 1n, 1999),
+    mayAuthorizeAgain({ n: 1n, deadline: 2000, outcome: "pending" }, 1n, 1999),
     false,
   );
   assert.equal(
-    mayAuthorizeAgain({ n: 1n, deadline: 2000, outcome: "unknown" }, 2n, 1999),
+    mayAuthorizeAgain({ n: 1n, deadline: 2000, outcome: "pending" }, 2n, 1999),
     true,
   );
   assert.equal(
-    mayAuthorizeAgain({ n: 1n, deadline: 2000, outcome: "unknown" }, 1n, 2000),
+    mayAuthorizeAgain({ n: 1n, deadline: 2000, outcome: "pending" }, 1n, 2000),
     true,
   );
   assert.equal(
@@ -207,4 +425,92 @@ test("the CLI fallback sends the same JSON arguments", () => {
     deadline: "1000600",
     signature: "01".repeat(64),
   });
+});
+
+// Regression (review finding 1): a wallet that reports a failure or an incomplete outcome still
+// names the transaction it sent; the hash must survive so the page can re-check it.
+const HASH = "8proHTW9m6xZGAYZ82PFx3CsuaNY7LadZNL1g8dfAuS2";
+const fakeWallet = (outcome: unknown, thrown?: unknown) =>
+  ({
+    manifest: {
+      name: "Fake wallet",
+      features: { testnet: true, signMessage: true },
+    },
+    getAccounts: async () => [{ accountId: "relayer.testnet" }],
+    signAndSendTransaction: async () => {
+      if (thrown) throw thrown;
+      return outcome;
+    },
+  }) as unknown as NearWalletBase;
+
+test("a wallet failure that still returns a hash keeps the hash for the re-check", async () => {
+  const w = { ...base, to: "payee.testnet" };
+  const sig = new Uint8Array(64).fill(1);
+  const cases: [string, NearWalletBase][] = [
+    [
+      "failure outcome",
+      fakeWallet({
+        status: { Failure: { ActionError: {} } },
+        transaction: { hash: HASH },
+      }),
+    ],
+    [
+      "incomplete outcome",
+      fakeWallet({ status: {}, transaction: { hash: HASH } }),
+    ],
+    ["outcome without a status", fakeWallet({ transaction: { hash: HASH } })],
+    [
+      "wallet error naming the hash",
+      fakeWallet(null, { message: "timeout", transactionHash: HASH }),
+    ],
+  ];
+  for (const [label, chosen] of cases) {
+    const wallet = adaptWallet(chosen, "relayer.testnet", async () => {});
+    const sent = await sendWithdrawal(wallet, w, sig);
+    assert.equal(sent.hash, HASH, label);
+    assert.ok(sent.error, `${label}: the failure is still reported`);
+  }
+  // A success keeps its hash and reports no error.
+  const ok = adaptWallet(
+    fakeWallet({ status: { SuccessValue: "" }, transaction: { hash: HASH } }),
+    "relayer.testnet",
+    async () => {},
+  );
+  assert.deepEqual(await sendWithdrawal(ok, w, sig), {
+    hash: HASH,
+    error: null,
+  });
+  // A wallet error with no usable hash gives none, and nothing is invented.
+  const bare = adaptWallet(
+    fakeWallet(null, { message: "rejected", transactionHash: "not-a-hash" }),
+    "relayer.testnet",
+    async () => {},
+  );
+  const none = await sendWithdrawal(bare, w, sig);
+  assert.equal(none.hash, null);
+  assert.ok(none.error);
+});
+
+test("the call sent is the vault's JSON withdraw with no deposit", async () => {
+  const calls: unknown[] = [];
+  const sent = await sendWithdrawal(
+    {
+      async call(c) {
+        calls.push(c);
+        return { transaction_hash: HASH };
+      },
+    },
+    base,
+    new Uint8Array(64).fill(2),
+  );
+  assert.equal(sent.hash, HASH);
+  assert.deepEqual(calls, [
+    {
+      receiver: base.vault,
+      method: "withdraw",
+      args: JSON.parse(withdrawArgs(base, new Uint8Array(64).fill(2))),
+      deposit: 0n,
+      gas: 30n * 10n ** 12n,
+    },
+  ]);
 });

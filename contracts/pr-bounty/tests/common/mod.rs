@@ -41,7 +41,7 @@ pub const NEAR: u128 = 1000 * MILLI;
 /// The proposed pilot reward.
 pub const REWARD: u128 = 50 * MILLI;
 pub const BUDGET: u128 = 30 * MILLI;
-pub const STORAGE: u128 = 20 * MILLI;
+pub const STORAGE: u128 = 29 * MILLI;
 pub const RUN: u128 = 10 * MILLI;
 pub const RECONCILE: u128 = 10 * MILLI;
 pub const DEPOSIT_FEE: u128 = 6 * MILLI;
@@ -135,6 +135,37 @@ pub fn key_proof(key: &SigningKey, message: &str, contract: &str) -> String {
     ))
 }
 
+/// Creates `name` under the root with exactly `balance`, deploys `code` and calls `new`, all in
+/// one transaction the root signs and pays for.
+async fn create_with_code(
+    sandbox: &Worker<Sandbox>,
+    root: &Account,
+    name: &str,
+    balance: u128,
+    code: &[u8],
+    init: &Value,
+) -> anyhow::Result<Contract> {
+    let id: AccountId = format!("{name}.{}", root.id()).parse()?;
+    let key = SecretKey::from_random(KeyType::ED25519);
+    root.batch(&id)
+        .create_account()
+        .transfer(NearToken::from_yoctonear(balance))
+        .add_key(
+            key.public_key(),
+            near_workspaces::types::AccessKey::full_access(),
+        )
+        .deploy(code)
+        .call(
+            near_workspaces::operations::Function::new("new")
+                .args_json(init.clone())
+                .gas(Gas::from_tgas(100)),
+        )
+        .transact()
+        .await?
+        .into_result()?;
+    Ok(Contract::from_secret_key(id, key, sandbox))
+}
+
 async fn sub(root: &Account, name: &str, near: u128) -> anyhow::Result<Account> {
     Ok(root
         .create_subaccount(name)
@@ -207,28 +238,31 @@ pub async fn setup_full(
     let payee = sub(&root, "payee", NEAR).await?;
     let fault_stranger = sub(&root, "fault-stranger", 5 * NEAR).await?;
     let code = wasm(contract_wasm)?;
-    let start = if free.is_some() {
-        (code.len() as u128 + 3_500) * BYTE
-    } else {
-        6 * NEAR
+    let init = json!({
+        "owner": owner.id(), "outlayer": outlayer.id(), "network": "testnet",
+        "verifier_url": URL, "verifier_hash": HASH, "pilot_repo": REPO, "pilot_repo_id": REPO_ID.to_string(),
+        "vault_code_hash": b58(&code_hash), "sponsor": sponsor.id(),
+        "max_reward": (2 * NEAR).to_string(), "max_held": (5 * NEAR).to_string(), "max_open_per_buyer": 5,
+        "max_sponsor_float": (100 * MILLI).to_string(), "max_sponsor_spent": (200 * MILLI).to_string(),
+    });
+    // With `free`, the contract account holds exactly its storage plus `free` (plus the float): a
+    // probe account of the same name length measures the storage after init and the allowlist
+    // entry, and the root account pays every gas cost of creating the real one.
+    let start = match free {
+        None => 6 * NEAR,
+        Some(target) => {
+            let probe = create_with_code(&sandbox, &root, "bprobe", 6 * NEAR, &code, &init).await?;
+            owner
+                .call(probe.id(), "add_poster")
+                .args_json(json!({"account": maint.id()}))
+                .transact()
+                .await?
+                .into_result()?;
+            sandbox.fast_forward(2).await?;
+            u128::from(sandbox.view_account(probe.id()).await?.storage_usage) * BYTE + target
+        }
     };
-    let bounty = sub(&root, "bounty", start)
-        .await?
-        .deploy(&code)
-        .await?
-        .into_result()?;
-    bounty
-        .call("new")
-        .args_json(json!({
-            "owner": owner.id(), "outlayer": outlayer.id(), "network": "testnet",
-            "verifier_url": URL, "verifier_hash": HASH, "pilot_repo": REPO, "pilot_repo_id": REPO_ID.to_string(),
-            "vault_code_hash": b58(&code_hash), "sponsor": sponsor.id(),
-            "max_reward": (2 * NEAR).to_string(), "max_held": (5 * NEAR).to_string(), "max_open_per_buyer": 5,
-            "max_sponsor_float": (100 * MILLI).to_string(), "max_sponsor_spent": (200 * MILLI).to_string(),
-        }))
-        .transact()
-        .await?
-        .into_result()?;
+    let bounty = create_with_code(&sandbox, &root, "bounty", start, &code, &init).await?;
     owner
         .call(bounty.id(), "add_poster")
         .args_json(json!({"account": maint.id()}))
@@ -243,10 +277,10 @@ pub async fn setup_full(
         .into_result()?;
     if let Some(target) = free {
         let now: u128 = u(&bounty.view("get_free_balance").await?.json()?);
-        assert!(now < target, "start balance too high: free {now}");
-        root.transfer_near(bounty.id(), NearToken::from_yoctonear(target - now))
-            .await?
-            .into_result()?;
+        assert_eq!(
+            now, target,
+            "the contract's spare balance is exactly the target"
+        );
     }
     let status: Value = reqwest::Client::new()
         .post(sandbox.rpc_addr())
@@ -640,12 +674,23 @@ pub fn gist_reply(env: &Env, bounty: u64, seq: u64) -> String {
 }
 
 pub fn pull_reply(env: &Env, bounty: u64, seq: u64, merged_at: Option<u64>) -> String {
+    pull_reply_into(env, bounty, seq, merged_at, &env.base_ref)
+}
+
+/// A pull answer reporting the pull request against `base_ref`.
+pub fn pull_reply_into(
+    env: &Env,
+    bounty: u64,
+    seq: u64,
+    merged_at: Option<u64>,
+    base_ref: &str,
+) -> String {
     let facts = verifier::PullFacts {
         repo_id: REPO_ID,
         pr_id: PR_ID + bounty,
         pr_number: PR,
         author_id: GH,
-        base_ref: env.base_ref.clone(),
+        base_ref: base_ref.to_string(),
         state: if merged_at.is_some() {
             "closed"
         } else {
@@ -1145,4 +1190,14 @@ pub fn save_fixture(name: &str, value: &Value) -> anyhow::Result<()> {
         serde_json::to_string_pretty(value)? + "\n",
     )?;
     Ok(())
+}
+
+/// The contract's balance beyond its storage, the principals still in it and the float, without
+/// saturating: negative means storage or fees were paid from money that belongs to someone.
+pub async fn slack(env: &Env) -> anyhow::Result<i128> {
+    let balance = bal(env, env.bounty.id()).await? as i128;
+    let used = i128::from(storage(env, env.bounty.id()).await?) * BYTE as i128;
+    let c = config(env).await?;
+    let reserved = (u(&c["held"]) - u(&c["in_flight"])) as i128 + u(&c["sponsor_float"]) as i128;
+    Ok(balance - used - reserved)
 }

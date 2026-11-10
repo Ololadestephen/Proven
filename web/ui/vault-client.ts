@@ -3,6 +3,7 @@
 // deadline, and the classification of a withdrawal transaction's final outcome. Pure functions:
 // nothing here signs, sends or reads the chain.
 import { hex, nep413Hash } from "./bounty-keys.ts";
+import { transactionHashOf } from "./action-guard.ts";
 
 /** The vault refuses a deadline more than 15 minutes ahead (OD-7); the page asks for 10. */
 export const MAX_DEADLINE_AHEAD_SECS = 15 * 60;
@@ -195,90 +196,201 @@ export type WithdrawalOutcome =
   | { kind: "delivered"; to: string; amount: bigint; n: bigint }
   | { kind: "returned"; amount: bigint; n: bigint; next: bigint }
   | { kind: "refused"; reason: string; n: bigint }
-  | { kind: "unknown" };
+  | { kind: "pending"; why: string };
 
+/** What this browser signed and submitted, which the evidence must match exactly. */
+export interface ExpectedWithdrawal {
+  vault: string;
+  to: string;
+  amount: bigint;
+  n: bigint;
+  /** The account that submitted the transaction, when known. */
+  sender?: string;
+}
+
+type Status = Record<string, unknown>;
 interface Receipt {
-  predecessor_id?: string;
-  receiver_id?: string;
-  receipt_id?: string;
+  predecessor_id?: unknown;
+  receiver_id?: unknown;
+  receipt_id?: unknown;
   receipt?: {
-    Action?: { actions?: unknown[] };
-    ActionV2?: { actions?: unknown[] };
+    Action?: { actions?: unknown };
+    ActionV2?: { actions?: unknown };
   };
 }
 interface ReceiptOutcome {
-  id?: string;
-  outcome?: { status?: Record<string, unknown> };
+  id?: unknown;
+  outcome?: { status?: unknown; receipt_ids?: unknown; executor_id?: unknown };
+}
+interface TxStatus {
+  final_execution_status?: unknown;
+  transaction?: {
+    signer_id?: unknown;
+    receiver_id?: unknown;
+    actions?: unknown;
+  };
+  transaction_outcome?: { outcome?: { receipt_ids?: unknown } };
+  receipts?: unknown;
+  receipts_outcome?: unknown;
 }
 
-const transferAmount = (r: Receipt): bigint | null => {
-  const actions =
-    r.receipt?.Action?.actions ?? r.receipt?.ActionV2?.actions ?? [];
-  const t =
-    actions.length === 1
-      ? (actions[0] as { Transfer?: { deposit?: string } })
-      : null;
-  return t?.Transfer?.deposit ? BigInt(t.Transfer.deposit) : null;
+const pending = (why: string): WithdrawalOutcome => ({ kind: "pending", why });
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const statusOf = (o: ReceiptOutcome | undefined): Status | null =>
+  isObject(o?.outcome?.status) ? (o.outcome.status as Status) : null;
+const children = (o: ReceiptOutcome | undefined): string[] => {
+  const ids = o?.outcome?.receipt_ids;
+  return Array.isArray(ids) && ids.every((x) => typeof x === "string")
+    ? (ids as string[])
+    : [];
 };
 
+/** The deposit of a receipt whose only action is one transfer, or null. */
+const transferAmount = (r: Receipt): bigint | null => {
+  const actions = r.receipt?.Action?.actions ?? r.receipt?.ActionV2?.actions;
+  if (!Array.isArray(actions) || actions.length !== 1) return null;
+  const deposit = (actions[0] as { Transfer?: { deposit?: unknown } })?.Transfer
+    ?.deposit;
+  return typeof deposit === "string" && /^[0-9]{1,40}$/.test(deposit)
+    ? BigInt(deposit)
+    : null;
+};
+
+/** The transaction's own `withdraw` arguments, if it is exactly one such call. */
+function withdrawCall(
+  tx: TxStatus,
+): { to: string; amount: bigint; n: bigint } | null {
+  const actions = tx.transaction?.actions;
+  if (!Array.isArray(actions) || actions.length !== 1) return null;
+  const call = (actions[0] as { FunctionCall?: Record<string, unknown> })
+    ?.FunctionCall;
+  if (!call || call.method_name !== "withdraw" || typeof call.args !== "string")
+    return null;
+  try {
+    const bytes = Uint8Array.from(atob(call.args), (c) => c.charCodeAt(0));
+    const args = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    );
+    if (
+      !isObject(args) ||
+      typeof args.to !== "string" ||
+      typeof args.amount !== "string" ||
+      typeof args.n !== "string" ||
+      !/^[0-9]{1,40}$/.test(args.amount) ||
+      !/^[0-9]{1,20}$/.test(args.n)
+    )
+      return null;
+    return { to: args.to, amount: BigInt(args.amount), n: BigInt(args.n) };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Classifies a withdrawal from an `EXPERIMENTAL_tx_status` answer: delivered only if the vault
- * accepted it and the transfer to the destination succeeded; returned if that transfer failed
- * (the number is used, the next one is n + 1); refused if the vault refused the call (the number
- * is unchanged); unknown otherwise.
+ * Classifies a withdrawal from a finalized `EXPERIMENTAL_tx_status` answer. The transaction must
+ * be exactly one `withdraw` call to the expected vault with the expected destination, amount and
+ * number. Then:
+ * - delivered: the call succeeded and the one transfer receipt it created, from the vault to the
+ *   destination for exactly the signed amount, succeeded;
+ * - returned: that transfer failed and the refund it created, from the system to the vault for
+ *   exactly that amount, succeeded (the number is used; the next one is n + 1);
+ * - refused: the call itself failed (the number is unchanged);
+ * - pending: anything else, including answers that are not final, partial, mismatched or
+ *   malformed. Pending shows the funds as neither delivered nor returned.
  */
 export function classifyWithdrawal(
   status: unknown,
-  vault: string,
-  signed: { to: string; amount: bigint; n: bigint },
+  expected: ExpectedWithdrawal,
 ): WithdrawalOutcome {
-  const tx = status as {
-    transaction?: { receiver_id?: string };
-    receipts?: Receipt[];
-    receipts_outcome?: ReceiptOutcome[];
-    transaction_outcome?: { outcome?: { status?: Record<string, unknown> } };
-    final_execution_status?: string;
-  } | null;
-  if (!tx || !Array.isArray(tx.receipts_outcome) || !Array.isArray(tx.receipts))
-    return { kind: "unknown" };
-  if (tx.transaction?.receiver_id !== vault) return { kind: "unknown" };
-  const outcomes = tx.receipts_outcome;
-  const byId = (id: string | undefined) =>
-    tx.receipts?.find((r) => r.receipt_id === id);
-  // The call receipt is the first outcome; it ran on the vault.
-  const call = outcomes[0];
-  const callStatus = call?.outcome?.status;
-  if (!callStatus) return { kind: "unknown" };
+  if (!isObject(status)) return pending("no answer");
+  const tx = status as TxStatus;
+  if (tx.final_execution_status !== "FINAL") return pending("not final");
+  if (!Array.isArray(tx.receipts) || !Array.isArray(tx.receipts_outcome))
+    return pending("malformed answer");
+  const receipts = tx.receipts as Receipt[];
+  const outcomes = tx.receipts_outcome as ReceiptOutcome[];
+  if (tx.transaction?.receiver_id !== expected.vault)
+    return pending("another receiver");
+  if (
+    expected.sender !== undefined &&
+    tx.transaction?.signer_id !== expected.sender
+  )
+    return pending("another sender");
+  const args = withdrawCall(tx);
+  if (
+    !args ||
+    args.to !== expected.to ||
+    args.amount !== expected.amount ||
+    args.n !== expected.n
+  )
+    return pending("not this withdrawal");
+  const first = tx.transaction_outcome?.outcome?.receipt_ids;
+  const callId = Array.isArray(first) && first.length === 1 ? first[0] : null;
+  const call = outcomes.find((o) => o.id === callId);
+  const callStatus = statusOf(call);
+  if (!call || !callStatus || call.outcome?.executor_id !== expected.vault)
+    return pending("no call outcome");
   if ("Failure" in callStatus) {
     const text = JSON.stringify(callStatus.Failure);
     const reason = /ExecutionError":"([^"]*)"/.exec(text)?.[1] ?? "refused";
-    return { kind: "refused", reason, n: signed.n };
+    return { kind: "refused", reason, n: expected.n };
   }
-  if (!("SuccessValue" in callStatus) && !("SuccessReceiptId" in callStatus))
-    return { kind: "unknown" };
-  for (const o of outcomes.slice(1)) {
-    const r = byId(o.id);
-    if (!r || r.predecessor_id !== vault || r.receiver_id !== signed.to)
-      continue;
-    const amount = transferAmount(r);
-    if (amount === null) continue;
-    const s = o.outcome?.status;
-    if (!s) return { kind: "unknown" };
-    if ("Failure" in s)
-      return { kind: "returned", amount, n: signed.n, next: signed.n + 1n };
-    if ("SuccessValue" in s)
-      return { kind: "delivered", to: r.receiver_id, amount, n: signed.n };
-    return { kind: "unknown" };
-  }
-  return { kind: "unknown" };
+  if (!("SuccessValue" in callStatus)) return pending("call not finished");
+  const byId = (id: string) => receipts.find((r) => r.receipt_id === id);
+  const outcomeOf = (id: string) => outcomes.find((o) => o.id === id);
+  // The transfer must be a direct child of the call.
+  const transfers = children(call).filter((id) => {
+    const r = byId(id);
+    return (
+      !!r &&
+      r.predecessor_id === expected.vault &&
+      r.receiver_id === expected.to
+    );
+  });
+  if (transfers.length !== 1) return pending("no single transfer");
+  const transferId = transfers[0] as string;
+  const transfer = byId(transferId) as Receipt;
+  if (transferAmount(transfer) !== expected.amount)
+    return pending("transfer amount differs");
+  const transferStatus = statusOf(outcomeOf(transferId));
+  if (!transferStatus) return pending("transfer not finished");
+  if ("SuccessValue" in transferStatus)
+    return {
+      kind: "delivered",
+      to: expected.to,
+      amount: expected.amount,
+      n: expected.n,
+    };
+  if (!("Failure" in transferStatus)) return pending("transfer not finished");
+  // A failed transfer returns its deposit to the vault in a refund receipt it created.
+  const refunds = children(outcomeOf(transferId)).filter((id) => {
+    const r = byId(id);
+    return (
+      !!r &&
+      r.predecessor_id === "system" &&
+      r.receiver_id === expected.vault &&
+      transferAmount(r) === expected.amount
+    );
+  });
+  if (refunds.length !== 1) return pending("refund not recorded");
+  const refundStatus = statusOf(outcomeOf(refunds[0] as string));
+  if (!refundStatus || !("SuccessValue" in refundStatus))
+    return pending("refund not finished");
+  return {
+    kind: "returned",
+    amount: expected.amount,
+    n: expected.n,
+    next: expected.n + 1n,
+  };
 }
 
 /**
- * Whether a new authorization may be offered: never while an earlier one's outcome is unknown,
- * its number is still the vault's number and its deadline has not passed.
+ * Whether a new authorization may be offered: never while an earlier one is pending, its number
+ * is still the vault's number and its deadline has not passed.
  */
 export function mayAuthorizeAgain(
-  pending: {
+  earlier: {
     n: bigint;
     deadline: number;
     outcome: WithdrawalOutcome["kind"];
@@ -286,6 +398,40 @@ export function mayAuthorizeAgain(
   vaultN: bigint,
   blockSecs: number,
 ): boolean {
-  if (!pending || pending.outcome !== "unknown") return true;
-  return !(vaultN === pending.n && blockSecs < pending.deadline);
+  if (!earlier || earlier.outcome !== "pending") return true;
+  return !(vaultN === earlier.n && blockSecs < earlier.deadline);
+}
+
+/**
+ * Submits a signed withdrawal from the connected wallet. Returns the transaction hash whenever
+ * the wallet names one, including when it reports a failure or an incomplete outcome, so the page
+ * can re-check the transaction instead of losing it.
+ */
+export async function sendWithdrawal(
+  wallet: {
+    call(call: {
+      receiver: string;
+      method: string;
+      args: Record<string, unknown>;
+      deposit: bigint;
+      gas: bigint;
+    }): Promise<{ transaction_hash: string } | void>;
+  },
+  w: Withdrawal,
+  signature: Uint8Array,
+): Promise<{ hash: string | null; error: unknown }> {
+  try {
+    const result = await wallet.call({
+      receiver: w.vault,
+      method: "withdraw",
+      args: JSON.parse(withdrawArgs(w, signature)),
+      deposit: 0n,
+      gas: 30n * 10n ** 12n,
+    });
+    const hash =
+      result && result.transaction_hash ? result.transaction_hash : null;
+    return { hash, error: null };
+  } catch (error) {
+    return { hash: transactionHashOf(error), error };
+  }
 }

@@ -1,4 +1,4 @@
-import { useState, type Dispatch } from "react";
+import { useEffect, useState, type Dispatch } from "react";
 import type { Wallet } from "./market-types.ts";
 import {
   base64,
@@ -18,17 +18,56 @@ import {
   LEDGER_NOTE,
   SEPARATE_CONFIRMATION,
   TESTED_WALLETS,
+  initialKeyState,
   keyPair,
+  keyReducer,
   type KeyAction,
   type KeyConfirmState,
 } from "./key-confirm-state.ts";
 import { randomNonce } from "./market-client.ts";
+import {
+  addCandidate,
+  backupProofsToSign,
+  browserStore,
+  listDrafts,
+  loadCandidates,
+  saveDraft,
+  type BackupCandidate,
+} from "./key-draft.ts";
 
 /** A key proof stays valid 50 minutes, inside the contract's one-hour limit (OD-8). */
 export const PROOF_SECS = 50 * 60;
 
 export const canSignProofs = (wallet: Partial<Wallet> | null) =>
   !!wallet && typeof wallet.signNep413 === "function";
+
+/**
+ * Asks the connected wallet which key it signs with: it signs a fixed text naming the account and
+ * the contract with a random nonce, and the answer must verify locally by the key it names.
+ */
+export async function discoverKey(
+  wallet: Wallet,
+  contract: string,
+): Promise<string> {
+  const nonce = randomNonce();
+  const message = `Proven PR bounty: show the public key of ${wallet.accountId} for ${contract}`;
+  const reply = await wallet.signNep413(message, contract, nonce);
+  let ok = false;
+  try {
+    ok = verifies(
+      signatureBytes(reply.signature_base64),
+      nep413Hash(message, nonce, contract),
+      ed25519Key(reply.public_key),
+    );
+  } catch {
+    ok = false;
+  }
+  if (!ok)
+    throw new Error(
+      "The wallet's answer did not verify as an ed25519 signature by the key it named.",
+    );
+  return reply.public_key;
+}
 
 const utc = (secs: number) =>
   new Date(secs * 1000)
@@ -55,6 +94,8 @@ export interface KeyConfirmProps {
   canPrepare?: boolean;
   /** Called before new proofs are prepared, to fix what they cover (and check a fresh nonce). */
   onPrepare?: () => Promise<boolean> | boolean;
+  /** Backup keys other accounts in this browser offered (public keys only). */
+  candidates?: BackupCandidate[];
 }
 
 export function KeyConfirm(props: KeyConfirmProps) {
@@ -83,28 +124,15 @@ export function KeyConfirm(props: KeyConfirmProps) {
   async function discoverPrimary() {
     setWorking(true);
     try {
-      const nonce = randomNonce();
-      const message = `Proven PR bounty: show the public key of ${wallet.accountId} for ${contract}`;
-      const reply = await wallet.signNep413(message, contract, nonce);
-      const ok = (() => {
-        try {
-          return verifies(
-            signatureBytes(reply.signature_base64),
-            nep413Hash(message, nonce, contract),
-            ed25519Key(reply.public_key),
-          );
-        } catch {
-          return false;
-        }
-      })();
-      if (ok) dispatch({ type: "primary", key: reply.public_key });
-      else
-        dispatch({
-          type: "error",
-          text: "The wallet's answer did not verify as an ed25519 signature by the key it named.",
-        });
-    } catch {
-      dispatch({ type: "rejected", signing: "primary" });
+      dispatch({ type: "primary", key: await discoverKey(wallet, contract) });
+    } catch (error) {
+      dispatch({
+        type: "error",
+        text:
+          error instanceof Error && error.message.includes("did not verify")
+            ? error.message
+            : "The primary key was not shown. Sign the request to continue.",
+      });
     } finally {
       setWorking(false);
     }
@@ -184,6 +212,22 @@ export function KeyConfirm(props: KeyConfirmProps) {
           >
             Use this backup key
           </button>
+          {(props.candidates ?? [])
+            .filter((c) => c.account !== wallet.accountId)
+            .map((c) => (
+              <button
+                key={c.account}
+                type="button"
+                className="button button-secondary"
+                disabled={disabled}
+                onClick={() => {
+                  setBackupInput(c.key);
+                  dispatch({ type: "backup", key: c.key });
+                }}
+              >
+                Use the key {c.account} offered
+              </button>
+            ))}
         </li>
         <li>
           <button
@@ -212,8 +256,10 @@ export function KeyConfirm(props: KeyConfirmProps) {
                 "verified"
               ) : (
                 <>
-                  sign this text with the backup key as a NEP-413 message,
-                  recipient <code>{contract}</code>, nonce{" "}
+                  connect the backup key's account in your browser wallet and
+                  sign it from this page (your progress is kept in this
+                  browser), or sign this text with the backup key as a NEP-413
+                  message, recipient <code>{contract}</code>, nonce{" "}
                   <code>{hex(keyProofNonce(backupMessage))}</code> (base64{" "}
                   <code>{base64(keyProofNonce(backupMessage))}</code>), then
                   paste the signature.
@@ -301,5 +347,124 @@ export function KeyConfirm(props: KeyConfirmProps) {
         {SEPARATE_CONFIRMATION}
       </label>
     </div>
+  );
+}
+
+/**
+ * For the account that holds a backup key: offer this wallet's key as a backup key, and sign the
+ * backup proofs another account prepared in this browser. Each signature is checked locally
+ * against the key the draft names before it is kept.
+ */
+export function BackupSigner({
+  wallet,
+  contract,
+  busy,
+}: {
+  wallet: Wallet;
+  contract: string;
+  busy: boolean;
+}) {
+  // Re-render on a timer and after each action, so drafts saved by other pages show up.
+  const [, setVersion] = useState(0);
+  const [note, setNote] = useState("");
+  const [working, setWorking] = useState(false);
+  useEffect(() => {
+    const timer = setInterval(() => setVersion((v) => v + 1), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  const store = browserStore();
+  const now = Math.floor(Date.now() / 1000);
+  const open = backupProofsToSign(
+    listDrafts(store, contract, now),
+    wallet.accountId,
+  );
+  const offered = loadCandidates(store, contract).find(
+    (c) => c.account === wallet.accountId,
+  );
+  if (!canSignProofs(wallet)) return null;
+  async function offer() {
+    setWorking(true);
+    try {
+      const key = await discoverKey(wallet, contract);
+      addCandidate(store, contract, { account: wallet.accountId, key });
+      setNote(`Offered ${key} as a backup key in this browser.`);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : "Not offered.");
+    } finally {
+      setWorking(false);
+      setVersion((v) => v + 1);
+    }
+  }
+  async function sign(draft: (typeof open)[number]) {
+    const message = draft.messages?.backup ?? "";
+    setWorking(true);
+    try {
+      const reply = await wallet.signNep413(
+        message,
+        contract,
+        keyProofNonce(message),
+      );
+      const next = keyReducer(
+        { ...initialKeyState, ...draft.state },
+        {
+          type: "signed",
+          signing: "backup",
+          publicKey: reply.public_key,
+          signature: reply.signature_base64,
+          message,
+          contract,
+        },
+      );
+      if (next.proofs.backup) {
+        saveDraft(store, { ...draft, state: next });
+        setNote(
+          `Backup proof signed. Reconnect ${draft.state.actor} to finish.`,
+        );
+      } else setNote(next.error ?? "The backup proof was refused.");
+    } catch {
+      setNote("The backup proof was not signed.");
+    } finally {
+      setWorking(false);
+      setVersion((v) => v + 1);
+    }
+  }
+  return (
+    <section className="workspace-card bounty-backup-signer">
+      <h3>Backup key signing, as {wallet.accountId}</h3>
+      <p>
+        If this account holds a backup key, offer its key here, then sign the
+        backup proofs another account prepared in this browser. Only the public
+        key and the signature are kept.
+      </p>
+      <button
+        type="button"
+        className="button button-secondary"
+        disabled={busy || working}
+        onClick={() => void offer()}
+      >
+        {offered
+          ? `Offer ${wallet.label}'s key again`
+          : `Offer ${wallet.label}'s key as a backup key`}
+      </button>
+      {open.map((d) => (
+        <div key={d.scope} className="bounty-action">
+          <p>
+            Backup proof for the {d.role}{" "}
+            {d.scope === "post" ? "posting" : d.scope.replace(":", " ")} by{" "}
+            {d.state.actor}, backup key <code>{d.state.backup}</code>:
+          </p>
+          <pre className="bounty-challenge">{d.messages?.backup}</pre>
+          <button
+            type="button"
+            className="button"
+            disabled={busy || working}
+            onClick={() => void sign(d)}
+          >
+            Sign this backup proof with {wallet.label}
+          </button>
+        </div>
+      ))}
+      {note ? <p role="status">{note}</p> : null}
+    </section>
   );
 }

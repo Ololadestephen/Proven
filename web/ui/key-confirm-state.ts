@@ -70,6 +70,8 @@ export type KeyAction =
   /** The signed terms changed: the proofs no longer cover them. */
   | { type: "clear" }
   | { type: "refused"; check: SubmitCheck }
+  /** Proofs signed elsewhere in this browser (the backup account) for the same texts. */
+  | { type: "restore"; state: KeyConfirmState }
   | { type: "reset" };
 
 const label = (s: Signing) => (s === "primary" ? "primary key" : "backup key");
@@ -138,6 +140,8 @@ export function keyReducer(
       return { ...state, actor: null, expiresAt: null, proofs: {} };
     case "refused":
       return afterRefusedSubmit(state, action.check);
+    case "restore":
+      return action.state;
     case "signed": {
       const named = action.signing === "primary" ? state.primary : state.backup;
       const keep = { ...state.proofs };

@@ -60,7 +60,7 @@ test("withdrawn needs a delivered receipt from an unshared vault", () => {
   assert.equal(
     deliveredFrom(done.vault, [
       { ...history[0]!, outcome: "returned" },
-      { ...history[0]!, outcome: "unknown" },
+      { ...history[0]!, outcome: "pending" },
     ]),
     0n,
   );

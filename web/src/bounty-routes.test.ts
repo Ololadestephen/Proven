@@ -36,7 +36,7 @@ const ROUTES = [
   `/api/market/bounties/slot/${VAULT}/3/Payout`,
   "/api/market/bounties/account/payee.testnet",
   "/api/market/bounties/block",
-  `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet`,
+  `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet/${VAULT}/payee.testnet/1/0`,
 ];
 
 test("off testnet, every bounty route answers not configured and reads nothing", async () => {
@@ -208,6 +208,9 @@ test("malformed route parts are refused before any read", async () => {
     `/api/market/bounties/slot/${VAULT}/3/Other`,
     "/api/market/bounties/account/Bad..Account",
     "/api/market/bounties/withdrawal/short/relayer.testnet",
+    `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet`,
+    `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet/${VAULT}/payee.testnet/x/0`,
+    `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet/maint.testnet/payee.testnet/1/0`,
     `/api/market/bounties/nonce/maint.testnet/${"A".repeat(64)}`,
     `/api/market/bounties/challenge/3/contrib.testnet/1794300000/secp256k1:abc/${KEY}`,
     "/api/market/bounties/challenge/3/contrib.testnet/1794300000",
@@ -217,7 +220,7 @@ test("malformed route parts are refused before any read", async () => {
   assert.equal(asked.length, 0);
 });
 
-test("a withdrawal route answer is classified from the transaction's own arguments", async () => {
+test("a withdrawal route answer is classified against the signed fields", async () => {
   const { readFileSync } = await import("node:fs");
   const r = JSON.parse(
     readFileSync(
@@ -233,30 +236,34 @@ test("a withdrawal route answer is classified from the transaction's own argumen
     id: "x",
     result: r.status,
   }));
-  const reply = (await bountiesRoute(
-    `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet`,
-    transport,
-    CONTRACT,
-  )) as { outcome: Record<string, string> };
+  const route = (fields: { to: string; amount: string; n: string }) =>
+    `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.test.near/${r.vault}/${fields.to}/${fields.amount}/${fields.n}`;
+  const reply = (await bountiesRoute(route(r), transport, CONTRACT)) as {
+    outcome: Record<string, string>;
+  };
   assert.deepEqual(reply.outcome, {
     kind: "returned",
     amount: r.amount,
     n: "0",
     next: "1",
   });
+  // The same transaction checked against another amount is not this withdrawal.
+  const other = (await bountiesRoute(
+    route({ ...r, amount: "1" }),
+    transport,
+    CONTRACT,
+  )) as { outcome: Record<string, string> };
+  assert.equal(other.outcome.kind, "pending");
   const none = chain(() => missing);
-  assert.deepEqual(
+  assert.equal(
     (
-      (await bountiesRoute(
-        `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet`,
-        none.transport,
-        CONTRACT,
-      )) as { outcome: unknown }
-    ).outcome,
-    { kind: "unknown" },
+      (await bountiesRoute(route(r), none.transport, CONTRACT)) as {
+        outcome: { kind: string };
+      }
+    ).outcome.kind,
+    "pending",
   );
 });
-
 // ---- The two-key confirmation ----
 
 const secret = (n: number) => new Uint8Array(32).fill(n);
@@ -444,6 +451,21 @@ test("the confirmation panel states every required fact, and a wallet that canno
   assert.ok(buttons.length > 0);
   for (const b of buttons) assert.match(b, /disabled=""/);
   assert.match(unable, /<input type="checkbox"[^>]*disabled=""/);
+  // The backup key's account gets its own signing card; a wallet that cannot sign gets none.
+  const signer = (wallet: Record<string, unknown>) =>
+    ui.render(ui.BackupSigner, { wallet, contract: CONTRACT, busy: false });
+  assert.match(
+    signer({
+      accountId: "backup.testnet",
+      label: "Test wallet",
+      signNep413: async () => ({}),
+    }).replaceAll("&#x27;", "'"),
+    /Offer Test wallet's key as a backup key/,
+  );
+  assert.equal(
+    signer({ accountId: "backup.testnet", label: "Old wallet" }),
+    "",
+  );
 });
 
 test("the vault panel says browser withdrawal is pending and the sponsor note is shown", async () => {

@@ -95,7 +95,42 @@ export function journalCall(pending: PendingAction, call: Call): PendingAction {
     call: { receiver: call.receiver, method: call.method, args: call.args },
   };
 }
-export class DefinitiveWalletFailure extends Error {}
+const TX_HASH = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/;
+/** A wallet failure that may still name the transaction it sent. */
+export class DefinitiveWalletFailure extends Error {
+  readonly transactionHash: string | null;
+  constructor(message: string, transactionHash: string | null = null) {
+    super(message);
+    this.transactionHash = transactionHash;
+  }
+}
+/** The wallet returned no final, successful outcome; the transaction may still have landed. */
+export class IncompleteWalletOutcome extends Error {
+  readonly transactionHash: string | null;
+  constructor(message: string, transactionHash: string | null) {
+    super(message);
+    this.transactionHash = transactionHash;
+  }
+}
+/** A transaction hash carried by a wallet error, if it names one in a known field. */
+export function transactionHashOf(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const e = error as Record<string, unknown>;
+  const nested = (v: unknown, key: string) =>
+    typeof v === "object" && v !== null
+      ? (v as Record<string, unknown>)[key]
+      : undefined;
+  for (const candidate of [
+    e.transactionHash,
+    e.transaction_hash,
+    e.txHash,
+    nested(e.transaction, "hash"),
+    nested(nested(e.outcome, "transaction"), "hash"),
+  ])
+    if (typeof candidate === "string" && TX_HASH.test(candidate))
+      return candidate;
+  return null;
+}
 export function definitelyNotApplied(error: unknown) {
   return (
     error instanceof DefinitiveWalletFailure ||

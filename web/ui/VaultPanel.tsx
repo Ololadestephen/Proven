@@ -14,6 +14,7 @@ import {
   chooseDeadline,
   cliCommand,
   mayAuthorizeAgain,
+  sendWithdrawal,
   withdrawArgs,
   withdrawHash,
   withdrawMessage,
@@ -30,7 +31,6 @@ import {
 } from "./vault-view.ts";
 
 const PATH = "/api/market/bounties";
-const TGAS = 10n ** 12n;
 export const BROWSER_WITHDRAWAL_SUPPORT =
   "Browser wallet withdrawal: pending. No real testnet wallet has completed a withdrawal through this page yet; the NEAR CLI command below does the same call.";
 
@@ -102,7 +102,7 @@ export function VaultPanel({
     setHistory(next);
     saveHistory(vault, next, storage());
   };
-  const pending = history.findLast((h) => h.outcome === "unknown") ?? null;
+  const pending = history.findLast((h) => h.outcome === "pending") ?? null;
 
   async function blockSecs() {
     return (await api<{ block_secs: number }>(`${PATH}/block`)).block_secs;
@@ -125,7 +125,7 @@ export function VaultPanel({
       )
     )
       return setError(
-        "An earlier withdrawal's outcome is unknown. Re-check it before signing a new one.",
+        "An earlier withdrawal is still pending. Re-check it, or wait for its deadline, before signing a new one.",
       );
     let value: bigint;
     try {
@@ -199,36 +199,35 @@ export function VaultPanel({
         amount: s.w.amount.toString(),
         n: s.w.n.toString(),
         deadline: s.w.deadline,
-        outcome: "unknown",
+        outcome: "pending",
       };
-      keep([...history, entry]);
+      // Recorded before the wallet is asked, so a closed tab still blocks a second authorization.
+      const before = [...history, entry];
+      keep(before);
       setSigned(null);
       setDraft(null);
-      try {
-        const result = await wallet.call({
-          receiver: vault,
-          method: "withdraw",
-          args: JSON.parse(withdrawArgs(s.w, s.signature)),
-          deposit: 0n,
-          gas: 30n * TGAS,
-        });
-        entry.hash =
-          result && "transaction_hash" in result
-            ? result.transaction_hash || null
-            : null;
-      } finally {
-        keep([...history, entry]);
-        setVersion((v) => v + 1);
-      }
-      if (entry.hash) await recheck(entry);
+      const sent = await sendWithdrawal(wallet, s.w, s.signature);
+      const recorded = { ...entry, hash: sent.hash };
+      keep([...history, recorded]);
+      setVersion((v) => v + 1);
+      if (recorded.hash) await recheck(recorded);
+      if (sent.error) throw sent.error;
     });
   async function recheck(entry: StoredWithdrawal) {
     if (!entry.hash) {
       setVersion((v) => v + 1);
       return;
     }
+    const route = [
+      entry.hash,
+      entry.sender,
+      entry.vault,
+      entry.to,
+      entry.amount,
+      entry.n,
+    ].join("/");
     const reply = await api<{ outcome: { kind: StoredWithdrawal["outcome"] } }>(
-      `${PATH}/withdrawal/${entry.hash}/${entry.sender}`,
+      `${PATH}/withdrawal/${route}`,
     );
     const next = loadHistory(vault, storage()).map((h) =>
       h.hash === entry.hash ? { ...h, outcome: reply.outcome.kind } : h,
@@ -273,9 +272,9 @@ export function VaultPanel({
                   ? `the transfer failed and the amount returned to the vault; number ${h.n} is used, sign a new withdrawal`
                   : h.outcome === "refused"
                     ? "refused by the vault; nothing moved"
-                    : "outcome unknown: neither delivered nor returned yet"}
+                    : "pending: not delivered and not returned until a finalized receipt shows which"}
               {h.hash ? ` (transaction ${h.hash})` : ""}
-              {h.outcome === "unknown" ? (
+              {h.outcome === "pending" && h.hash ? (
                 <button
                   type="button"
                   className="button button-secondary"

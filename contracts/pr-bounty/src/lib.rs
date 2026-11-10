@@ -43,9 +43,10 @@ pub const RUN_DEPOSIT: NearToken = NearToken::from_millinear(10);
 pub const BUDGET: NearToken = NearToken::from_millinear(30);
 /// Sponsored merge checks one bounty may use.
 pub const SPONSORED_RUNS_PER_BOUNTY: u32 = 3;
-/// Pays for the bounty record, its entries and its settlement fees. Provisional (OD-5): the
-/// sandbox measures the worst case before review.
-pub const STORAGE_DEPOSIT: NearToken = NearToken::from_millinear(20);
+/// Pays for the bounty record and its entries, the storage the vaults keep, and the settlement
+/// fees while they are in flight. Approved for the pilot (OD-5): the sandbox measured 0.02816 NEAR
+/// at the peak for the largest bounty, and settles it with no other spare balance.
+pub const STORAGE_DEPOSIT: NearToken = NearToken::from_millinear(29);
 pub const CHALLENGE_TTL_SECS: u64 = 60 * 60;
 /// A run whose result has not landed after this long is stale: its late result changes nothing.
 pub const RUN_TIMEOUT_NANOS: u64 = 15 * 60 * NANOS_PER_SEC;
@@ -471,6 +472,8 @@ fn secs_to_nanos(secs: u64) -> u64 {
 /// one build covers every recovery case. The release build has none of this.
 #[cfg(feature = "test-faults")]
 mod faults {
+    /// From here up to the lost-callback issues: the first deposit fails and its callbacks run.
+    pub const FAILED_FIRST_SEND_FROM_ISSUE: u64 = 8_500;
     pub const LOST_CALLBACKS_FROM_ISSUE: u64 = 9_000;
     /// From here up to, not including, the delayed-deposit issue.
     pub const FAILED_FIRST_DEPOSIT_FROM_ISSUE: u64 = 9_500;
@@ -599,7 +602,7 @@ impl PrBounty {
 
     // ---- Maintainer: post and cancel ----
 
-    /// Posts a bounty. Attach exactly `reward` + 0.03 NEAR budget + 0.02 NEAR storage. Both of the
+    /// Posts a bounty. Attach exactly `reward` + 0.03 NEAR budget + 0.029 NEAR storage. Both of the
     /// maintainer's keys sign the posting's terms digest and a fresh nonce (NEP-413).
     #[payable]
     pub fn post_bounty(
@@ -623,7 +626,7 @@ impl PrBounty {
         let total = reward + budget;
         require!(
             env::attached_deposit().as_yoctonear() == total + STORAGE_DEPOSIT.as_yoctonear(),
-            "attach exactly the reward plus 0.03 NEAR for merge checks and 0.02 NEAR for storage"
+            "attach exactly the reward plus 0.03 NEAR for merge checks and 0.029 NEAR for storage"
         );
         require!(
             self.held + total <= self.max_held,
@@ -1968,7 +1971,10 @@ impl PrBounty {
         #[allow(unused_mut)]
         let mut method = "deposit";
         #[cfg(feature = "test-faults")]
-        if (faults::FAILED_FIRST_DEPOSIT_FROM_ISSUE..faults::DELAYED_DEPOSIT_ISSUE).contains(&issue)
+        if ((faults::FAILED_FIRST_SEND_FROM_ISSUE..faults::LOST_CALLBACKS_FROM_ISSUE)
+            .contains(&issue)
+            || (faults::FAILED_FIRST_DEPOSIT_FROM_ISSUE..faults::DELAYED_DEPOSIT_ISSUE)
+                .contains(&issue))
             && attempt == 1
         {
             method = "no_such_method";

@@ -34,7 +34,7 @@ export interface StoredWithdrawal {
   amount: string;
   n: string;
   deadline: number;
-  outcome: "delivered" | "returned" | "refused" | "unknown";
+  outcome: "delivered" | "returned" | "refused" | "pending";
 }
 
 /** The sum this browser holds delivered receipts for, from one vault. */

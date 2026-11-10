@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Run, Wallet } from "./market-types.ts";
 import { NEAR } from "./market-types.ts";
 import { api, randomNonce, short } from "./market-client.ts";
@@ -8,19 +8,23 @@ import {
   base64,
   challenge as claimChallenge,
   claimMessage,
+  fromHex,
   hex,
   postingMessage,
   signatureBytes,
   type KeyPair,
   type PostTerms,
+  type Signing,
 } from "./bounty-keys.ts";
 import {
-  initialKeyState,
   keyPair,
-  keyReducer,
   submitCheck,
+  type KeyConfirmState,
 } from "./key-confirm-state.ts";
-import { KeyConfirm } from "./KeyConfirm.tsx";
+import { BackupSigner, KeyConfirm } from "./KeyConfirm.tsx";
+import { browserStore, loadCandidates, loadDraft } from "./key-draft.ts";
+import { useKeyDraft } from "./use-key-draft.ts";
+import { postingAttachment } from "./bounty-costs.ts";
 import { VaultPanel } from "./VaultPanel.tsx";
 import {
   STATUS_TEXT,
@@ -189,11 +193,46 @@ function PostBounty({
     merge_hours: "168",
     grace_minutes: "60",
   });
-  const [keys, dispatch] = useReducer(keyReducer, initialKeyState);
+  // Proofs prepared before the backup account signed come back with the terms they cover.
   const [frozen, setFrozen] = useState<{
     terms: PostTerms;
     nonce: Uint8Array;
-  } | null>(null);
+  } | null>(() => {
+    const d = loadDraft(browserStore(), contract, "post", nowSecs());
+    return d && d.state.actor === wallet.accountId && d.frozen
+      ? { terms: d.frozen.terms as PostTerms, nonce: fromHex(d.frozen.nonce) }
+      : null;
+  });
+  const postingText = (state: KeyConfirmState, signing: Signing) => {
+    const pair = keyPair(state);
+    return frozen && pair && state.actor && state.expiresAt
+      ? postingMessage(
+          config.network,
+          contract,
+          state.actor,
+          frozen.nonce,
+          frozen.terms,
+          pair,
+          state.expiresAt,
+          signing,
+        )
+      : "";
+  };
+  const draft = useKeyDraft({
+    contract,
+    scope: "post",
+    role: "maintainer",
+    connected: wallet.accountId,
+    messages: (state) =>
+      postingText(state, "primary")
+        ? {
+            primary: postingText(state, "primary"),
+            backup: postingText(state, "backup"),
+          }
+        : null,
+    frozen: frozen ? { terms: frozen.terms, nonce: hex(frozen.nonce) } : null,
+  });
+  const { state: keys, dispatch } = draft;
   const set =
     (key: keyof typeof form) => (event: { target: { value: string } }) => {
       setForm({ ...form, [key]: event.target.value });
@@ -264,10 +303,10 @@ function PostBounty({
             backup_signature: sigB64(backup?.signature ?? ""),
           },
         },
-        deposit: reward + budget + storage,
+        deposit: postingAttachment(config, BigInt(frozen.terms.reward)).total,
         gas: 100n * TGAS,
       });
-      dispatch({ type: "reset" });
+      draft.finish();
       setFrozen(null);
       done();
     });
@@ -364,21 +403,29 @@ function PostBounty({
         busy={busy}
         canPrepare={complete}
         onPrepare={freeze}
+        candidates={loadCandidates(browserStore(), contract)}
         message={(pair, signing, actor, expiresAt) =>
-          frozen
-            ? postingMessage(
-                config.network,
-                contract,
-                actor,
-                frozen.nonce,
-                frozen.terms,
-                pair,
-                expiresAt,
-                signing,
-              )
-            : ""
+          postingText(
+            {
+              ...keys,
+              primary: pair.primary,
+              backup: pair.backup,
+              actor,
+              expiresAt,
+            },
+            signing,
+          )
         }
       />
+      {frozen ? (
+        <p>
+          The proofs cover issue #{frozen.terms.issue} on{" "}
+          <code>{frozen.terms.base_ref}</code>, reward{" "}
+          {near(frozen.terms.reward)}, claim by {utc(frozen.terms.claim_by)},
+          merge before {utc(frozen.terms.merge_deadline)}. Editing the form asks
+          for new proofs.
+        </p>
+      ) : null}
       <p>
         You attach {near(reward + budget + storage)}: the reward {near(reward)},{" "}
         {near(budget)} reserved for merge checks, which returns in full to your
@@ -391,10 +438,16 @@ function PostBounty({
       <button
         type="button"
         className="button button-primary"
-        disabled={busy || !complete || !frozen || !check.ok}
+        disabled={busy || !frozen || !check.ok}
         onClick={() => void submit()}
       >
-        Post and lock {near(reward + budget + storage)}
+        Post and lock{" "}
+        {near(
+          postingAttachment(
+            config,
+            frozen ? BigInt(frozen.terms.reward) : reward,
+          ).total,
+        )}
       </button>
     </section>
   );
@@ -425,7 +478,36 @@ function ClaimAction({
   config: Config;
   done: () => void;
 }) {
-  const [keys, dispatch] = useReducer(keyReducer, initialKeyState);
+  const claimText = (state: KeyConfirmState, signing: Signing) => {
+    const p = keyPair(state);
+    return p && state.actor && state.expiresAt
+      ? claimMessage(
+          config.network,
+          contract,
+          state.actor,
+          id,
+          bounty.contributor_github_id,
+          p,
+          state.expiresAt,
+          signing,
+        )
+      : "";
+  };
+  const draft = useKeyDraft({
+    contract,
+    scope: `claim:${id}`,
+    role: "contributor",
+    connected: wallet.accountId,
+    messages: (state) =>
+      claimText(state, "primary")
+        ? {
+            primary: claimText(state, "primary"),
+            backup: claimText(state, "backup"),
+          }
+        : null,
+    frozen: null,
+  });
+  const { state: keys, dispatch } = draft;
   const [challenge, setChallenge] = useState("");
   const [mismatch, setMismatch] = useState(false);
   const [gist, setGist] = useState("");
@@ -495,6 +577,7 @@ function ClaimAction({
         deposit: BigInt(config.run_deposit),
         gas: RUN_GAS,
       });
+      draft.finish();
       done();
     });
   return (
@@ -510,6 +593,7 @@ function ClaimAction({
         state={keys}
         dispatch={dispatch}
         busy={busy}
+        candidates={loadCandidates(browserStore(), contract)}
         message={(p, signing, actor, expiresAt) =>
           claimMessage(
             config.network,
@@ -652,6 +736,7 @@ function Actions({
     <div className="bounty-actions">
       {bounty.status === "Open" && now < Number(bounty.claim_by) ? (
         <ClaimAction
+          key={wallet.accountId}
           {...{ contract, id, bounty, wallet, run, busy, config, done }}
         />
       ) : null}
@@ -1050,8 +1135,12 @@ export function PrBounties({
           their GitHub account with a gist they own, not with a comment.
         </p>
       </section>
+      {wallet ? (
+        <BackupSigner wallet={wallet} contract={contract} busy={busy} />
+      ) : null}
       {wallet && poster && !config.paused ? (
         <PostBounty
+          key={wallet.accountId}
           contract={contract}
           config={config}
           wallet={wallet}

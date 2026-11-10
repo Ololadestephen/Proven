@@ -8,6 +8,7 @@ import { ReadError } from "./model.ts";
 import {
   classifyWithdrawal,
   decodeInfo,
+  type ExpectedWithdrawal,
   decodeRecord,
   slotArgs,
   SETTLEMENT_KIND,
@@ -197,54 +198,35 @@ async function blockRoute(transport: typeof fetch) {
   };
 }
 
-/** The withdrawal's signed fields come from the transaction's own arguments. */
+/**
+ * The finalized outcome of one withdrawal, classified against the fields the page signed: the
+ * vault, destination, amount and withdrawal number, and the account that submitted it.
+ */
 async function withdrawalRoute(
   hash: string,
-  sender: string,
+  expected: ExpectedWithdrawal & { sender: string },
   transport: typeof fetch,
 ) {
-  const answer = await rpcAnswer(
-    "EXPERIMENTAL_tx_status",
-    { tx_hash: hash, sender_account_id: sender, wait_until: "FINAL" },
-    transport,
-  );
-  const tx = answer.result as
-    | {
-        transaction?: {
-          receiver_id?: string;
-          actions?: {
-            FunctionCall?: { method_name?: string; args?: string };
-          }[];
-        };
-      }
-    | undefined;
-  const call = tx?.transaction?.actions?.[0]?.FunctionCall;
-  const vault = tx?.transaction?.receiver_id ?? "";
-  if (
-    answer.error ||
-    !tx ||
-    !call ||
-    call.method_name !== "withdraw" ||
-    !VAULT.test(vault)
-  )
-    return { hash, outcome: { kind: "unknown" } };
-  let signed: { to: string; amount: bigint; n: bigint };
+  let outcome;
   try {
-    const args = JSON.parse(
-      Buffer.from(call.args ?? "", "base64").toString("utf8"),
+    const answer = await rpcAnswer(
+      "EXPERIMENTAL_tx_status",
+      {
+        tx_hash: hash,
+        sender_account_id: expected.sender,
+        wait_until: "FINAL",
+      },
+      transport,
     );
-    signed = {
-      to: String(args.to),
-      amount: BigInt(args.amount),
-      n: BigInt(args.n),
-    };
+    outcome = answer.error
+      ? { kind: "pending", why: "not found yet" }
+      : classifyWithdrawal(answer.result, expected);
   } catch {
-    return { hash, outcome: { kind: "unknown" } };
+    outcome = { kind: "pending", why: "unreadable" };
   }
-  const outcome = classifyWithdrawal(tx, vault, signed);
   return {
     hash,
-    vault,
+    vault: expected.vault,
     outcome: JSON.parse(
       JSON.stringify(outcome, (_, v) =>
         typeof v === "bigint" ? v.toString() : v,
@@ -257,7 +239,7 @@ async function withdrawalRoute(
  * GET /api/market/bounties, …/poster/<account>,
  * …/challenge/<bounty>/<wallet>/<expires_at>/<primary>/<backup>, …/nonce/<maintainer>/<nonce>,
  * …/vault/<vault>, …/slot/<vault>/<bounty>/<kind>, …/account/<account>, …/block and
- * …/withdrawal/<tx_hash>/<sender>.
+ * …/withdrawal/<tx_hash>/<sender>/<vault>/<to>/<amount>/<n>.
  */
 export async function bountiesRoute(
   path: string,
@@ -357,11 +339,25 @@ export async function bountiesRoute(
     return accountRoute(account, transport);
   }
   if (parts[0] === "block" && parts.length === 1) return blockRoute(transport);
-  if (parts[0] === "withdrawal" && parts.length === 3) {
-    const [, hash = "", sender = ""] = parts;
-    if (!TX_HASH.test(hash) || !ACCOUNT.test(sender))
-      throw new ReadError("Name the transaction hash and its sender.");
-    return withdrawalRoute(hash, sender, transport);
+  if (parts[0] === "withdrawal" && parts.length === 7) {
+    const [, hash = "", sender = "", vault = "", to = "", amount = "", n = ""] =
+      parts;
+    if (
+      !TX_HASH.test(hash) ||
+      !ACCOUNT.test(sender) ||
+      !VAULT.test(vault) ||
+      !ACCOUNT.test(to) ||
+      !/^[0-9]{1,40}$/.test(amount) ||
+      !DECIMAL.test(n)
+    )
+      throw new ReadError(
+        "Name the transaction, its sender, the vault, the destination, the amount and the number.",
+      );
+    return withdrawalRoute(
+      hash,
+      { sender, vault, to, amount: BigInt(amount), n: BigInt(n) },
+      transport,
+    );
   }
   throw new ReadError("Route not found.", 404);
 }

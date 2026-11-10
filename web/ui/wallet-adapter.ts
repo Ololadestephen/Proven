@@ -2,7 +2,10 @@ import type {
   NearWalletBase,
   NearConnectorOptions,
 } from "@hot-labs/near-connect";
-import { DefinitiveWalletFailure } from "./action-guard.ts";
+import {
+  DefinitiveWalletFailure,
+  IncompleteWalletOutcome,
+} from "./action-guard.ts";
 import type { Wallet } from "./market-types.ts";
 import { IS_MAINNET, NETWORK } from "./network.ts";
 import { b64, randomNonce, RELAY_RECIPIENT } from "./market-client.ts";
@@ -63,6 +66,8 @@ export function adaptWallet(
           },
         ],
       });
+      // Keep the hash whatever the outcome, so the page can re-check the transaction itself.
+      const hash = outcome?.transaction?.hash ?? null;
       if (
         outcome &&
         outcome.status !== null &&
@@ -71,6 +76,7 @@ export function adaptWallet(
       )
         throw new DefinitiveWalletFailure(
           "The transaction reported failure. Refresh the job and check wallet history before retrying.",
+          hash,
         );
       if (call.method === "post_bid")
         return postingReceipt(outcome, call.receiver, accountId);
@@ -80,11 +86,12 @@ export function adaptWallet(
         typeof outcome.status !== "object" ||
         !("SuccessValue" in outcome.status)
       )
-        throw new Error(
+        throw new IncompleteWalletOutcome(
           "The wallet did not confirm a successful transaction. Check the chain before retrying.",
+          hash,
         );
       return {
-        transaction_hash: outcome.transaction?.hash ?? "",
+        transaction_hash: hash ?? "",
         result: decodeCallResult(outcome.status.SuccessValue),
       };
     },

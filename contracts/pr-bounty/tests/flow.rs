@@ -196,8 +196,8 @@ async fn payout_and_budget_return_reach_the_vaults_and_withdraw_exactly() -> any
     let vault_kept = fund_c + fund_m;
     let peak_fees = 2 * DEPOSIT_FEE;
     env.note(format!(
-        "STORAGE (short names): contract grew {grown} bytes ({} NEAR); vaults kept {} NEAR ({} + {}); kept total {} NEAR; peak with both fees ({} NEAR) in flight {} NEAR; deposit 0.02 NEAR",
-        near(contract_cost), near(vault_kept), near(fund_c), near(fund_m), near(contract_cost + vault_kept), near(peak_fees), near(contract_cost + peak_fees)
+        "STORAGE (short names): contract grew {grown} bytes ({} NEAR); vaults kept {} NEAR ({} + {}); kept total {} NEAR; peak with both fees ({} NEAR) in flight {} NEAR; deposit {} NEAR",
+        near(contract_cost), near(vault_kept), near(fund_c), near(fund_m), near(contract_cost + vault_kept), near(peak_fees), near(contract_cost + peak_fees), near(STORAGE)
     ));
     env.save_trace("payout-and-budget-return")?;
     Ok(())
@@ -205,7 +205,7 @@ async fn payout_and_budget_return_reach_the_vaults_and_withdraw_exactly() -> any
 
 /// The largest bounty the contract accepts: 64-character maintainer and contributor accounts,
 /// a 255-byte base branch, the buyer's first bounty, both vaults new and both deposits in flight
-/// at once. Measures what the 0.02 NEAR storage deposit has to cover.
+/// at once. Measures what the storage deposit has to cover.
 #[tokio::test]
 async fn worst_case_storage_with_two_new_vaults_and_overlapping_fees() -> anyhow::Result<()> {
     let long_maint = "m".repeat(54);
