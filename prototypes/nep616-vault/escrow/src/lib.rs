@@ -1,32 +1,28 @@
-//! Prototype escrow (sandbox only) for NEP-616 vault settlement.
+//! Prototype escrow (sandbox only) for NEP-616 vault settlement bound to a recipient key.
 //!
-//! A settlement is one payout or refund, `(bounty, kind)`, with a fixed recipient and amount,
-//! reserved in `held` until it is confirmed. Settling sends one receipt to the recipient's vault:
-//! `StateInit` (code by hash, recipient in its state) and `deposit(bounty, kind, attempt)` with
-//! the amount attached. Two callbacks follow it, as in the production contract, and both can be
-//! made to fail.
+//! A settlement is one payout or refund, `(bounty, kind)`, with a fixed amount and a fixed
+//! recipient *key*. The key is bound when the settlement is reserved, with a NEP-413 signature
+//! that proves the recipient holds it (in the bounty contract: the contributor at claim time,
+//! the maintainer at posting). The amount stays reserved in `held` until it is confirmed.
 //!
-//! When neither callback has recorded the attempt, anyone may call `reconcile`. It asks the same
-//! vault, again with `StateInit` so the vault exists, to `seal` that attempt, and reads the
-//! answer in its own callback. The vault's code is fixed by its address, so its answer is
-//! authentic:
-//! - a deposit for this attempt with this amount: the settlement is done and released once;
-//! - no deposit, sealed through this attempt: the attempt can never be deposited, so it is
-//!   failed and due again, still reserved. Its NEAR comes back to the escrow as a refund.
+//! Settling sends one receipt to the key's vault: `StateInit` (code by hash; the key, a zero
+//! withdrawal number and a zero storage fund) and `deposit` with the amount plus a storage fee.
+//! The vault keeps only the storage its record needs and returns the rest of the fee here. Two
+//! callbacks follow, and both can be made to fail.
 //!
-//! A new attempt is sent only while the escrow's balance covers its storage and everything it
-//! holds, so a resend never spends another settlement's reservation while an old attempt's
-//! refund is still on its way. That guard decides when to send, never what happened.
+//! When neither callback recorded the attempt, anyone may `reconcile`: the escrow asks the same
+//! vault to `seal` that attempt and applies the answer in its own callback. A deposit for this
+//! attempt and amount releases the reservation once; a sealed attempt with no deposit is failed
+//! and due again, still reserved, and its NEAR comes back here as a refund. A new attempt goes out
+//! only once everything due is covered by the escrow's balance, so it never spends another
+//! settlement's reservation ahead of a refund.
 
-use near_sdk::borsh::BorshSerialize;
-use near_sdk::json_types::{Base58CryptoHash, U128};
-use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::serde_json;
+use near_sdk::json_types::{Base58CryptoHash, Base64VecU8, U128};
 use near_sdk::state_init::{StateInit, StateInitV1};
 use near_sdk::store::LookupMap;
 use near_sdk::{
-    env, near, require, AccountId, CryptoHash, Gas, GlobalContractId, NearToken, PanicOnDefault,
-    PromiseError,
+    env, near, AccountId, CryptoHash, Gas, GlobalContractId, NearToken, PanicOnDefault,
+    PromiseError, PublicKey,
 };
 
 const GAS_FOR_DEPOSIT: Gas = Gas::from_tgas(10);
@@ -37,14 +33,19 @@ const GAS_FOR_SETTLE_CALLBACK: Gas = Gas::from_tgas(10);
 const GAS_FOR_OUTCOME_CALLBACK: Gas = Gas::from_tgas(5);
 const GAS_FOR_RECONCILE_CALLBACK: Gas = Gas::from_tgas(10);
 const GAS_FOR_HOP: Gas = Gas::from_tgas(3);
-/// Attached to `StateInit`; the runtime keeps what the vault's storage needs and returns the
-/// rest to the escrow.
-pub const VAULT_INIT_DEPOSIT: NearToken = NearToken::from_millinear(10);
-/// What `reconcile` must attach: it pays the vault's `StateInit` (unused part returned) and stays
-/// in the vault as the storage of the seal record.
-pub const RECONCILE_DEPOSIT: NearToken = NearToken::from_millinear(11);
-const SEAL_DEPOSIT: NearToken = NearToken::from_millinear(1);
-const MAX_SEAL_ANSWER: usize = 512;
+/// The smallest settlement this prototype accepts.
+pub const MIN_AMOUNT: NearToken = NearToken::from_millinear(10);
+/// Attached to `StateInit`. A vault starts far below the 770-byte zero-balance limit, so the
+/// runtime keeps nothing and returns it all; it only matters if that rule ever changes.
+pub const VAULT_INIT_DEPOSIT: NearToken = NearToken::from_millinear(5);
+/// Attached to each `deposit` and `seal` on top of any amount: enough for 500 bytes of storage.
+/// The vault keeps exactly what its storage needs and returns the rest.
+pub const STORAGE_FEE: NearToken = NearToken::from_millinear(5);
+/// What `reconcile` must attach: the `StateInit` deposit and the seal's storage fee. Whatever the
+/// vault does not keep goes back to the caller.
+pub const RECONCILE_DEPOSIT: NearToken = NearToken::from_millinear(10);
+const NEP413_TAG: u32 = 2_147_484_061;
+const SLOT_LEN: usize = 25;
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +66,7 @@ pub enum Outcome {
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settlement {
-    pub to: AccountId,
+    pub key: PublicKey,
     pub vault: AccountId,
     pub amount: U128,
     pub state: State,
@@ -77,77 +78,69 @@ pub struct Settlement {
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Faults {
-    /// Both settlement callbacks panic.
     pub callbacks: bool,
-    /// The vault deposit gets too little gas, so the funding receipt fails.
     pub deposit: bool,
-    /// The reconcile callback panics (after the vault has sealed).
     pub reconcile_callback: bool,
-    /// Holds the funding receipt back behind this many self-calls, so a seal can overtake it.
     pub delay_hops: u8,
-}
-
-/// The vault's `seal` answer.
-#[derive(Deserialize, Debug)]
-#[serde(crate = "near_sdk::serde")]
-struct Slot {
-    deposit: Option<DepositRecord>,
-    sealed_through: u32,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(crate = "near_sdk::serde")]
-struct DepositRecord {
-    attempt: u32,
-    amount: U128,
-}
-
-#[derive(Serialize)]
-#[serde(crate = "near_sdk::serde")]
-struct SlotArgs {
-    bounty: u64,
-    kind: u8,
-    attempt: u32,
-}
-
-#[derive(BorshSerialize)]
-#[borsh(crate = "near_sdk::borsh")]
-struct VaultState<'a> {
-    recipient: &'a AccountId,
 }
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Escrow {
-    owner: AccountId,
     vault_code: CryptoHash,
     /// Every settlement not confirmed done.
     held: u128,
-    /// The part of `held` whose NEAR has left the escrow in an attempt with no result yet.
+    /// The part of `held` whose NEAR has left in an attempt with no result yet.
     in_flight: u128,
     settlements: LookupMap<(u64, u8), Settlement>,
     faults: Faults,
 }
 
-fn vault_state(recipient: &AccountId) -> Vec<u8> {
-    near_sdk::borsh::to_vec(&VaultState { recipient }).expect("serializable")
+fn slot_args(bounty: u64, kind: u8, attempt: u32) -> Vec<u8> {
+    let mut out = bounty.to_le_bytes().to_vec();
+    out.push(kind);
+    out.extend(attempt.to_le_bytes());
+    out
 }
 
-fn args(bounty: u64, kind: u8, attempt: u32) -> Vec<u8> {
-    serde_json::to_vec(&SlotArgs {
-        bounty,
-        kind,
-        attempt,
-    })
-    .expect("serializable")
+fn key_bytes(key: &PublicKey) -> [u8; 32] {
+    let bytes = key.as_bytes();
+    require(
+        bytes.len() == 33 && bytes[0] == 0,
+        "the recipient key must be ed25519",
+    );
+    bytes[1..].try_into().expect("32 bytes")
+}
+
+fn require(ok: bool, msg: &str) {
+    if !ok {
+        env::panic_str(msg)
+    }
+}
+
+/// The NEP-413 hash a key signs to bind itself to a settlement: message
+/// `proven-vault-bind:v1|chain=…|escrow=…|bounty=…|kind=…`, recipient the escrow, zero nonce.
+fn bind_hash(bounty: u64, kind: u8) -> [u8; 32] {
+    let me = env::current_account_id();
+    let message = format!(
+        "proven-vault-bind:v1|chain={}|escrow={me}|bounty={bounty}|kind={kind}",
+        env::chain_id()
+    );
+    let mut payload = NEP413_TAG.to_le_bytes().to_vec();
+    payload.extend((message.len() as u32).to_le_bytes());
+    payload.extend(message.as_bytes());
+    payload.extend([0u8; 32]);
+    payload.extend((me.as_str().len() as u32).to_le_bytes());
+    payload.extend(me.as_bytes());
+    payload.push(0);
+    env::sha256_array(&payload)
 }
 
 #[near]
 impl Escrow {
     #[init]
-    pub fn new(owner: AccountId, vault_code: Base58CryptoHash) -> Self {
+    pub fn new(vault_code: Base58CryptoHash) -> Self {
         Self {
-            owner,
             vault_code: vault_code.into(),
             held: 0,
             in_flight: 0,
@@ -156,26 +149,39 @@ impl Escrow {
         }
     }
 
-    /// The vault address of `recipient`: NEP-616 over the pinned code hash and its state.
-    pub fn vault_of(&self, recipient: AccountId) -> AccountId {
-        self.state_init(&recipient).derive_account_id()
+    /// The vault of `key`: NEP-616 over the pinned code hash and its initial state.
+    pub fn vault_of(&self, key: PublicKey) -> AccountId {
+        self.state_init(&key).derive_account_id()
     }
 
-    /// Stands in for a bounty's payout or refund decision: locks the attached NEAR for `to`.
+    /// Locks the attached NEAR (at least 0.01) for the holder of `key`, who proves it by signing
+    /// the bind message for this settlement (NEP-413).
     #[payable]
-    pub fn reserve(&mut self, bounty: u64, kind: u8, to: AccountId) {
-        require!(
+    pub fn reserve(&mut self, bounty: u64, kind: u8, key: PublicKey, proof: Base64VecU8) {
+        require(
             !self.settlements.contains_key(&(bounty, kind)),
-            "already reserved"
+            "already reserved",
         );
         let amount = env::attached_deposit().as_yoctonear();
-        require!(amount > 0, "attach the amount");
-        let vault = self.vault_of(to.clone());
+        require(
+            amount >= MIN_AMOUNT.as_yoctonear(),
+            "attach at least 0.01 NEAR",
+        );
+        let signature: [u8; 64] = proof
+            .0
+            .as_slice()
+            .try_into()
+            .unwrap_or_else(|_| env::panic_str("proof must be a 64-byte signature"));
+        require(
+            env::ed25519_verify(&signature, bind_hash(bounty, kind), &key_bytes(&key)),
+            "the key did not sign this settlement",
+        );
+        let vault = self.vault_of(key.clone());
         self.held += amount;
         self.settlements.insert(
             (bounty, kind),
             Settlement {
-                to,
+                key,
                 vault,
                 amount: U128(amount),
                 state: State::Due,
@@ -191,30 +197,28 @@ impl Escrow {
             .settlements
             .get(&(bounty, kind))
             .unwrap_or_else(|| env::panic_str("no such settlement"));
-        require!(s.state == State::Due, "this settlement is not due");
-        // Every due settlement's NEAR must be here, this one's included. A failed attempt's
-        // refund that has not arrived yet leaves the balance short, so we wait for it.
+        require(s.state == State::Due, "this settlement is not due");
+        // Everything due must be here, plus this attempt's fees, before it leaves.
         let storage = env::storage_byte_cost().saturating_mul(u128::from(env::storage_usage()));
-        require!(
+        let fees = STORAGE_FEE.saturating_add(VAULT_INIT_DEPOSIT);
+        require(
             env::account_balance()
                 .saturating_sub(storage)
+                .saturating_sub(fees)
                 .as_yoctonear()
                 >= self.held - self.in_flight,
-            "waiting for an earlier attempt's refund to arrive"
+            "waiting for an earlier attempt's refund to arrive",
         );
         let faults = self.faults;
         let code = self.vault_code;
-        let s = self
-            .settlements
-            .get_mut(&(bounty, kind))
-            .expect("checked above");
+        let s = self.settlements.get_mut(&(bounty, kind)).expect("checked");
         self.in_flight += s.amount.0;
         s.state = State::Sending;
         s.attempt += 1;
         s.outcome = Outcome::Unknown;
-        let (to, vault, amount, attempt) = (s.to.clone(), s.vault.clone(), s.amount.0, s.attempt);
+        let (key, vault, amount, attempt) = (s.key.clone(), s.vault.clone(), s.amount.0, s.attempt);
         env::log_str(&format!(
-            "settle_sent bounty={bounty} kind={kind} attempt={attempt} to={to} vault={vault} amount={amount}"
+            "settle_sent bounty={bounty} kind={kind} attempt={attempt} vault={vault} amount={amount}"
         ));
         let me = env::current_account_id();
         let zero = NearToken::from_yoctonear(0);
@@ -227,8 +231,9 @@ impl Escrow {
             }
             env::promise_batch_then(hop, &vault)
         };
-        let init = env::promise_batch_action_state_init(p, code, VAULT_INIT_DEPOSIT);
-        env::set_state_init_data_entry(p, init, b"STATE", &vault_state(&to));
+        self.init_vault(p, code, &key);
+        let mut args = slot_args(bounty, kind, attempt);
+        args.extend(amount.to_le_bytes());
         let method = if faults.deposit {
             FAILING_DEPOSIT_METHOD
         } else {
@@ -237,11 +242,14 @@ impl Escrow {
         env::promise_batch_action_function_call(
             p,
             method,
-            &args(bounty, kind, attempt),
-            NearToken::from_yoctonear(amount),
+            &args,
+            NearToken::from_yoctonear(amount).saturating_add(STORAGE_FEE),
             GAS_FOR_DEPOSIT,
         );
-        let a = args(bounty, kind, attempt);
+        let a = near_sdk::serde_json::to_vec(
+            &near_sdk::serde_json::json!({"bounty": bounty, "kind": kind, "attempt": attempt}),
+        )
+        .expect("json");
         env::promise_then(
             p,
             me.clone(),
@@ -262,14 +270,14 @@ impl Escrow {
 
     #[private]
     pub fn on_settle(&mut self, bounty: u64, kind: u8, attempt: u32) -> bool {
-        require!(!self.faults.callbacks, "fault: on_settle fails");
+        require(!self.faults.callbacks, "fault: on_settle fails");
         let ok = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
         self.finish(bounty, kind, attempt, ok, "callback")
     }
 
     #[private]
     pub fn on_settle_outcome(&mut self, bounty: u64, kind: u8, attempt: u32) {
-        require!(!self.faults.callbacks, "fault: on_settle_outcome fails");
+        require(!self.faults.callbacks, "fault: on_settle_outcome fails");
         let ok = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
         if let Some(s) = self.settlements.get_mut(&(bounty, kind)) {
             if s.attempt == attempt && s.state == State::Sending && s.outcome == Outcome::Unknown {
@@ -282,76 +290,79 @@ impl Escrow {
         }
     }
 
-    /// Asks the recipient's vault to seal `attempt` of this settlement and records its answer.
-    /// Anyone may call it, for the current attempt or an earlier one, as often as they like.
-    /// Attach exactly 0.011 NEAR (0.001 stays in the vault as the seal's storage).
+    /// Asks the vault to seal `attempt` and records its answer. Anyone may call it, for the
+    /// current attempt or an earlier one, as often as they like. Attach exactly 0.01 NEAR; what
+    /// the vault does not keep for the seal's storage comes back to the caller.
     #[payable]
     pub fn reconcile(&mut self, bounty: u64, kind: u8, attempt: u32) {
-        require!(
+        require(
             env::attached_deposit() == RECONCILE_DEPOSIT,
-            "attach exactly 0.011 NEAR"
+            "attach exactly 0.01 NEAR",
         );
         let s = self
             .settlements
             .get(&(bounty, kind))
-            .unwrap_or_else(|| env::panic_str("no such settlement"));
-        require!(
+            .unwrap_or_else(|| env::panic_str("no such settlement"))
+            .clone();
+        require(
             attempt >= 1 && attempt <= s.attempt,
-            "no such attempt was sent"
+            "no such attempt was sent",
         );
         let p = env::promise_batch_create(&s.vault);
-        let init = env::promise_batch_action_state_init(p, self.vault_code, VAULT_INIT_DEPOSIT);
-        env::set_state_init_data_entry(p, init, b"STATE", &vault_state(&s.to));
+        self.init_vault(p, self.vault_code, &s.key);
         env::promise_batch_action_function_call(
             p,
             "seal",
-            &args(bounty, kind, attempt),
-            SEAL_DEPOSIT,
+            &slot_args(bounty, kind, attempt),
+            STORAGE_FEE,
             GAS_FOR_SEAL,
         );
-        // Whatever this receipt does not use, or all of it if it fails, goes back to the caller.
         env::promise_set_refund_to(p, &env::predecessor_account_id());
+        let a = near_sdk::serde_json::to_vec(
+            &near_sdk::serde_json::json!({"bounty": bounty, "kind": kind, "attempt": attempt}),
+        )
+        .expect("json");
         let answer = env::promise_then(
             p,
             env::current_account_id(),
             "on_reconcile",
-            args(bounty, kind, attempt),
+            a,
             NearToken::from_yoctonear(0),
             GAS_FOR_RECONCILE_CALLBACK,
         );
         env::promise_return(answer);
     }
 
-    /// Applies the vault's sealed answer to `attempt`, only if that attempt is still the one in
-    /// flight with no recorded result.
+    /// Applies the vault's sealed answer to `attempt`, only while that attempt is in flight.
     #[private]
     pub fn on_reconcile(&mut self, bounty: u64, kind: u8, attempt: u32) -> String {
-        require!(!self.faults.reconcile_callback, "fault: on_reconcile fails");
-        let answer = match env::promise_result_checked(0, MAX_SEAL_ANSWER) {
-            Ok(bytes) => match serde_json::from_slice::<Slot>(&bytes) {
-                Ok(slot) => slot,
-                Err(_) => return self.note(bounty, kind, attempt, "ignored:malformed"),
-            },
-            Err(_) => return self.note(bounty, kind, attempt, "ignored:seal_failed"),
+        require(!self.faults.reconcile_callback, "fault: on_reconcile fails");
+        let slot = match env::promise_result_checked(0, SLOT_LEN) {
+            Ok(bytes) if bytes.len() == SLOT_LEN => bytes,
+            Ok(_) => return note(bounty, kind, attempt, "ignored:malformed"),
+            Err(_) => return note(bounty, kind, attempt, "ignored:seal_failed"),
         };
+        let deposited = slot[0] == 1;
+        let d_attempt = u32::from_le_bytes(slot[1..5].try_into().expect("4"));
+        let d_amount = u128::from_le_bytes(slot[5..21].try_into().expect("16"));
+        let sealed_through = u32::from_le_bytes(slot[21..25].try_into().expect("4"));
         let Some(s) = self.settlements.get(&(bounty, kind)) else {
             return "ignored:no_settlement".to_string();
         };
         if s.state != State::Sending || s.attempt != attempt {
-            return self.note(bounty, kind, attempt, "ignored:not_in_flight");
+            return note(bounty, kind, attempt, "ignored:not_in_flight");
         }
         let amount = s.amount.0;
-        match answer.deposit {
-            Some(d) if d.attempt == attempt && d.amount.0 == amount => {
-                self.finish(bounty, kind, attempt, true, "reconcile");
-                self.note(bounty, kind, attempt, "deposited")
-            }
-            Some(_) => self.note(bounty, kind, attempt, "ignored:other_deposit"),
-            None if answer.sealed_through >= attempt => {
-                self.finish(bounty, kind, attempt, false, "reconcile");
-                self.note(bounty, kind, attempt, "sealed_without_deposit")
-            }
-            None => self.note(bounty, kind, attempt, "ignored:not_sealed"),
+        if deposited && d_attempt == attempt && d_amount == amount {
+            self.finish(bounty, kind, attempt, true, "reconcile");
+            note(bounty, kind, attempt, "deposited")
+        } else if deposited {
+            note(bounty, kind, attempt, "ignored:other_deposit")
+        } else if sealed_through >= attempt {
+            self.finish(bounty, kind, attempt, false, "reconcile");
+            note(bounty, kind, attempt, "sealed_without_deposit")
+        } else {
+            note(bounty, kind, attempt, "ignored:not_sealed")
         }
     }
 
@@ -375,22 +386,39 @@ impl Escrow {
     pub fn in_flight(&self) -> U128 {
         U128(self.in_flight)
     }
+}
 
-    pub fn owner(&self) -> AccountId {
-        self.owner.clone()
-    }
+fn note(bounty: u64, kind: u8, attempt: u32, outcome: &str) -> String {
+    env::log_str(&format!(
+        "reconcile_resolved bounty={bounty} kind={kind} attempt={attempt} outcome={outcome}"
+    ));
+    outcome.to_string()
 }
 
 impl Escrow {
-    fn state_init(&self, recipient: &AccountId) -> StateInit {
+    fn entries(key: &PublicKey) -> [(Vec<u8>, Vec<u8>); 3] {
+        [
+            (b"k".to_vec(), key.as_bytes().to_vec()),
+            (b"n".to_vec(), 0u64.to_le_bytes().to_vec()),
+            (b"f".to_vec(), 0u128.to_le_bytes().to_vec()),
+        ]
+    }
+
+    fn state_init(&self, key: &PublicKey) -> StateInit {
+        key_bytes(key);
         StateInit::V1(StateInitV1 {
             code: GlobalContractId::CodeHash(self.vault_code),
-            data: [(b"STATE".to_vec(), vault_state(recipient))].into(),
+            data: Self::entries(key).into_iter().collect(),
         })
     }
 
-    /// One attempt's result, if that attempt is still in flight: success releases the
-    /// reservation once; failure makes the settlement due again, still reserved.
+    fn init_vault(&self, p: near_sdk::PromiseIndex, code: CryptoHash, key: &PublicKey) {
+        let init = env::promise_batch_action_state_init(p, code, VAULT_INIT_DEPOSIT);
+        for (k, v) in Self::entries(key) {
+            env::set_state_init_data_entry(p, init, &k, &v);
+        }
+    }
+
     fn finish(&mut self, bounty: u64, kind: u8, attempt: u32, ok: bool, by: &str) -> bool {
         let Some(s) = self.settlements.get_mut(&(bounty, kind)) else {
             return false;
@@ -414,12 +442,5 @@ impl Escrow {
             "settle_finished bounty={bounty} kind={kind} attempt={attempt} ok={ok} by={by}"
         ));
         true
-    }
-
-    fn note(&self, bounty: u64, kind: u8, attempt: u32, outcome: &str) -> String {
-        env::log_str(&format!(
-            "reconcile_resolved bounty={bounty} kind={kind} attempt={attempt} outcome={outcome}"
-        ));
-        outcome.to_string()
     }
 }

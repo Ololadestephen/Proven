@@ -1,13 +1,11 @@
 [package]
 name = "proven-proto-vault"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Prototype NEP-616 vault: holds NEAR for one recipient and keeps durable per-issuer settlement records"
+description = "Prototype NEP-616 vault bound to an ed25519 key: durable settlement records and NEP-413 signed withdrawals"
 license = "MIT"
 publish = false
 
+# No dependencies: raw host functions only, to keep the global contract small.
 [lib]
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-near-sdk = { workspace = true }
+crate-type = ["cdylib"]
