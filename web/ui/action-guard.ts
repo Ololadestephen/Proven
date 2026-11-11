@@ -1,13 +1,24 @@
 import type { Market, Call } from "./market-types.ts";
+import {
+  bountyReconciled,
+  isBountyMethod,
+  parseBountySnapshot,
+  type BountyIntent,
+  type BountySnapshot,
+} from "./bounty-reconcile.ts";
 export interface PendingAction {
   account: string;
   bidId?: number;
+  /** For a PR bounty call: the bounty it acts on, when it acts on one. */
+  bountyId?: number | null;
   before: string;
   label: string;
   createdAt: number;
   call?: { receiver: string; method: string; args: Record<string, unknown> };
 }
 export const PENDING_KEY = "proven-testnet-pending-action-v1";
+/** The PR bounty page keeps its own journal, so a bounty call never waits on the job board. */
+export const BOUNTY_PENDING_KEY = "proven-testnet-pending-bounty-action-v1";
 export function actionSnapshot(
   market: Market,
   account: string,
@@ -78,6 +89,30 @@ export function reconciled(pending: PendingAction, market: Market): boolean {
     return job?.state === "Released" || job?.state === "Releasing";
   return false;
 }
+/** The journaled call as a bounty intent, or null when it is not a complete bounty call. */
+export function bountyIntentOf(pending: PendingAction): BountyIntent | null {
+  const call = pending.call;
+  if (!call || !isBountyMethod(call.method)) return null;
+  return {
+    account: pending.account,
+    receiver: call.receiver,
+    method: call.method,
+    args: call.args,
+    bountyId: pending.bountyId ?? null,
+  };
+}
+/**
+ * Whether a journaled bounty call took effect, from the snapshot taken before it and a fresh one.
+ * A journal this code cannot read is never treated as applied.
+ */
+export function bountyActionReconciled(
+  pending: PendingAction,
+  now: BountySnapshot,
+): boolean {
+  const intent = bountyIntentOf(pending);
+  const before = parseBountySnapshot(pending.before);
+  return !!intent && !!before && bountyReconciled(intent, before, now);
+}
 export class ActionGate {
   active = false;
   enter() {
@@ -95,7 +130,42 @@ export function journalCall(pending: PendingAction, call: Call): PendingAction {
     call: { receiver: call.receiver, method: call.method, args: call.args },
   };
 }
-export class DefinitiveWalletFailure extends Error {}
+const TX_HASH = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/;
+/** A wallet failure that may still name the transaction it sent. */
+export class DefinitiveWalletFailure extends Error {
+  readonly transactionHash: string | null;
+  constructor(message: string, transactionHash: string | null = null) {
+    super(message);
+    this.transactionHash = transactionHash;
+  }
+}
+/** The wallet returned no final, successful outcome; the transaction may still have landed. */
+export class IncompleteWalletOutcome extends Error {
+  readonly transactionHash: string | null;
+  constructor(message: string, transactionHash: string | null) {
+    super(message);
+    this.transactionHash = transactionHash;
+  }
+}
+/** A transaction hash carried by a wallet error, if it names one in a known field. */
+export function transactionHashOf(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const e = error as Record<string, unknown>;
+  const nested = (v: unknown, key: string) =>
+    typeof v === "object" && v !== null
+      ? (v as Record<string, unknown>)[key]
+      : undefined;
+  for (const candidate of [
+    e.transactionHash,
+    e.transaction_hash,
+    e.txHash,
+    nested(e.transaction, "hash"),
+    nested(nested(e.outcome, "transaction"), "hash"),
+  ])
+    if (typeof candidate === "string" && TX_HASH.test(candidate))
+      return candidate;
+  return null;
+}
 export function definitelyNotApplied(error: unknown) {
   return (
     error instanceof DefinitiveWalletFailure ||

@@ -3,6 +3,7 @@ import test from "node:test";
 import { bountiesRoute, bountyContract } from "./bounties.ts";
 
 const CONTRACT = "pr-bounty.proven-funding.testnet";
+const KEY = "ed25519:6W6SaZv5FcUXp3G7SZP9o21hCudRJKTXqP9QZy4JhffW";
 
 /** A fake RPC that answers each view with `answers[method]` and records what was asked. */
 function chain(answers: Record<string, unknown>) {
@@ -27,7 +28,13 @@ function chain(answers: Record<string, unknown>) {
 
 test("the page is off unless a testnet contract is named", () => {
   assert.equal(bountyContract(undefined, "testnet"), null);
-  assert.equal(bountyContract(CONTRACT, "mainnet"), null);
+  // A contract on another network than the site's is refused, not read.
+  assert.throws(() => bountyContract(CONTRACT, "mainnet"), /different network/);
+  assert.equal(
+    bountyContract("proven-bounties.near", "mainnet"),
+    "proven-bounties.near",
+  );
+  assert.throws(() => bountyContract("proven-bounties.near", "testnet"));
   assert.equal(bountyContract(CONTRACT, "testnet"), CONTRACT);
   assert.throws(() => bountyContract("Not An Account", "testnet"));
 });
@@ -66,21 +73,20 @@ test("the listing reads the config and the first fifty bounties from the named c
   );
 });
 
-test("the challenge and poster routes take only validated path parts", async () => {
+test("the link challenge and poster routes take only validated path parts", async () => {
   const { asked, transport } = chain({
-    claim_challenge: "proven-claim:ab",
+    link_challenge: "proven-link:ab",
     is_poster: true,
   });
   assert.deepEqual(
     await bountiesRoute(
-      "/api/market/bounties/challenge/3/contrib.testnet/1794300000",
+      "/api/market/bounties/link-challenge/contrib.testnet/1794300000",
       transport,
       CONTRACT,
     ),
-    { challenge: "proven-claim:ab" },
+    { challenge: "proven-link:ab" },
   );
   assert.deepEqual(asked[0]?.args, {
-    bounty_id: 3,
     wallet: "contrib.testnet",
     expires_at: "1794300000",
   });
@@ -96,9 +102,10 @@ test("the challenge and poster routes take only validated path parts", async () 
     },
   );
   for (const bad of [
-    "/api/market/bounties/challenge/x/contrib.testnet/1",
-    "/api/market/bounties/challenge/3/Bad..Account/1",
-    "/api/market/bounties/challenge/3/contrib.testnet",
+    "/api/market/bounties/link-challenge/Bad..Account/1",
+    "/api/market/bounties/link-challenge/contrib.testnet",
+    "/api/market/bounties/link-challenge/contrib.testnet/x",
+    `/api/market/bounties/challenge/3/contrib.testnet/1794300000/${KEY}/${KEY}`,
     "/api/market/bounties/poster/",
     "/api/market/bounties/other",
   ])

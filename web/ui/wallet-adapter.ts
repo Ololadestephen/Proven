@@ -2,11 +2,15 @@ import type {
   NearWalletBase,
   NearConnectorOptions,
 } from "@hot-labs/near-connect";
-import { DefinitiveWalletFailure } from "./action-guard.ts";
+import {
+  DefinitiveWalletFailure,
+  IncompleteWalletOutcome,
+} from "./action-guard.ts";
 import type { Wallet } from "./market-types.ts";
 import { IS_MAINNET, NETWORK } from "./network.ts";
 import { b64, randomNonce, RELAY_RECIPIENT } from "./market-client.ts";
 import { decodeCallResult, postingReceipt } from "./posting.ts";
+import { ed25519Key, keyText } from "./bounty-keys.ts";
 
 export function connectorOptions(cspNonce: string): NearConnectorOptions {
   return {
@@ -63,6 +67,8 @@ export function adaptWallet(
           },
         ],
       });
+      // Keep the hash whatever the outcome, so the page can re-check the transaction itself.
+      const hash = outcome?.transaction?.hash ?? null;
       if (
         outcome &&
         outcome.status !== null &&
@@ -71,6 +77,7 @@ export function adaptWallet(
       )
         throw new DefinitiveWalletFailure(
           "The transaction reported failure. Refresh the job and check wallet history before retrying.",
+          hash,
         );
       if (call.method === "post_bid")
         return postingReceipt(outcome, call.receiver, accountId);
@@ -80,11 +87,12 @@ export function adaptWallet(
         typeof outcome.status !== "object" ||
         !("SuccessValue" in outcome.status)
       )
-        throw new Error(
+        throw new IncompleteWalletOutcome(
           "The wallet did not confirm a successful transaction. Check the chain before retrying.",
+          hash,
         );
       return {
-        transaction_hash: outcome.transaction?.hash ?? "",
+        transaction_hash: hash ?? "",
         result: decodeCallResult(outcome.status.SuccessValue),
       };
     },
@@ -104,29 +112,45 @@ export function adaptWallet(
       return hash;
     },
     async signForRelay(message) {
-      await checkAccount();
       const nonce = randomNonce();
-      const result = await chosen.signMessage({
-        network: NETWORK,
-        signerId: accountId,
-        message,
-        recipient: RELAY_RECIPIENT,
-        nonce,
-      });
-      if (
-        !result ||
-        result.accountId !== accountId ||
-        !result.publicKey ||
-        !result.signature
-      )
-        throw new Error(
-          "The wallet returned a signature for a different or missing account.",
-        );
       return {
-        public_key: result.publicKey,
-        signature_base64: result.signature,
+        ...(await signNep413(message, RELAY_RECIPIENT, nonce)),
         nonce_base64: b64(nonce),
       };
     },
+    signNep413,
+    async transactionKey() {
+      const accounts = await chosen.getAccounts({ network: NETWORK });
+      const key = accounts.find((a) => a.accountId === accountId)?.publicKey;
+      try {
+        return key ? keyText(ed25519Key(key)) : null;
+      } catch {
+        return null;
+      }
+    },
   };
+  async function signNep413(
+    message: string,
+    recipient: string,
+    nonce: Uint8Array,
+  ) {
+    await checkAccount();
+    const result = await chosen.signMessage({
+      network: NETWORK,
+      signerId: accountId,
+      message,
+      recipient,
+      nonce,
+    });
+    if (
+      !result ||
+      result.accountId !== accountId ||
+      !result.publicKey ||
+      !result.signature
+    )
+      throw new Error(
+        "The wallet returned a signature for a different or missing account.",
+      );
+    return { public_key: result.publicKey, signature_base64: result.signature };
+  }
 }

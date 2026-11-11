@@ -52,6 +52,9 @@ function fixture(t: TestContext) {
         nonce_base64: "fixture-nonce",
       };
     },
+    async signNep413() {
+      throw new Error("not used by job actions");
+    },
     async signOut() {},
     async transfer() {
       return "fixture-hash";

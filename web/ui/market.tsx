@@ -40,6 +40,7 @@ function App() {
     run,
     refresh,
     releasePending,
+    bounty,
   } = state;
   return (
     <MarketLayout
@@ -78,40 +79,9 @@ function App() {
         </div>
       ) : null}
       {pending && !busy ? (
-        <section className="workspace-card job-pending">
-          <h2>Did that go through?</h2>
-          <p>
-            {pending.label}. We haven’t seen this on the chain yet, so other
-            actions are paused to stop it being sent twice.
-          </p>
-          <div className="market-actions">
-            <button
-              type="button"
-              className="button button-primary"
-              disabled={clock - pending.createdAt < 15000}
-              onClick={() =>
-                void releasePending().catch((reason) =>
-                  setError(reason.message),
-                )
-              }
-            >
-              {clock - pending.createdAt < 15000
-                ? "Checking the chain…"
-                : "I cancelled it: check and continue"}
-            </button>
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void refresh().catch(() => undefined)}
-            >
-              Check again
-            </button>
-          </div>
-          <p className="post-hint">
-            If you signed it, this clears by itself once it lands. Pressing
-            “check and continue” reads the chain first.
-          </p>
-        </section>
+        <p className="market-note" role="status">
+          {pending.label}: confirming on chain…
+        </p>
       ) : null}
       {route.section === "market" && !canPost(wallet?.accountId) ? (
         <p className="market-note">
@@ -147,6 +117,8 @@ function App() {
           run={run}
           clock={clock}
           busy={!!busy || !!pending || boardUnavailable}
+          bounty={bounty}
+          bountyBusy={!!busy}
         />
       ) : null}
     </MarketLayout>

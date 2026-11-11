@@ -2,19 +2,17 @@
 name = "proven-pr-bounty"
 version = "0.1.0"
 edition = "2021"
-description = "Proven PR merge bounties: pays a claimed contributor in NEAR after an attested GitHub merge check of a nominated pull request"
+description = "Proven PR merge bounties: settles a claimed contributor's payout, or the maintainer's refund, into key-bound NEP-616 vaults after an attested GitHub merge check"
 license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# Test builds only. The first makes the transfer bookkeeping callback fail, to show recovery from
-# the separately recorded outcome; with the second as well, both callbacks fail, to show that
-# nothing is ever resent without an outcome.
-fault-transfer-callback = []
-fault-outcome-callback = []
-
+# Test builds only: deterministic faults keyed by the bounty's issue number or the signer (lost
+# settlement callbacks, a failed first deposit, a delayed deposit, a failed reconcile callback)
+# and short recovery delays. The release build contains none of it.
+test-faults = []
 [dependencies]
 near-sdk = { version = "5.30", features = ["deterministic-account-ids"] }
 
@@ -26,6 +24,14 @@ serde_json = "1"
 anyhow = "1"
 reqwest = { version = "=0.12.28", default-features = false, features = ["json"] }
 proven-pr-bounty-verifier = { path = "../../pr-bounty-verifier" }
+proven-vault = { path = "../vault" }
+ed25519-dalek = "2"
+sha2 = "0.10"
+sha3 = "0.10"
+rand_chacha = "0.3"
+bs58 = "0.5"
+base64 = "0.22"
+near-global-contracts = { version = "~0.3.3", features = ["borsh"] }
 
 [profile.release]
 codegen-units = 1

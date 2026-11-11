@@ -209,3 +209,40 @@
   font-size: 13px;
   line-height: 1.8;
 }
+/* The wallet button keeps to its own space, so it never runs into the "more" button beside it. */
+.workspace-app .sidebar-account-row {
+  gap: 10px;
+}
+.workspace-app .sidebar-account .market-wallet > .button,
+.workspace-app .sidebar-account .market-wallet summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-app .sidebar-account-row > .sidebar-more {
+  flex: none;
+}
+.workspace-app .sidebar-account .market-wallet {
+  grid-template-columns: minmax(0, 1fr);
+}
+.workspace-app .sidebar-account .market-wallet details {
+  min-width: 0;
+}
+.workspace-app .sidebar-account .market-wallet > .button,
+.workspace-app .sidebar-account .market-wallet summary {
+  display: block;
+  text-align: center;
+}
+/* The wallet row uses the account area's full width, so "Connect wallet" fits and the more menu
+   sits at the right edge. The network line keeps its inset. */
+.workspace-app .sidebar-account {
+  padding-inline: 0;
+}
+.workspace-app .sidebar-account .sidebar-status {
+  padding-inline: 13px;
+}
+.workspace-app .sidebar-account .market-wallet > .button,
+.workspace-app .sidebar-account .market-wallet summary {
+  padding-inline: 12px;
+}

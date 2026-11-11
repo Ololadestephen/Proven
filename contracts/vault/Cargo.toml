@@ -1,0 +1,30 @@
+[package]
+name = "proven-vault"
+version = "1.0.0"
+edition = "2021"
+description = "Proven's NEP-616 settlement vault: two recipient keys, durable settlement records, NEP-413 signed withdrawals with a deadline"
+license = "MIT"
+publish = false
+
+# Its own workspace, so its lock file and build are independent of the other contracts.
+[workspace]
+
+# No runtime dependencies: raw host functions only, to keep the global contract small.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dev-dependencies]
+ed25519-dalek = "2"
+sha2 = "0.10"
+rand_chacha = "0.3"
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+# Every arithmetic step that could overflow is written with checked or proven-bounded
+# operations (see logic.rs); implicit checks would pull in core::fmt and double the size.
+overflow-checks = false
+strip = true

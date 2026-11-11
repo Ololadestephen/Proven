@@ -77,6 +77,10 @@ const mainnetWeb = {
   PROVEN_MARKET_ESCROW: need("MAINNET_ESCROW_ACCOUNT_ID"),
   PROVEN_HOSTED_URL: "http://127.0.0.1:4177",
   NEAR_ACCOUNT_ID: need("MAINNET_RELAY_ACCOUNT_ID"),
+  // PR bounties: the contract the page reads, and the gists-only GitHub app's public client id.
+  PROVEN_PR_BOUNTY_CONTRACT: need("MAINNET_PR_BOUNTY_ACCOUNT_ID"),
+  PROVEN_GITHUB_CLIENT_ID:
+    env.PROVEN_GITHUB_CLIENT_ID ?? "Iv23limMC4guqGgPyhiT",
   PROVEN_REVIEWER_V4_PRIVATE_KEY: need("MAINNET_REVIEWER_PRIVATE_KEY"),
   NEARAI_KEY_REVIEW: need("NEARAI_KEY_REVIEW"),
 };

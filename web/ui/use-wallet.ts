@@ -91,6 +91,11 @@ export function useWallet() {
             yocto: yocto.toString(),
           })
         ).transaction_hash,
+      signNep413: async (message, recipient, nonce) =>
+        await api<{ public_key: string; signature_base64: string }>(
+          "/api/market/dev/sign",
+          { as: role, message, nonce_base64: b64(nonce), recipient },
+        ),
       signForRelay: async (message) => {
         const nonce_base64 = b64(randomNonce());
         return {

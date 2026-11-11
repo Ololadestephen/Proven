@@ -25,6 +25,11 @@ import {
 } from "./market.ts";
 import { ReadError } from "./model.ts";
 import { bountiesRoute } from "./bounties.ts";
+import {
+  GITHUB_PATHS,
+  githubProxy,
+  type GithubProxyOptions,
+} from "./github-proxy.ts";
 import { startupMessage } from "../ui/network-status.ts";
 
 const PUBLIC = new URL("../public/", import.meta.url);
@@ -260,7 +265,7 @@ async function serveRead(
 }
 
 export function isAppPath(path: string) {
-  return /^\/app(?:\/|\/(?:market|jobs|post|agents|bounties)|\/bids\/[0-9]{1,10})?$/.test(
+  return /^\/app(?:\/|\/(?:market|jobs|post|agents|bounties)|\/(?:bids|bounties)\/[0-9]{1,10})?$/.test(
     path,
   );
 }
@@ -271,6 +276,7 @@ export function createApp(
   demo?: BrowserDemo,
   origin?: string,
   devWallet?: ReturnType<typeof createDevWallet>,
+  github: Omit<GithubProxyOptions, "origin"> = {},
 ) {
   if (origin) approvedOrigin(origin);
   const reads = { active: 0 };
@@ -300,6 +306,15 @@ export function createApp(
           "Content-Security-Policy",
           MARKET_CSP.replace("__WALLET_NONCE__", walletNonce),
         );
+      const githubRoute = GITHUB_PATHS[url.pathname];
+      if (githubRoute) {
+        const answer = await githubProxy(req, githubRoute, {
+          ...github,
+          origin: origin ?? `http://${req.headers.host}`,
+        });
+        json(res, answer.status, answer.body);
+        return;
+      }
       if (url.pathname.startsWith("/api/market")) {
         json(res, 200, await marketRoute(req, url.pathname, devWallet, origin));
         return;

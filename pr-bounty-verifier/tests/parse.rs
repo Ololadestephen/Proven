@@ -6,12 +6,12 @@
 use proven_pr_bounty_verifier::*;
 use serde_json::{json, Value};
 
-const GIST: &str = include_str!("fixtures/claim-gist.json");
+const GIST: &str = include_str!("fixtures/link-gist.json");
 const MERGED_PR: &str = include_str!("../../pr-verifier/tests/fixtures/near-sdk-rs-pr-1669.json");
 const REPO: &str = "proven-test/bounty-pilot";
 const GIST_ID: &str = "0123456789abcdef0123456789abcdef";
 const CHALLENGE: &str =
-    "proven-claim:1111111111111111111111111111111111111111111111111111111111111111";
+    "proven-link:1111111111111111111111111111111111111111111111111111111111111111";
 
 fn gist() -> Value {
     serde_json::from_str(GIST).unwrap()
@@ -26,7 +26,7 @@ fn file(content: Value) -> Value {
 }
 
 fn request(op: Value) -> Result<Request, Reason> {
-    let mut base = json!({"v": 3, "network": "testnet", "contract": "pr-bounty.proven.testnet", "bounty": 4, "seq": 17, "repo": REPO});
+    let mut base = json!({"v": 4, "network": "testnet", "contract": "pr-bounty.proven.testnet", "bounty": 4, "seq": 17, "repo": REPO});
     for (k, v) in op.as_object().unwrap() {
         base[k] = v.clone();
     }
@@ -48,8 +48,8 @@ fn a_claim_gist_gives_its_owner_and_an_exact_match() {
 #[test]
 fn only_the_exact_challenge_as_the_whole_single_file_matches() {
     for content in [
-        "I claim this. proven-claim:1111111111111111111111111111111111111111111111111111111111111111",
-        "proven-claim:1111111111111111111111111111111111111111111111111111111111111112",
+        "I claim this. proven-link:1111111111111111111111111111111111111111111111111111111111111111",
+        "proven-link:1111111111111111111111111111111111111111111111111111111111111112",
         "PROVEN-CLAIM:1111111111111111111111111111111111111111111111111111111111111111",
         "",
     ] {
@@ -143,7 +143,7 @@ fn requests_take_only_their_own_members() {
         json!({"op": "pull", "number": 0}),
         json!({"op": "pull", "number": 12, "gist_id": GIST_ID}),
         json!({"op": "gist", "gist_id": GIST_ID}),
-        json!({"op": "gist", "gist_id": GIST_ID, "challenge": "proven-claim:abc"}),
+        json!({"op": "gist", "gist_id": GIST_ID, "challenge": "proven-link:abc"}),
         json!({"op": "gist", "gist_id": "../repos/x", "challenge": CHALLENGE}),
         json!({"op": "gist", "gist_id": "ABCDEF", "challenge": CHALLENGE}),
         json!({"op": "gist", "gist_id": "a".repeat(65), "challenge": CHALLENGE}),
@@ -169,7 +169,7 @@ fn answers_are_bound_and_carry_no_text() {
     let facts = parse_gist(GIST.as_bytes(), GIST_ID, CHALLENGE).unwrap();
     let line = render(Some(&gist_request), &context, Ok(Answer::Gist(facts)));
     let out: Value = serde_json::from_str(&line).unwrap();
-    assert_eq!(out["v"], 3);
+    assert_eq!(out["v"], 4);
     assert_eq!(out["network"], "testnet");
     assert_eq!(out["contract"], "pr-bounty.proven.testnet");
     assert_eq!(
@@ -184,7 +184,7 @@ fn answers_are_bound_and_carry_no_text() {
         json!({"owner_id": 900_000_001u64, "files": 1, "challenge_matches": true})
     );
     assert!(
-        !line.contains("proven-claim:"),
+        !line.contains("proven-link:"),
         "the challenge and gist text are not echoed"
     );
     assert!(!line.contains("example-contributor"));
@@ -236,6 +236,67 @@ fn the_largest_answer_fits_the_contracts_cap() {
         challenge_matches: false,
     };
     assert!(render(Some(&gist_longest), &context, Ok(Answer::Gist(facts))).len() <= 1024);
+    // A submission carries both facts and the gist id, so it is the largest answer.
+    let both_longest = request(json!({
+        "contract": "c".repeat(64), "repo": format!("{}/{}", "o".repeat(39), "n".repeat(100)),
+        "bounty": u64::MAX, "seq": u64::MAX, "op": "pull", "number": u64::from(u32::MAX),
+        "gist_id": "a".repeat(64), "challenge": CHALLENGE,
+    }))
+    .unwrap();
+    let mut big: Value = serde_json::from_str(MERGED_PR).unwrap();
+    big["base"]["ref"] = json!("b".repeat(255));
+    let facts = GistFacts {
+        owner_id: u64::MAX,
+        files: u32::MAX,
+        challenge_matches: false,
+    };
+    let line = render(
+        Some(&both_longest),
+        &context,
+        parse_pull(big.to_string().as_bytes()).map(|p| Answer::PullGist(p, facts.clone())),
+    );
+    assert!(line.len() <= MAX_ANSWER_BYTES, "{} bytes", line.len());
+    // The same with a base branch made only of characters JSON escapes: still a real answer.
+    for escaped in ["\"", "\\"] {
+        let mut worst: Value = serde_json::from_str(MERGED_PR).unwrap();
+        worst["base"]["ref"] = json!(escaped.repeat(255));
+        let line = render(
+            Some(&both_longest),
+            &context,
+            parse_pull(worst.to_string().as_bytes()).map(|p| Answer::PullGist(p, facts.clone())),
+        );
+        let out: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(out["status"], "ok", "the worst branch name still fits");
+        assert_eq!(out["pull"]["base_ref"], json!(escaped.repeat(255)));
+        println!(
+            "worst-case answer with 255 escaped characters: {} bytes",
+            line.len()
+        );
+        assert!(line.len() <= MAX_ANSWER_BYTES, "{} bytes", line.len());
+    }
+}
+
+#[test]
+fn an_answer_over_the_cap_becomes_a_bound_oversized_no_result() {
+    let req = request(json!({"op": "pull", "number": 12})).unwrap();
+    let context = RunContext::from_vars(Some("pr-bounty.proven.testnet".into()), Some("7".into()));
+    let facts = parse_pull(MERGED_PR.as_bytes()).unwrap();
+    let full = render(Some(&req), &context, Ok(Answer::Pull(facts.clone())));
+    let cut = render_capped(
+        Some(&req),
+        &context,
+        Ok(Answer::Pull(facts)),
+        full.len() - 1,
+    );
+    let out: Value = serde_json::from_str(&cut).unwrap();
+    assert_eq!(out["status"], "no_result");
+    assert_eq!(out["reason"], "oversized");
+    // Still bound to the request, so the contract records it as a failed look, not a wrong one.
+    assert_eq!(out["number"], 12);
+    assert_eq!(out["seq"], 17);
+    assert_eq!(out["request_id"], 7);
+    assert!(out.get("pull").is_none());
+    assert!(cut.len() < full.len());
 }
 
 #[test]
@@ -250,4 +311,56 @@ fn paths_hold_only_validated_parts() {
     );
     assert!(is_challenge(CHALLENGE) && !is_challenge(&CHALLENGE.to_uppercase()));
     assert!(is_gist_id("1234567") && !is_gist_id("") && !is_gist_id("a/b"));
+}
+
+#[test]
+fn a_submission_reads_the_pull_request_and_the_link_gist_in_one_run() {
+    let both = request(json!({
+        "op": "pull", "number": 12, "gist_id": GIST_ID, "challenge": CHALLENGE
+    }))
+    .unwrap();
+    assert_eq!(
+        both.op,
+        Op::PullGist {
+            number: 12,
+            gist_id: GIST_ID.into(),
+            challenge: CHALLENGE.into()
+        }
+    );
+    // A gist without a challenge, or a challenge without a gist, is not a request.
+    for bad in [
+        json!({"op": "pull", "number": 12, "gist_id": GIST_ID}),
+        json!({"op": "pull", "number": 12, "challenge": CHALLENGE}),
+        json!({"op": "pull", "number": 12, "gist_id": "../x", "challenge": CHALLENGE}),
+        json!({"op": "pull", "number": 0, "gist_id": GIST_ID, "challenge": CHALLENGE}),
+        json!({"op": "pull", "number": 12, "gist_id": GIST_ID, "challenge": "proven-claim:abc"}),
+    ] {
+        assert_eq!(request(bad.clone()), Err(Reason::BadRequest), "{bad}");
+    }
+    let context = RunContext::from_vars(
+        Some("pr-bounty.proven.testnet".into()),
+        Some("15101".into()),
+    );
+    let pull = parse_pull(MERGED_PR.as_bytes()).unwrap();
+    let gist = parse_gist(GIST.as_bytes(), GIST_ID, CHALLENGE).unwrap();
+    let line = render(Some(&both), &context, Ok(Answer::PullGist(pull, gist)));
+    let out: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(out["v"], 4);
+    assert_eq!(out["op"], "pull");
+    assert_eq!(out["number"], 12);
+    assert_eq!(out["gist_id"], GIST_ID);
+    assert_eq!(out["status"], "ok");
+    assert_eq!(out["pull"]["author_id"], 163825889u64);
+    assert_eq!(out["gist"]["challenge_matches"], true);
+    assert!(
+        !line.contains("proven-link:"),
+        "the challenge text is never printed"
+    );
+    assert!(line.len() <= MAX_ANSWER_BYTES, "{} bytes", line.len());
+    // If either read fails, nothing but the reason is reported.
+    let failed = render(Some(&both), &context, Err(Reason::RateLimited));
+    let out: Value = serde_json::from_str(&failed).unwrap();
+    assert_eq!(out["status"], "no_result");
+    assert_eq!(out["reason"], "rate_limited");
+    assert!(out.get("pull").is_none() && out.get("gist").is_none());
 }

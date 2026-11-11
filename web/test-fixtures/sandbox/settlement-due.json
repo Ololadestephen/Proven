@@ -1,0 +1,12 @@
+{
+  "kind": "Refund",
+  "key": "ed25519:7v54NWdBtkjuAFJrLGsS2SXnuk8nKam81mZJeeYxVFi9",
+  "vault": "0scb99d12db0bdd9f7557015e1fc1972e8316b67ae",
+  "principal": "80000000000000000000000",
+  "state": "Due",
+  "attempt": 1,
+  "sent_at": "1794309420415792000",
+  "outcome": "Failed",
+  "reconcile": null,
+  "done_by": null
+}

@@ -1,11 +1,13 @@
 //! Proven PR bounty verifier: the facts a PR merge bounty contract needs from GitHub's public REST
 //! API, bound to the contract's request.
 //!
-//! Two operations, each answered with one compact JSON line:
+//! Three request shapes, each answered with one compact JSON line (output version 4):
 //!
 //! - `pull`: `GET /repos/<owner>/<name>/pulls/<number>`, giving the base repository id, the pull
 //!   request id and number, the author id, the base branch, the state, the merge flag and
 //!   `merged_at` in Unix seconds (the probe verifier's parser, unchanged);
+//! - `pull` with a `gist_id` and `challenge`: both reads in one run, so a submission is checked
+//!   against the wallet's GitHub link at the same moment as the pull request;
 //! - `gist`: `GET /gists/<id>`, giving the gist's owner id, how many files it has, and whether it
 //!   has exactly one complete file whose text is exactly the claim challenge the contract sent.
 //!   Only a gist's owner can change it, so, unlike an issue comment, a repository's writers
@@ -33,9 +35,15 @@ pub use probe::{
 };
 use probe::{is_account_id, is_repo};
 
-pub const OUTPUT_VERSION: u32 = 3;
+pub const OUTPUT_VERSION: u32 = 4;
+/// The longest answer this program prints; the contract reads at most this many bytes. The
+/// largest real answer is a submission with both facts, the longest names and a 255-byte base
+/// branch made only of characters JSON escapes (`"` or `\`) and every id at `u64::MAX`, is 1,383
+/// bytes: every branch name a maintainer can choose fits. An answer that would still be longer is replaced by a bound
+/// `no_result:oversized` (see `render`), so the contract never sees an unreadable answer.
+pub const MAX_ANSWER_BYTES: usize = 1536;
 pub const OUTPUT_KIND: &str = "proven-pr-bounty-facts";
-pub const CHALLENGE_PREFIX: &str = "proven-claim:";
+pub const CHALLENGE_PREFIX: &str = "proven-link:";
 const CHALLENGE_HEX_LEN: usize = 64;
 const MAX_GIST_ID_LEN: usize = 64;
 
@@ -57,8 +65,20 @@ struct RawRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
-    Pull { number: u64 },
-    Gist { gist_id: String, challenge: String },
+    Pull {
+        number: u64,
+    },
+    /// A pull request and, in the same run, the gist that links the submitting wallet to its
+    /// GitHub account. Both facts are read at the same moment.
+    PullGist {
+        number: u64,
+        gist_id: String,
+        challenge: String,
+    },
+    Gist {
+        gist_id: String,
+        challenge: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +106,7 @@ pub struct GistFacts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     Pull(PullFacts),
+    PullGist(PullFacts, GistFacts),
     Gist(GistFacts),
 }
 
@@ -105,6 +126,17 @@ pub fn parse_request(bytes: &[u8]) -> Result<Request, Reason> {
         ("pull", Some(number), None, None) if (1..=u64::from(u32::MAX)).contains(&number) => {
             Op::Pull { number }
         }
+        ("pull", Some(number), Some(gist_id), Some(challenge))
+            if (1..=u64::from(u32::MAX)).contains(&number)
+                && is_gist_id(&gist_id)
+                && is_challenge(&challenge) =>
+        {
+            Op::PullGist {
+                number,
+                gist_id,
+                challenge,
+            }
+        }
         ("gist", None, Some(gist_id), Some(challenge))
             if is_gist_id(&gist_id) && is_challenge(&challenge) =>
         {
@@ -122,7 +154,7 @@ pub fn parse_request(bytes: &[u8]) -> Result<Request, Reason> {
     })
 }
 
-/// `proven-claim:` followed by 64 lowercase hex characters.
+/// `proven-link:` followed by 64 lowercase hex characters.
 pub fn is_challenge(value: &str) -> bool {
     value.strip_prefix(CHALLENGE_PREFIX).is_some_and(|hex| {
         hex.len() == CHALLENGE_HEX_LEN
@@ -198,8 +230,33 @@ pub fn parse_gist(body: &[u8], gist_id: &str, challenge: &str) -> Result<GistFac
 }
 
 /// The one line this program prints. A request that could not be read is answered without a
-/// binding, which the contract refuses.
+/// binding, which the contract refuses. Never longer than `MAX_ANSWER_BYTES`.
 pub fn render(
+    request: Option<&Request>,
+    context: &RunContext,
+    result: Result<Answer, Reason>,
+) -> String {
+    render_capped(request, context, result, MAX_ANSWER_BYTES)
+}
+
+/// `render` with an explicit cap: an answer longer than `cap` becomes the bound
+/// `no_result:oversized` answer for the same request.
+#[doc(hidden)]
+pub fn render_capped(
+    request: Option<&Request>,
+    context: &RunContext,
+    result: Result<Answer, Reason>,
+    cap: usize,
+) -> String {
+    let line = render_line(request, context, result);
+    if line.len() <= cap {
+        line
+    } else {
+        render_line(request, context, Err(Reason::Oversized))
+    }
+}
+
+fn render_line(
     request: Option<&Request>,
     context: &RunContext,
     result: Result<Answer, Reason>,
@@ -221,6 +278,13 @@ pub fn render(
                 out["op"] = json!("pull");
                 out["number"] = json!(number);
             }
+            Op::PullGist {
+                number, gist_id, ..
+            } => {
+                out["op"] = json!("pull");
+                out["number"] = json!(number);
+                out["gist_id"] = json!(gist_id);
+            }
             Op::Gist { gist_id, .. } => {
                 out["op"] = json!("gist");
                 out["gist_id"] = json!(gist_id);
@@ -234,6 +298,17 @@ pub fn render(
                 "repo_id": f.repo_id, "pr_id": f.pr_id, "pr_number": f.pr_number,
                 "author_id": f.author_id, "base_ref": f.base_ref, "state": f.state,
                 "merged": f.merged, "merged_at": f.merged_at,
+            });
+        }
+        Ok(Answer::PullGist(p, g)) => {
+            out["status"] = json!("ok");
+            out["pull"] = json!({
+                "repo_id": p.repo_id, "pr_id": p.pr_id, "pr_number": p.pr_number,
+                "author_id": p.author_id, "base_ref": p.base_ref, "state": p.state,
+                "merged": p.merged, "merged_at": p.merged_at,
+            });
+            out["gist"] = json!({
+                "owner_id": g.owner_id, "files": g.files, "challenge_matches": g.challenge_matches,
             });
         }
         Ok(Answer::Gist(f)) => {

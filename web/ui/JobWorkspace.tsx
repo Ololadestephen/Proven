@@ -78,6 +78,7 @@ export function JobWorkspace({
     (bid.recorded_attempts ?? 0) <
     Math.max(bid.funded_attempts, job?.history?.length ?? 0);
   const ended = ["Done", "Closed", "Cancelled"].includes(bid.state);
+  const jobDot = job?.state === "Released" ? "paid" : ended ? "closed" : "open";
   const revealed = ended ? (
     <p className="job-check-link">
       <a href={`/api/market/reveal/${bid.id}`}>Read the published check</a>. Its
@@ -172,194 +173,266 @@ export function JobWorkspace({
   );
   return (
     <article className="market-bid" data-state={bid.state}>
-      <header className="job-head">
-        <div>
-          <span className="job-meta">
-            {role === "visitor" ? (
-              <a href="/app/market">Market</a>
-            ) : (
-              <a href="/app/jobs">My jobs</a>
-            )}{" "}
-            · Bid {bid.id}
-          </span>
-          <h1>{bidTitle(bid)}</h1>
-        </div>
-        <div className="job-head-side">
-          <strong>{showNear(bid.amount)}</strong>
-          <span className={`market-pill market-${bid.state.toLowerCase()}`}>
-            {bid.state}
-          </span>
-        </div>
-      </header>
-      <ol
-        className="job-progress"
-        data-steps={role === "worker" ? 4 : 7}
-        aria-label="Job progress"
-      >
-        {(role === "worker" ? workerProgress(bid) : jobProgress(bid)).map(
-          (stage) => (
-            <li
-              key={stage.label}
-              data-status={stage.status}
-              aria-current={stage.status === "current" ? "step" : undefined}
-            >
-              <span aria-hidden="true" />
-              {stage.label}
-            </li>
-          ),
-        )}
-      </ol>
-      <JobResult bid={bid} />
-      {actionCard}
-      <div className="workspace-tabs" aria-label="Job sections">
-        {["brief", "delivery", "evidence"].map((value) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={tab === value}
-            onClick={() => setTab(value)}
+      <div className="bounty-page-grid">
+        <div className="bounty-page-main">
+          <p className="bounty-page-status">
+            <i className={`bounty-dot ${jobDot}`} aria-hidden="true" />
+            {bid.job?.state ?? bid.state} · job {bid.id}
+          </p>
+          <h2 className="bounty-page-title">{bidTitle(bid)}</h2>
+          <p className="bounty-page-reward">{showNear(bid.amount)}</p>
+          <ol
+            className="job-progress"
+            data-steps={role === "worker" ? 4 : 7}
+            aria-label="Job progress"
           >
-            {value[0]!.toUpperCase() + value.slice(1)}
-          </button>
-        ))}
-      </div>
-      {tab === "brief" ? (
-        <>
-          <p className="market-description">{bid.description}</p>
-          <BidReview review={bid.review} reason={bid.review_reason} />
-          {bid.finished ? null : (
-            <details>
-              <summary>Public format: every field a check may look at</summary>
-              <pre className="market-pre">{bid.format}</pre>
-            </details>
-          )}
-          <dl className="market-facts">
-            <div>
-              <dt>{ended ? "Bid ended" : "Bid ends"}</dt>
-              <dd>
-                {new Date(
-                  Number(BigInt(bid.expires_at) / 1_000_000n),
-                ).toUTCString()}
-              </dd>
-            </div>
-            <div>
-              <dt>Attempts used</dt>
-              <dd>
-                {bid.funded_attempts} of {bid.max_attempts ?? 3}
-              </dd>
-            </div>
-            <div>
-              <dt>Buyer</dt>
-              <dd title={bid.buyer}>{short(bid.buyer)}</dd>
-            </div>
-            <div>
-              <dt>Worker</dt>
-              <dd title={worker ?? undefined}>
-                {worker ? short(worker) : "No worker has claimed this job."}
-              </dd>
-            </div>
-            <div>
-              <dt>Buyer’s record, from the chain</dt>
-              <dd>
-                {record?.paid ?? 0} paid, {record?.refunded ?? 0} refunded,{" "}
-                {record?.expired ?? 0} expired
-              </dd>
-            </div>
+            {(role === "worker" ? workerProgress(bid) : jobProgress(bid)).map(
+              (stage) => (
+                <li
+                  key={stage.label}
+                  data-status={stage.status}
+                  aria-current={stage.status === "current" ? "step" : undefined}
+                >
+                  <span aria-hidden="true" />
+                  {stage.label}
+                </li>
+              ),
+            )}
+          </ol>
+          <JobResult bid={bid} />
+          {actionCard}
+          <div className="workspace-tabs" aria-label="Job sections">
+            {["brief", "delivery", "evidence"].map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={tab === value}
+                onClick={() => setTab(value)}
+              >
+                {value[0]!.toUpperCase() + value.slice(1)}
+              </button>
+            ))}
+          </div>
+          {tab === "brief" ? (
+            <>
+              <p className="market-description">{bid.description}</p>
+              <BidReview review={bid.review} reason={bid.review_reason} />
+              {bid.finished ? null : (
+                <details>
+                  <summary>
+                    Public format: every field a check may look at
+                  </summary>
+                  <pre className="market-pre">{bid.format}</pre>
+                </details>
+              )}
+              <details>
+                <summary>Protections and limits</summary>
+                <ul className="post-hint">
+                  <li>
+                    <strong>Worker, protected:</strong> checks use only this
+                    format; rejected work never reaches the buyer; well-formed
+                    work that fails keeps the 0.015 NEAR fee; the check is
+                    published at close.
+                  </li>
+                  <li>
+                    <strong>Worker, not protected:</strong> an unfair check pays
+                    only the fee, with no dispute process; the relay operator
+                    can read work or withhold a check; reuse is blocked only for
+                    the same check hash. Start work only after funding.
+                  </li>
+                  <li>
+                    <strong>Buyer, not protected:</strong> a worker who never
+                    delivers uses an attempt and locks the money until the
+                    deadline; on an open bid, junk that fits the format can take
+                    the fee. Listing allowed workers avoids both.
+                  </li>
+                </ul>
+              </details>
+              {revealed}
+            </>
+          ) : null}
+          {tab === "evidence" ? (
+            <section>
+              <h2>Job evidence</h2>
+              {bid.finished ? (
+                <p className="post-hint">
+                  Ended; storage returned to the buyer. The description and
+                  format are in the posting transaction (hashes below).
+                </p>
+              ) : null}
+              <dl className="market-facts">
+                <div>
+                  <dt>Buyer</dt>
+                  <dd>{short(bid.buyer)}</dd>
+                </div>
+                {bid.claim ? (
+                  <div>
+                    <dt>Claimed by</dt>
+                    <dd>{short(bid.claim.agent)}</dd>
+                  </div>
+                ) : null}
+                <div>
+                  <dt>Claims / funded attempts</dt>
+                  <dd>
+                    {bid.claims_made} / {bid.funded_attempts}
+                  </dd>
+                </div>
+                {job ? (
+                  <div>
+                    <dt>Job state</dt>
+                    <dd>{job.state}</dd>
+                  </div>
+                ) : null}
+                {job?.fakes_total ? (
+                  <div>
+                    <dt>Fakes caught</dt>
+                    <dd>
+                      {job.fakes_caught} of {job.fakes_total}
+                    </dd>
+                  </div>
+                ) : null}
+                {job?.failed_rule ? (
+                  <div>
+                    <dt>Failed rule</dt>
+                    <dd>{job.failed_rule}</dd>
+                  </div>
+                ) : null}
+                {job?.verdict_request_id ? (
+                  <div>
+                    <dt>Verdict attestation</dt>
+                    <dd>
+                      <a
+                        href={`${OUTLAYER_API}/attestations/by-request/${job.verdict_request_id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Request {job.verdict_request_id}
+                      </a>
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+              <details>
+                <summary>Technical details</summary>
+                <dl className="market-facts">
+                  {Object.entries({
+                    Board: market.board,
+                    Escrow: market.escrow,
+                    "Bid ID": bid.id,
+                    "Escrow job ID": bid.job_id ?? "Being created",
+                    "Check hash": bid.check_hash,
+                    "Reference hash": bid.reference_hash,
+                    "Verifier hash": bid.verifier_hash,
+                    "Format hash": bid.format_hash,
+                    "Attempt fees": (bid.fees ?? []).join(", ") || "None",
+                    "Compute budget left": job?.compute_budget
+                      ? showNear(job.compute_budget)
+                      : "None",
+                    "Deliverable hash":
+                      job?.deliverable_hash ?? "Not delivered",
+                    "Challenge request": job?.challenge_request_id ?? "None",
+                  }).map(([key, value]) => (
+                    <div key={key}>
+                      <dt>{key}</dt>
+                      <dd>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
+              <a href="/trust">How verification is trusted</a>{" "}
+              {/* The evidence reader reads recorded testnet jobs only. Mainnet links its attestation above. */}
+              {IS_MAINNET ? null : (
+                <a
+                  href={
+                    job?.id !== undefined
+                      ? `/evidence#job-${job.id}`
+                      : "/evidence"
+                  }
+                >
+                  Open the escrow evidence reader
+                </a>
+              )}
+            </section>
+          ) : null}
+          {tab === "delivery" ? (
+            <p>
+              {job?.deliverable_hash
+                ? "A delivery hash is recorded. Private delivery text is available only through the authorised collection flow."
+                : "No delivery has been recorded yet."}
+            </p>
+          ) : null}
+          {collected !== null && job ? (
+            <CollectedWork
+              bid={bid}
+              job={job}
+              text={collected}
+              network={NETWORK}
+            />
+          ) : null}
+        </div>
+        <aside className="bounty-page-side">
+          <h4>Parties</h4>
+          <dl>
+            <dt>Buyer</dt>
+            <dd>{bid.buyer}</dd>
+            <dt>Buyer’s record</dt>
+            <dd>
+              {record?.paid ?? 0} paid, {record?.refunded ?? 0} refunded,{" "}
+              {record?.expired ?? 0} expired
+            </dd>
+            <dt>Worker</dt>
+            <dd>{worker ?? "Unclaimed"}</dd>
             {workerRecord ? (
-              <div>
-                <dt>Worker’s record, from the chain</dt>
+              <>
+                <dt>Worker’s record</dt>
                 <dd>
                   {workerRecord.paid} paid, {workerRecord.failed} failed the
-                  check, {workerRecord.failed_format} did not fit the format,{" "}
-                  {workerRecord.no_delivery} not delivered,{" "}
-                  {workerRecord.no_verdict} with no verdict
+                  check, {workerRecord.failed_format} wrong format,{" "}
+                  {workerRecord.no_delivery} not delivered
+                  {uncounted ? " (this job not counted yet)" : ""}
                 </dd>
-              </div>
+              </>
             ) : null}
           </dl>
           <p className="post-hint">
             A buyer paying its own second account can inflate these records.
-            {workerRecord && uncounted
-              ? " This bid’s attempts are not in the worker’s record yet: the board counts them when the bid is next synced."
-              : ""}
           </p>
-          <details>
-            <summary>What each side is protected from</summary>
-            <p>
-              <strong>What a worker is protected from.</strong> A check cannot
-              use a field outside this format. Proven never gives the buyer
-              rejected work. If well-formed work fails a rule, you keep the
-              0.015 NEAR attempt fee. The check is published when the bid
-              closes, so unfair ones can be seen.
-            </p>
-            <p>
-              <strong>What a worker is not protected from.</strong> A buyer can
-              still write an unfair check using only published fields. Then you
-              get the fee, not the full payment, and there is no dispute
-              process. The relay’s operator can read your work, and could
-              withhold a check. Reuse is blocked only for the exact same check
-              hash. Do not start work before funding.
-            </p>
-            <p>
-              <strong>What a buyer is not protected from.</strong> A worker who
-              never delivers uses up a funded attempt, and your money is locked
-              until the deadline. On an open bid, junk that fits the format can
-              take the fee. Listing allowed workers avoids both.
-            </p>
-          </details>
-          {revealed}
-        </>
-      ) : null}
-      {tab === "evidence" ? (
-        <section>
-          <h2>Job evidence</h2>
-          {bid.finished ? (
-            <p className="post-hint">
-              This bid has ended and its storage went back to the buyer. The
-              full description and format stay in the transaction that posted
-              it; their hashes are below.
-            </p>
-          ) : null}
-          <dl className="market-facts">
-            <div>
-              <dt>Buyer</dt>
-              <dd>{short(bid.buyer)}</dd>
-            </div>
-            {bid.claim ? (
-              <div>
-                <dt>Claimed by</dt>
-                <dd>{short(bid.claim.agent)}</dd>
-              </div>
-            ) : null}
-            <div>
-              <dt>Claims / funded attempts</dt>
-              <dd>
-                {bid.claims_made} / {bid.funded_attempts}
-              </dd>
-            </div>
+          <h4>Terms</h4>
+          <dl>
+            <dt>Payment</dt>
+            <dd>{showNear(bid.amount)}</dd>
+            <dt>{ended ? "Ended" : "Ends"}</dt>
+            <dd>
+              {new Date(
+                Number(BigInt(bid.expires_at) / 1_000_000n),
+              ).toUTCString()}
+            </dd>
+            <dt>Attempts used</dt>
+            <dd>
+              {bid.funded_attempts} of {bid.max_attempts ?? 3}
+            </dd>
+          </dl>
+          <h4>On chain</h4>
+          <dl>
+            <dt>Escrow job</dt>
+            <dd>{bid.job_id ?? job?.id ?? "Not created yet"}</dd>
             {job ? (
-              <div>
-                <dt>Job state</dt>
+              <>
+                <dt>State</dt>
                 <dd>{job.state}</dd>
-              </div>
+              </>
             ) : null}
             {job?.fakes_total ? (
-              <div>
-                <dt>Fakes caught</dt>
+              <>
+                <dt>Check challenge</dt>
                 <dd>
-                  {job.fakes_caught} of {job.fakes_total}
+                  {job.fakes_caught} of {job.fakes_total} fakes caught
                 </dd>
-              </div>
-            ) : null}
-            {job?.failed_rule ? (
-              <div>
-                <dt>Failed rule</dt>
-                <dd>{job.failed_rule}</dd>
-              </div>
+              </>
             ) : null}
             {job?.verdict_request_id ? (
-              <div>
-                <dt>Verdict attestation</dt>
+              <>
+                <dt>Verdict</dt>
                 <dd>
                   <a
                     href={`${OUTLAYER_API}/attestations/by-request/${job.verdict_request_id}`}
@@ -369,58 +442,11 @@ export function JobWorkspace({
                     Request {job.verdict_request_id}
                   </a>
                 </dd>
-              </div>
+              </>
             ) : null}
           </dl>
-          <details>
-            <summary>Technical details</summary>
-            <dl className="market-facts">
-              {Object.entries({
-                Board: market.board,
-                Escrow: market.escrow,
-                "Bid ID": bid.id,
-                "Escrow job ID": bid.job_id ?? "Being created",
-                "Check hash": bid.check_hash,
-                "Reference hash": bid.reference_hash,
-                "Verifier hash": bid.verifier_hash,
-                "Format hash": bid.format_hash,
-                "Attempt fees": (bid.fees ?? []).join(", ") || "None",
-                "Compute budget left": job?.compute_budget
-                  ? showNear(job.compute_budget)
-                  : "None",
-                "Deliverable hash": job?.deliverable_hash ?? "Not delivered",
-                "Challenge request": job?.challenge_request_id ?? "None",
-              }).map(([key, value]) => (
-                <div key={key}>
-                  <dt>{key}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </details>
-          <a href="/trust">How verification is trusted</a>{" "}
-          {/* The evidence reader reads recorded testnet jobs only. Mainnet links its attestation above. */}
-          {IS_MAINNET ? null : (
-            <a
-              href={
-                job?.id !== undefined ? `/evidence#job-${job.id}` : "/evidence"
-              }
-            >
-              Open the escrow evidence reader
-            </a>
-          )}
-        </section>
-      ) : null}
-      {tab === "delivery" ? (
-        <p>
-          {job?.deliverable_hash
-            ? "A delivery hash is recorded. Private delivery text is available only through the authorised collection flow."
-            : "No delivery has been recorded yet."}
-        </p>
-      ) : null}
-      {collected !== null && job ? (
-        <CollectedWork bid={bid} job={job} text={collected} network={NETWORK} />
-      ) : null}
+        </aside>
+      </div>
     </article>
   );
 }
