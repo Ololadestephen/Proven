@@ -761,3 +761,29 @@ details.bounty-section > summary {
   font-weight: 600;
   line-height: 1.2;
 }
+/* The GitHub step on a bounty's page: a panel like the vault, on the same scale. */
+.workspace-app .bounty-page .bounty-link {
+  display: grid;
+  gap: 10px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--app-bg);
+  box-shadow: none;
+}
+.workspace-app .bounty-page .bounty-link h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+.workspace-app .bounty-page .bounty-link :where(p) {
+  margin: 0;
+}
+.workspace-app .bounty-page .bounty-link .workspace-card {
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}

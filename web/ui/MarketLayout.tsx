@@ -20,7 +20,8 @@ export function MarketLayout({
   /** The board would accept a post from this visitor: the market is open, or they are a listed buyer. */
   canPostJob: boolean;
 }) {
-  const showPost = active !== "post" && canPostJob;
+  // Posting a job belongs to the market's own pages, not PR bounties or agents.
+  const showPost = ["market", "jobs"].includes(active) && canPostJob;
   return (
     <div className="app-frame workspace-app">
       <a className="skip-link" href="#workspace-content">

@@ -455,7 +455,7 @@ test("the claim step needs a GitHub link and a wallet, and says which is missing
   assert.match(found, new RegExp(`vault <code>${VAULT}</code>`));
   const noLink = claimView({ githubId: null });
   assert.equal(claimOff(noLink).disabled, true);
-  assert.match(noLink, /Link GitHub first/);
+  assert.match(noLink, /Link your GitHub account first/);
   const noWallet = claimView({ connected: false });
   assert.equal(claimOff(noWallet).disabled, true);
   assert.match(noWallet, /Connect a wallet to claim\./);
@@ -959,11 +959,13 @@ test("with signing off, no button on the page can send a transaction", () => {
 });
 
 test("the same page with signing on has buttons that work, so the switch is the only gate", () => {
+  // An unlinked contributor links GitHub on an open bounty's page, under its claim step.
   const html = renderPage({
     wallet: wallet(CONTRIB),
     approved: true,
     poster: false,
     link: linkReady(null),
+    bountyId: 1,
   });
   assert.doesNotMatch(html, /Signing is off in this build/);
   assert.equal(button(html, /^Connect GitHub$/).disabled, false);
@@ -1106,4 +1108,30 @@ test("an empty vault offers no withdrawal", () => {
   });
   assert.doesNotMatch(empty, /Withdraw to/);
   assert.match(vaultView(), /Withdraw to contrib\.testnet/);
+});
+
+test("an unlinked wallet links GitHub on an open bounty's page; the maintainer and linked wallets do not see it", () => {
+  const heading = /<h2>Your GitHub account<\/h2>/;
+  // Everyone may post now, so being a poster no longer hides the link step.
+  const contributor = renderPage({
+    wallet: wallet(STRANGER),
+    poster: true,
+    link: linkReady(null),
+    bountyId: 1,
+  });
+  assert.match(contributor, heading);
+  assert.match(contributor, /Link your GitHub account first, below\./);
+  const maintainer = renderPage({
+    wallet: wallet(MAINT),
+    poster: true,
+    link: linkReady(null),
+    bountyId: 1,
+  });
+  assert.doesNotMatch(maintainer, heading);
+  const linked = renderPage({
+    wallet: wallet(STRANGER),
+    link: linkReady("583231"),
+    bountyId: 1,
+  });
+  assert.doesNotMatch(linked, heading);
 });

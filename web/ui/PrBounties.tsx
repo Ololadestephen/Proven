@@ -291,9 +291,13 @@ export function PrBountiesView(props: PageProps) {
           done={props.done}
         />
       ) : null}
+      {/* Anyone may post now, so the list shows the link only to manage one; a new link is made
+          on a bounty's page, under its claim step. */}
       {!props.wallet ||
-      (props.poster &&
-        !(props.link.state === "ready" && props.link.value?.active)) ? null : (
+      !(
+        props.link.state === "ready" &&
+        (props.link.value?.active || props.link.value?.pending)
+      ) ? null : (
         <LinkPanel
           contract={contract}
           config={config}

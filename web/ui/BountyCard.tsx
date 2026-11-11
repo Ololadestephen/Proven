@@ -161,7 +161,7 @@ export function ClaimView(props: {
     : props.barred === true
       ? "This wallet already claimed this bounty once."
       : props.githubId === null
-        ? "Link GitHub first (below)."
+        ? "Link your GitHub account first, below."
         : "";
   return (
     <div className="bounty-action">

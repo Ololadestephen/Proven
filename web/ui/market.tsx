@@ -78,7 +78,7 @@ function App() {
           <p role="status">{notice}</p>
         </div>
       ) : null}
-      {pending && !busy ? (
+      {pending && !busy && route.section !== "bounties" ? (
         <p className="market-note" role="status">
           {pending.label}: confirming on chain…
         </p>

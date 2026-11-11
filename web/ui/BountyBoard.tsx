@@ -21,6 +21,7 @@ import {
   type CardContext,
 } from "./BountyCard.tsx";
 import { VaultPanel } from "./VaultPanel.tsx";
+import { LinkPanel } from "./LinkPanel.tsx";
 import { TileToolbar, WorkTile, type TileKind } from "./WorkTile.tsx";
 import { kindLabel } from "./vault-view.ts";
 import {
@@ -158,6 +159,16 @@ export function BountyPage(props: {
     ),
   ];
   const events = activity(bounty);
+  // A contributor links GitHub once, right where the claim asks for it.
+  const linked =
+    ctx.link.state === "ready" &&
+    !!(ctx.link.value?.active || ctx.link.value?.pending);
+  const needsLink =
+    bounty.status === "Open" &&
+    !!me &&
+    !isBuyer &&
+    ctx.link.state === "ready" &&
+    !linked;
   const path = progressPath(bounty);
   // A step link (from the agent tools, for example /app/bounties/3#submit-12) opens the page on
   // its step. Nothing is sent: the person still presses the button and approves in their wallet.
@@ -221,6 +232,20 @@ export function BountyPage(props: {
               <Actions id={id} bounty={bounty} ctx={ctx} initialPr={step.pr} />
             )}
           </section>
+          {needsLink ? (
+            <LinkPanel
+              contract={ctx.contract}
+              config={config}
+              wallet={ctx.wallet}
+              run={ctx.run}
+              chain={ctx.chain}
+              approved={ctx.approved}
+              busy={ctx.busy}
+              now={now}
+              link={ctx.link}
+              done={ctx.done}
+            />
+          ) : null}
           {vaults.map((v) => (
             <VaultPanel
               key={v}
