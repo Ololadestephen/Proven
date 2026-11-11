@@ -6,8 +6,8 @@ use near_sdk::serde_json;
 use near_sdk::{AccountId, PromiseError};
 
 /// The verifier never prints more than this (its `MAX_ANSWER_BYTES`): its worst real answer, a
-/// submission with the longest names and a 255-byte branch of escaped characters, is 1,333
-/// bytes, and anything longer it replaces with a bound `no_result:oversized`.
+/// submission with the longest names, a 255-byte branch of escaped characters and every id at
+/// `u64::MAX`, is 1,383 bytes, and anything longer it replaces with a bound `no_result:oversized`.
 pub const MAX_OUTPUT_BYTES: usize = 1536;
 const OUTPUT_VERSION: u32 = 4;
 const OUTPUT_KIND: &str = "proven-pr-bounty-facts";

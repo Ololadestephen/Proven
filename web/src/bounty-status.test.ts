@@ -249,3 +249,53 @@ test("a failed look is flagged, and a settled one is not", () => {
   );
   assert.equal(failedLookWarning(bounty(), CAP), null);
 });
+
+test("an Ineligible bounty says why: a late merge, another branch, or neither", () => {
+  const late = bounty({
+    status: "Ineligible",
+    claim: claim(),
+    binding,
+    merge: {
+      merged_at: String(T0 + 10_000),
+      request_id: "6",
+      checked_at: String(T0 + 10_100),
+    },
+  });
+  assert.match(bountyStatus(late, T0).detail, /after the merge deadline/);
+  const branch = bounty({
+    status: "Ineligible",
+    claim: claim(),
+    binding,
+    last_check: {
+      seq: "3",
+      kind: "Merge",
+      request_id: "6",
+      resolved_at: String(BigInt(T0 + 200) * NANOS),
+      outcome: "ineligible:base_ref",
+    },
+  });
+  assert.match(bountyStatus(branch, T0).detail, /a branch other than main/);
+  assert.doesNotMatch(bountyStatus(branch, T0).detail, /deadline/);
+});
+
+test("a not-merged answer from the first minute after the deadline is named, and a later one is not", () => {
+  const deadline = BigInt(T0 + 10_000) * NANOS;
+  const look = (after: number) => ({
+    requested_at: String(deadline + BigInt(after) * NANOS),
+    resolved_at: String(deadline + BigInt(after + 5) * NANOS),
+  });
+  const early = bound({ definite_look: look(59) });
+  assert.match(
+    bountyStatus(early, T0 + 20_000).detail,
+    /less than a minute after the merge deadline/,
+  );
+  const counted = bound({ definite_look: look(60) });
+  assert.doesNotMatch(
+    bountyStatus(counted, T0 + 20_000).detail,
+    /less than a minute/,
+  );
+  assert.doesNotMatch(
+    bountyStatus(bound(), T0 + 20_000).detail,
+    /less than a minute/,
+  );
+});

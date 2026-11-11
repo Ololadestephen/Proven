@@ -677,8 +677,13 @@ const LINK_CHALLENGE = /^proven-link:[0-9a-f]{64}$/;
 /**
  * The challenge the gist will hold, built by the page from the connected wallet, the network,
  * the contract, the wallet's link number and the expiry. The contract's own `link_challenge`
- * must give exactly the same text, or nothing is created: a server or RPC that answers with a
- * challenge for another wallet, network, contract, number or expiry is caught here.
+ * must give exactly the same text, or nothing is created.
+ *
+ * Only the wallet comes from a source the server does not control (the connected wallet). The
+ * network comes from the RPC's config and the contract from the server's settings, so a server
+ * and RPC that agree on another contract would also agree here. The page does refuse a network
+ * that contradicts the wallet's own name (a `.testnet` wallet on mainnet, or a `.near` one on
+ * testnet).
  */
 export async function localLinkChallenge(input: {
   network: string;
@@ -688,6 +693,16 @@ export async function localLinkChallenge(input: {
   chain: Pick<FlowChain, "linkChallenge" | "linkNumber">;
 }): Promise<string> {
   const { network, contract, wallet, expiresAt, chain } = input;
+  const named = wallet.endsWith(".testnet")
+    ? "testnet"
+    : wallet.endsWith(".near")
+      ? "mainnet"
+      : null;
+  if (named && named !== network)
+    throw new FlowError(
+      "contract_disagrees",
+      `This wallet is a ${named} account, but the contract reports ${network}. No gist was created.`,
+    );
   const number = await chain.linkNumber(wallet);
   if (!Number.isSafeInteger(number) || number < 0)
     throw new FlowError(

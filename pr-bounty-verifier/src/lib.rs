@@ -38,8 +38,8 @@ use probe::{is_account_id, is_repo};
 pub const OUTPUT_VERSION: u32 = 4;
 /// The longest answer this program prints; the contract reads at most this many bytes. The
 /// largest real answer is a submission with both facts, the longest names and a 255-byte base
-/// branch made only of characters JSON escapes (`"` or `\`), about 1,340 bytes: every branch name
-/// a maintainer can choose fits. An answer that would still be longer is replaced by a bound
+/// branch made only of characters JSON escapes (`"` or `\`) and every id at `u64::MAX`, is 1,383
+/// bytes: every branch name a maintainer can choose fits. An answer that would still be longer is replaced by a bound
 /// `no_result:oversized` (see `render`), so the contract never sees an unreadable answer.
 pub const MAX_ANSWER_BYTES: usize = 1536;
 pub const OUTPUT_KIND: &str = "proven-pr-bounty-facts";

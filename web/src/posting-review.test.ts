@@ -12,6 +12,7 @@ import {
   signingBlock,
   type Advanced,
   type FeeSchedule,
+  type Limits,
   type Review,
 } from "../ui/posting-review.ts";
 
@@ -35,7 +36,7 @@ function review(
     advanced?: Partial<Advanced>;
     meta?: Partial<IssueMetadata>;
     fees?: FeeSchedule;
-    limits?: typeof LIMITS;
+    limits?: Limits;
   } = {},
 ) {
   return reviewPosting({
@@ -70,9 +71,17 @@ test("the link and the reward alone give a complete review", () => {
     grace_ends: NOW + 14 * 86400 + 24 * 3600,
     checks_until: NOW + 28 * 86400 + 24 * 3600,
     hard_refund_at: NOW + 28 * 86400 + 24 * 3600,
+    refund_cap_secs: 14 * 86400,
     claim_secs: 48 * 3600,
     grace_secs: 24 * 3600,
   });
+});
+
+test("the checking period comes from the contract's refund cap, not a fixed 14 days", () => {
+  const r = ok(review({ limits: { ...LIMITS, refund_cap_secs: 30 } }));
+  assert.equal(r.deadlines.refund_cap_secs, 30);
+  assert.equal(r.deadlines.checks_until, NOW + 14 * 86400 + 24 * 3600 + 30);
+  assert.equal(r.deadlines.hard_refund_at, NOW + 14 * 86400 + 24 * 3600 + 30);
 });
 
 test("the total is exact: reward plus the record deposit, with no rounding", () => {

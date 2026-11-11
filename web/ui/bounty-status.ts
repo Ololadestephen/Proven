@@ -81,7 +81,11 @@ export function bountyStatus(bounty: Bounty, now: number): StatusLine {
             name: "PR submitted",
             line: "PR submitted",
             detail: bounty.binding
-              ? `Pull request #${bounty.binding.pr_number} is waiting for its merge.`
+              ? `Pull request #${bounty.binding.pr_number} is waiting for its merge.${
+                  earlyLookOnly(bounty)
+                    ? " The last check that found it not merged ran less than a minute after the merge deadline, so it does not open the refund; a new check does."
+                    : ""
+                }`
               : "",
           };
     case "Paid":
@@ -94,10 +98,33 @@ export function bountyStatus(bounty: Bounty, now: number): StatusLine {
       return {
         name: "Ineligible",
         line: "Ineligible",
-        detail:
-          "The pull request was merged after the merge deadline, so it is not paid.",
+        detail: ineligibleReason(bounty),
       };
   }
+}
+
+/**
+ * Why a bounty is Ineligible. The contract records a merge only for a merge after the deadline;
+ * a merge into another branch leaves no merge record and says so in the last check's outcome.
+ */
+function ineligibleReason(b: Bounty): string {
+  if (b.merge && BigInt(b.merge.merged_at) >= BigInt(b.merge_deadline))
+    return "The pull request was merged after the merge deadline, so it is not paid.";
+  if (b.last_check?.outcome === "ineligible:base_ref")
+    return `The pull request was merged into a branch other than ${b.base_ref}, so it is not paid.`;
+  return "The pull request cannot be paid under this bounty's rules.";
+}
+
+/**
+ * Whether the only "not merged" answer on record came from the first minute after the merge
+ * deadline, so it does not open the refund and a new check is needed.
+ */
+function earlyLookOnly(b: Bounty): boolean {
+  return (
+    !!b.definite_look &&
+    BigInt(b.definite_look.requested_at) >= BigInt(b.merge_deadline) * NANOS &&
+    !definiteLookAfterDeadline(b)
+  );
 }
 
 /** The end of the grace: from here a check that found the pull request not merged lets anyone refund. */
@@ -117,8 +144,9 @@ export const hardRefundAt = (
 export const checksUntil = hardRefundAt;
 
 /**
- * Whether a check requested at or after the merge deadline found the pull request not merged.
- * Only such a definitive negative is recorded; a timeout or no result never is.
+ * Whether a check requested at least a minute (`MAX_CLOCK_SKEW_SECS`) after the merge deadline
+ * found the pull request not merged. Only a "not merged" answer is recorded; a timeout or no
+ * result never is, and an answer from the first minute does not open the refund.
  */
 const definiteLookAfterDeadline = (b: Bounty) =>
   !!b.definite_look &&

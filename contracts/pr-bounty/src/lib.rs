@@ -41,8 +41,8 @@ pub const RUN_DEPOSIT: NearToken = NearToken::from_millinear(10);
 /// Sponsored merge checks one bounty may use.
 pub const SPONSORED_RUNS_PER_BOUNTY: u32 = 3;
 /// Pays for the bounty record, a claim, the vault storage and the settlement fees while they are
-/// in flight. Measured in the sandbox for the worst case: the smallest deposit that never borrows
-/// from other balance is 0.028 NEAR, and 0.030 leaves 0.002 of margin.
+/// in flight. Measured in the sandbox for the worst case after Option A: a payout leaves 0.00928
+/// NEAR of this deposit unused and a refund 0.00900, so neither borrows from other balance.
 pub const STORAGE_DEPOSIT: NearToken = NearToken::from_millinear(30);
 /// Pays for a wallet's link record (measured worst case 618 bytes, 0.00618 NEAR). It comes back
 /// to the caller unless the link, or the change it asks for, is recorded.
@@ -62,8 +62,8 @@ pub const HARD_MAX_SPONSOR_SPENT: NearToken = NearToken::from_near(2);
 /// How long a changed GitHub link waits before it applies to later submissions (72 hours).
 #[cfg(not(feature = "test-faults"))]
 pub const RELINK_DELAY_SECS: u64 = 72 * 60 * 60;
-/// How long past the checking window a bounty whose merge could not be read stays unrefunded
-/// (14 days). A merge that is verifiably on time is paid at any look before this.
+/// How long after the grace merge checks are still accepted, and a bounty whose merge could not
+/// be read stays unrefunded (14 days). A merge that is verifiably on time is paid at any look before this.
 #[cfg(not(feature = "test-faults"))]
 pub const REFUND_CAP_SECS: u64 = 14 * 24 * 60 * 60;
 /// The shortest a claim may last.
@@ -267,8 +267,8 @@ pub struct CheckRecord {
 
 /// The latest merge look that read GitHub's facts for the pinned pull request and found it not
 /// merged: a definitive negative. A look that failed (timeout, `no_result`, inconsistent facts)
-/// is never one. A refund before the hard cutoff needs one requested at or after the merge
-/// deadline, because a pull request not merged at that moment cannot have been merged before it.
+/// is never one. A refund before the hard cutoff needs one requested at least `MAX_CLOCK_SKEW_SECS`
+/// (60 s) after the merge deadline, as clocks may differ and GitHub may report a merge late.
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Look {
@@ -1452,7 +1452,7 @@ impl PrBounty {
 
     /// Refunds the maintainer's vault once the bounty can no longer pay. A bound bounty is
     /// refunded only while no check is running, and only (a) after the grace, with a definitive
-    /// negative look requested at or after the merge deadline, or (b) at the hard refund cutoff.
+    /// negative look requested 60 s (`MAX_CLOCK_SKEW_SECS`) or more after the deadline, or (b) at the cutoff.
     /// A timeout or `no_result` is never a negative. Under (b) a pull request merged on time
     /// goes unpaid if no check read GitHub before the cutoff, and the refund is final. A check in
     /// flight blocks the refund until its result lands or the run goes stale; a result that lands

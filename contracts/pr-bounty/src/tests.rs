@@ -4170,6 +4170,9 @@ fn after_the_window_a_bound_bounty_needs_a_definite_look_requested_a_minute_afte
             assert!(c.get_bounty(id).unwrap().definite_look.is_some());
             assert_cannot_settle(&mut c, id, VERIFY_UNTIL);
             assert_cannot_settle(&mut c, id, REFUND_CAP_AT - 1);
+            // The hard cutoff still refunds: the early answer only stops the earlier refund.
+            settle_at(&mut c, id, REFUND_CAP_AT);
+            assert_eq!(c.get_bounty(id).unwrap().status, Status::Refunded);
         });
     }
     // A definite look requested exactly a minute after the deadline opens the refund at the

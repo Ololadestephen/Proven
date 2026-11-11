@@ -168,7 +168,8 @@ test("the review says that an on-time merge is refunded if verification stays un
   );
   assert.match(html, /If no check reads GitHub\s+before 2026-/);
   assert.match(html, /14 days after the\s+grace/);
-  assert.match(html, /Merges are checked until 2026-/);
+  assert.match(html, /Anyone can request a merge check until\s+2026-/);
+  assert.match(html, /checks run only when someone requests one/);
   assert.match(html, /lets you be refunded from 2026-/);
   assert.match(
     html,

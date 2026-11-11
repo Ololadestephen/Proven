@@ -1141,3 +1141,26 @@ test("a call made outside any action is refused by the wallet", async () => {
   await refuses(wallet.call({ ...({} as Call) }));
   assert.deepEqual(w.calls, []);
 });
+test("a network that contradicts the wallet's own name stops the connection before any gist exists", async () => {
+  const f = fakeChain();
+  const w = fakeWallet(f);
+  const net = githubNetwork();
+  await refuses(
+    linkFlow({
+      approved: true,
+      network: w.wallet.accountId.endsWith(".testnet") ? "mainnet" : "testnet",
+      contract: CONTRACT,
+      wallet: w.wallet,
+      chain: f.chain,
+      github: {
+        fetch: net.transport,
+        sleep: async () => {},
+        now: () => 1_000_000,
+        onDeviceCode: () => {},
+      },
+    }),
+    "contract_disagrees",
+  );
+  assert.ok(!net.seen.includes("POST https://api.github.com/gists"));
+  assert.deepEqual(w.calls, []);
+});

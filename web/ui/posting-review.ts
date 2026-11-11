@@ -67,6 +67,11 @@ export interface Limits {
   max_reward: bigint;
   /** What the contract can still lock, in yoctoNEAR. */
   room: bigint;
+  /**
+   * The contract's `refund_cap_secs`: how long after the grace merge checks are still accepted.
+   * Taken from the contract's config; the 14-day default is only for a missing value.
+   */
+  refund_cap_secs?: number;
 }
 
 /** The only repository this pilot pays for. */
@@ -87,6 +92,8 @@ export interface Deadlines {
   hard_refund_at: number;
   claim_secs: number;
   grace_secs: number;
+  /** How long after the grace checks are accepted, from the contract. */
+  refund_cap_secs: number;
 }
 
 export interface Review {
@@ -117,7 +124,10 @@ const MAX_GRACE_SECS = 24 * 60 * 60;
 const MAX_DURATION_SECS = 30 * 24 * 60 * 60;
 const MIN_CLAIM_SECS = 60 * 60;
 const MAX_REF_BYTES = 255;
-/** How long past the checking window verification may stay unavailable before a refund opens. */
+/**
+ * The contract's default `refund_cap_secs` (14 days after the grace). The page uses the value the
+ * contract reports; this is only the fallback when none is given.
+ */
 export const REFUND_CAP_SECS = 14 * 24 * 60 * 60;
 
 /** A branch name git accepts, in the subset the contract also takes. */
@@ -170,6 +180,7 @@ export function reviewPosting(input: {
   now: number;
 }): Outcome {
   const { meta, advanced, limits, pilot, fees, now } = input;
+  const refundCap = limits.refund_cap_secs ?? REFUND_CAP_SECS;
   const problems: Problem[] = [];
   if (
     meta.repo_id !== pilot.repo_id ||
@@ -279,8 +290,9 @@ export function reviewPosting(input: {
         claim_by: now + open,
         merge_deadline: now + merge,
         grace_ends: now + merge + grace,
-        checks_until: now + merge + grace + REFUND_CAP_SECS,
-        hard_refund_at: now + merge + grace + REFUND_CAP_SECS,
+        checks_until: now + merge + grace + refundCap,
+        hard_refund_at: now + merge + grace + refundCap,
+        refund_cap_secs: refundCap,
         claim_secs: claim,
         grace_secs: grace,
       },

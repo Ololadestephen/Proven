@@ -63,8 +63,9 @@ function PostPreview(props: {
     () => ({
       max_reward: BigInt(config.max_reward),
       room: BigInt(config.max_held) - BigInt(config.held),
+      refund_cap_secs: config.refund_cap_secs,
     }),
-    [config.max_reward, config.max_held, config.held],
+    [config.max_reward, config.max_held, config.held, config.refund_cap_secs],
   );
   const pilot = useMemo(
     () => ({ repo: config.pilot_repo, repo_id: Number(config.pilot_repo_id) }),

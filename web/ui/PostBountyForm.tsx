@@ -9,7 +9,6 @@ import {
 } from "./github-issue.ts";
 import {
   ADVANCED_DEFAULTS,
-  REFUND_CAP_SECS,
   duration,
   reviewPosting,
   signingBlock,
@@ -104,9 +103,10 @@ function Summary({ review }: { review: Review }) {
       <dd>
         Open for claims until {utc(d.claim_by)}. A claim lasts{" "}
         {duration(d.claim_secs)}. The pull request must be merged before{" "}
-        {utc(d.merge_deadline)}. Merges are checked until {utc(d.checks_until)}.
-        A check at least a minute after the deadline that finds it not merged
-        lets you be refunded from {utc(d.grace_ends)} ({duration(d.grace_secs)}{" "}
+        {utc(d.merge_deadline)}. Anyone can request a merge check until{" "}
+        {utc(d.checks_until)}; checks run only when someone requests one. A
+        check at least a minute after the deadline that finds it not merged lets
+        you be refunded from {utc(d.grace_ends)} ({duration(d.grace_secs)}{" "}
         grace).
       </dd>
       <dt>If checks fail</dt>
@@ -114,7 +114,7 @@ function Summary({ review }: { review: Review }) {
         A check that cannot read GitHub (a timeout or no result) changes nothing
         and can be repeated. A merge before the deadline is paid at the first
         check that reads it, even after the grace. If no check reads GitHub
-        before {utc(d.hard_refund_at)} ({duration(REFUND_CAP_SECS)} after the
+        before {utc(d.hard_refund_at)} ({duration(d.refund_cap_secs)} after the
         grace), the reward is refunded to you even if the pull request was
         merged on time, and the refund is final.
       </dd>
