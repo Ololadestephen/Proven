@@ -655,9 +655,8 @@ export function PostJob({
         {stage === 1 && (
           <>
             <p className="post-lead">
-              The check decides payment, and it must catch the planted fakes
-              before you can fund. Both texts stay in this browser until the
-              challenge sends them to the relay, so keep your own copies.
+              The check decides payment and must catch every planted fake before
+              funding. Keep your own copies of both texts.
             </p>
             <div className="market-two">
               <JsonField
@@ -736,10 +735,9 @@ export function PostJob({
                 <dd>{cost ? nearText(cost.storage) : "…"}</dd>
               </dl>
               <p className="post-hint">
-                Nothing else to sign: the check is tested, the job is given to
-                the first worker who applies, the work is checked and the money
-                moves by itself. Network gas is extra. The worker keeps a 0.015
-                NEAR fee if well-formed work fails a rule.
+                No further signatures: the check is tested, the first applicant
+                gets the job, and payment moves by itself. Gas is extra; a
+                worker keeps the 0.015 NEAR fee if well-formed work fails.
               </p>
             </div>
             <div className="post-risks">

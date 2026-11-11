@@ -130,11 +130,9 @@ export function LinkView(props: LinkViewProps) {
   const value = link.state === "ready" ? link.value : null;
   return (
     <section className="workspace-card bounty-link">
-      <h2>Your GitHub link</h2>
+      <h2>Your GitHub account</h2>
       {!wallet ? (
-        <p className="workspace-empty">
-          Connect a wallet to link a GitHub account to it.
-        </p>
+        <p className="workspace-empty">Connect a wallet to link GitHub.</p>
       ) : link.state === "loading" ? (
         <p role="status">Reading your link…</p>
       ) : link.state === "unavailable" ? (
@@ -144,16 +142,16 @@ export function LinkView(props: LinkViewProps) {
       ) : (
         <>
           {value?.active ? (
-            <p>
-              Connected: GitHub account id {value.active.github_id} is linked to{" "}
-              {short(wallet)} (gist <code>{value.active.gist_id}</code>). A
-              claim records this account and cannot be changed afterwards.
-            </p>
+            <dl className="workspace-review bounty-facts">
+              <dt>GitHub id</dt>
+              <dd>{value.active.github_id}</dd>
+              <dt>Gist</dt>
+              <dd>
+                <code>{value.active.gist_id}</code> (keep it)
+              </dd>
+            </dl>
           ) : (
-            <p>
-              No GitHub account is connected to {short(wallet)}. You connect one
-              once, before your first claim.
-            </p>
+            <p>Not linked. Link once, before your first claim.</p>
           )}
           {value?.pending ? (
             <LinkChangeRow
@@ -200,16 +198,11 @@ export function LinkView(props: LinkViewProps) {
           ) : null}
           {!value?.active && !props.device ? (
             <div className="bounty-action">
-              <p>
-                Connecting asks you to approve a GitHub app whose only
-                permission is to write your gists. The page then creates one
-                secret gist that holds a challenge naming this wallet, drops the
-                permission, and sends one transaction that attaches{" "}
-                {near(LINK_DEPOSIT)}: {near(RUN_DEPOSIT)} pays the check, and
-                the unused part comes back; {near(LINK_STORAGE_DEPOSIT)} pays
-                for storing the link, and comes back if the link is not
-                recorded. The permission is never stored. Keep the gist: the
-                check of your submitted pull request reads it again.
+              <p className="post-hint">
+                Approve a gists-only GitHub app; the page creates one secret
+                gist and sends one transaction of {near(LINK_DEPOSIT)} (
+                {near(RUN_DEPOSIT)} check, unused part returned;{" "}
+                {near(LINK_STORAGE_DEPOSIT)} storage).
               </p>
               <TxButton
                 variant="primary"
@@ -272,10 +265,10 @@ function LinkReview({
   };
   return (
     <section className="workspace-card">
-      <h3>Review a link change for another wallet</h3>
-      <p>
-        If another wallet asked to link your GitHub account, you can confirm or
-        cancel that change here before its delay ends.
+      <h3>Link change for another wallet</h3>
+      <p className="post-hint">
+        Confirm or cancel a request to link your GitHub account to another
+        wallet.
       </p>
       <label>
         Wallet to look up

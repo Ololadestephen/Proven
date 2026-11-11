@@ -47,7 +47,10 @@ export async function readJson(
   }
 }
 
-const RPC = "https://test.rpc.fastnear.com";
+// The testnet RPC for bounty and snapshot reads. PROVEN_TESTNET_RPC_URL moves them to another
+// public testnet endpoint when this one rate-limits a busy page.
+const RPC =
+  process.env.PROVEN_TESTNET_RPC_URL || "https://test.rpc.fastnear.com";
 export type RpcMethod = "block" | "query" | "EXPERIMENTAL_tx_status";
 /** The whole JSON-RPC answer, so a caller can tell a missing account from a failed read. */
 export async function rpcAnswer(

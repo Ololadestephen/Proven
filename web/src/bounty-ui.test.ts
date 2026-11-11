@@ -261,7 +261,6 @@ test("the settlement is shown apart from the status", () => {
   assert.equal(pill(html), "Paid");
   assert.match(html, /<dt>Settlement<\/dt>/);
   assert.match(html, /payout 0\.08 testnet NEAR to vault/);
-  assert.match(html, /separate from the status/);
   // The status line itself does not say anything about a vault.
   assert.doesNotMatch(
     /<p class="bounty-status">[\s\S]*?<\/p>/.exec(html)?.[0] ?? "",
@@ -630,15 +629,12 @@ const linkView = (over: Record<string, unknown> = {}) =>
 
 test("without a link the page offers one connection and says what it costs", () => {
   const html = linkView();
-  assert.match(html, /No GitHub account is connected to contrib\.testnet/);
+  assert.match(html, /Not linked\. Link once, before your first claim\./);
   assert.match(
     html,
-    /attaches\s+0\.017 testnet NEAR: 0\.01 testnet NEAR pays the check/,
+    /one transaction of 0\.017 testnet NEAR \(\s*0\.01 testnet NEAR check/,
   );
-  assert.match(
-    html,
-    /0\.007 testnet NEAR pays\s+for storing the link, and comes back if the link is not\s+recorded/,
-  );
+  assert.match(html, /0\.007 testnet NEAR storage/);
   assert.equal(button(html, /^Connect GitHub$/).disabled, false);
   assert.doesNotMatch(html, /paste|branch/i);
 });
@@ -665,7 +661,7 @@ test("while GitHub is waiting, the device code and the login link are shown", ()
 
 test("an active link is shown, and the connect button is gone", () => {
   const html = linkView({ link: linkReady("583231") });
-  assert.match(html, /GitHub account id 583231 is linked to contrib\.testnet/);
+  assert.match(html, /<dt>GitHub id<\/dt><dd>583231<\/dd>/);
   assert.match(html, /aa5a315d61ae9438b18d/);
   assert.doesNotMatch(html, /Connect GitHub<\/button>/);
 });
@@ -802,9 +798,9 @@ test("the vault credit and the wallet withdrawal are two separate lines", () => 
   const html = vaultView();
   const credit = lineOf(html, "vault-credit");
   const wallet = lineOf(html, "wallet-withdrawal");
-  assert.match(credit, /^VAULT CREDIT \(refund\): In the vault\./);
+  assert.match(credit, /^Credit \(refund\): In the vault\./);
   assert.match(credit, /This is not a withdrawal to a wallet\./);
-  assert.match(wallet, /^WALLET WITHDRAWAL: Not withdrawn to a wallet\./);
+  assert.match(wallet, /^Withdrawal: Not withdrawn to a wallet\./);
   assert.match(
     wallet,
     /Nothing leaves the vault until the withdrawal key signs/,
@@ -814,7 +810,7 @@ test("the vault credit and the wallet withdrawal are two separate lines", () => 
   assert.equal(lineOf(after, "vault-credit"), credit);
   assert.match(
     lineOf(after, "wallet-withdrawal"),
-    /^WALLET WITHDRAWAL: Withdrawn to /,
+    /^Withdrawal: Withdrawn to /,
   );
   assert.match(
     lineOf(after, "wallet-withdrawal"),
@@ -844,7 +840,7 @@ test("a settlement that is not in the vault yet never shows as withdrawn, and a 
   const none = vaultView({ entries: [] });
   assert.match(
     lineOf(none, "vault-credit"),
-    /^VAULT CREDIT: No payout or refund exists for this bounty yet\./,
+    /^Credit: No payout or refund exists for this bounty yet\./,
   );
 });
 
@@ -856,9 +852,9 @@ test("a vault shared by several settlements shows one wallet line for the whole 
     ],
     shared: 2,
   });
-  assert.equal((html.match(/VAULT CREDIT/g) ?? []).length, 2);
-  assert.equal((html.match(/WALLET WITHDRAWAL/g) ?? []).length, 1);
-  assert.match(html, /shown for the vault as a whole, not per settlement/);
+  assert.equal((html.match(/class="vault-credit"/g) ?? []).length, 2);
+  assert.equal((html.match(/class="wallet-withdrawal"/g) ?? []).length, 1);
+  assert.match(html, /Shown for the whole vault\./);
 });
 
 test("the vault says money is not in the wallet until withdrawn, nothing is forwarded or swept, and a lost key loses the funds", () => {
@@ -867,13 +863,12 @@ test("the vault says money is not in the wallet until withdrawn, nothing is forw
     .replace(/\s+/g, " ");
   assert.match(
     text,
-    /Money in the vault is not in your wallet until you withdraw it\./,
+    /Money stays in the vault until you withdraw it; nothing is forwarded\./,
   );
   assert.match(
     text,
-    /Nothing is forwarded to a wallet automatically, and nothing is swept\./,
+    /Only this vault's key can withdraw, and a lost key loses the money\./,
   );
-  assert.match(text, /If that key is lost, the money in the vault is lost\./);
 });
 
 test("withdrawing signs with the vault's key, and the destination defaults to the connected account and can be edited", () => {
@@ -881,11 +876,7 @@ test("withdrawing signs with the vault's key, and the destination defaults to th
   assert.match(html, /<input spellCheck="false" value="contrib\.testnet"\/>/);
   assert.match(
     html,
-    /a signature on a\s+message, with the vault's withdrawal key/,
-  );
-  assert.match(
-    html,
-    /If your wallet signs messages with another key, the\s+withdrawal is refused and nothing is sent/,
+    /signs a message with the vault key, then sends the\s+withdrawal/,
   );
   assert.equal(button(html, /^Withdraw to contrib\.testnet$/).disabled, false);
   // The key check text of the last withdrawal is shown.
@@ -904,7 +895,7 @@ test("a vault that cannot be read shows unavailable, never zero, and nothing to 
   assert.equal((html.match(/unavailable/g) ?? []).length, 3);
   assert.doesNotMatch(html, /Withdraw to/);
   const missing = vaultView({ read: { exists: false, info: null } });
-  assert.match(missing, /does not exist yet; its first deposit creates it/);
+  assert.match(missing, /Not created yet: its first deposit creates it\./);
   assert.doesNotMatch(missing, /Withdraw to/);
 });
 
@@ -985,9 +976,9 @@ test("the same page with signing on has buttons that work, so the switch is the 
 
 test("the page shows the link panel, the posting form and every bounty, newest first", () => {
   const html = renderPage();
-  assert.match(html, /<h2>Your GitHub link<\/h2>/);
+  assert.match(html, /<h2>Your GitHub account<\/h2>/);
   assert.match(html, /<h2>Post a bounty<\/h2>/);
-  const order = [...html.matchAll(/Bounty (\d+):/g)].map((m) => m[1]);
+  const order = [...html.matchAll(/Bounty (\d+) ·/g)].map((m) => m[1]);
   assert.deepEqual(order, ["8", "7", "6", "5", "4", "3", "2", "1"]);
   const statuses = [
     ...html.matchAll(/<span class="status-pill">([^<]*)</g),
@@ -1012,16 +1003,16 @@ test("the page header states the vault and sponsor rules without a check budget"
   const html = renderPage();
   assert.match(
     html,
-    /vaults that one withdrawal key controls, not\s+to account names/,
+    /vaults controlled by one withdrawal key,\s+not to account names/,
   );
   assert.match(
     html,
-    /A bounty locks its reward and 0\.03 testnet NEAR for its record/,
+    /<dt>Record deposit<\/dt><dd>0\.03 testnet NEAR per bounty, kept/,
   );
-  assert.match(html, /paid by the owner's sponsor float/);
+  assert.match(html, /paid from the owner's float/);
 });
 
-test("a pending bounty call pauses the page and asks the person to check the chain", () => {
+test("a pending bounty call shows one status line and asks the person nothing", () => {
   const pending = {
     account: CONTRIB,
     bountyId: 2,
@@ -1031,19 +1022,14 @@ test("a pending bounty call pauses the page and asks the person to check the cha
     call: { receiver: CONTRACT, method: "claim", args: {} },
   };
   const html = renderPage({ pending, now: Math.floor(Date.now() / 1000) });
-  assert.match(html, /Did that go through\?/);
-  assert.match(html, /Claiming\. The chain does not show this yet/);
-  assert.equal(button(html, /^Checking the chain…$/).disabled, true);
-  const old = renderPage({ pending, now: Math.floor(Date.now() / 1000) + 60 });
-  assert.equal(
-    button(old, /^I cancelled it: check and continue$/).disabled,
-    false,
-  );
+  assert.match(html, /Claiming: confirming on chain…/);
+  // No manual buttons: the page confirms or releases the action by itself.
+  assert.doesNotMatch(html, /Check again|I cancelled it/);
   const unreadable = renderPage({
     pending: { account: "unknown", before: "", label: "x", createdAt: 0 },
   });
-  assert.match(unreadable, /cannot read what it\s+was/);
-  assert.match(unreadable, /I checked my wallet history: clear this record/);
+  assert.match(unreadable, /could not be read back/);
+  assert.match(unreadable, />Clear it</);
 });
 
 test("the page reads its own states", () => {
@@ -1057,7 +1043,7 @@ test("the page reads its own states", () => {
   const paused = renderPage({
     listing: { ...listing([]), config: { ...config, paused: true } },
   });
-  assert.match(paused, /posting is paused/);
+  assert.match(paused, /posting paused/);
   assert.doesNotMatch(paused, /<h2>Post a bounty<\/h2>/);
 });
 
@@ -1065,8 +1051,19 @@ test("the sponsor note carries no maintainer budget and names the sponsor accoun
   const note = card.render(card.SponsorNote, {
     config: { sponsor: "sponsor.testnet" },
   }) as string;
-  assert.match(note, /paid by the owner's sponsor float/);
+  assert.match(note, /paid from the owner's float/);
   assert.match(note, /<code>sponsor\.testnet<\/code>/);
   assert.doesNotMatch(note, /budget|reserve/i);
   assert.ok(SIGNING_OFF.length > 0);
+});
+
+test("an empty vault offers no withdrawal", () => {
+  const empty = vaultView({
+    read: {
+      exists: true,
+      info: { key: MESSAGE_KEY, n: "1", fund: "0", available: "0" },
+    },
+  });
+  assert.doesNotMatch(empty, /Withdraw to/);
+  assert.match(vaultView(), /Withdraw to contrib\.testnet/);
 });

@@ -146,43 +146,25 @@ export function PendingNotice(props: {
 }) {
   const { pending } = props;
   const unreadable = !pending.call;
-  const waiting = props.now - Math.floor(pending.createdAt / 1000) < 15;
+  if (!unreadable)
+    return (
+      <p className="market-note" role="status">
+        {pending.label}: confirming on chain…
+      </p>
+    );
   return (
     <section className="workspace-card job-pending">
-      <h2>Did that go through?</h2>
-      {unreadable ? (
-        <p>
-          An earlier action was not finished, and this page cannot read what it
-          was. Other actions on this page are paused so nothing is sent twice.
-          Check your wallet's history. Clear this record only when you are sure
-          that action did not go through.
-        </p>
-      ) : (
-        <p>
-          {pending.label}. The chain does not show this yet, so other actions on
-          this page are paused to stop it being sent twice. If you signed it,
-          this clears by itself once it lands.
-        </p>
-      )}
+      <p>
+        An earlier action could not be read back. Check your wallet's history,
+        then clear it.
+      </p>
       <div className="market-actions">
         <button
           type="button"
-          className="button button-secondary"
-          onClick={props.onCheck}
-        >
-          Check again
-        </button>
-        <button
-          type="button"
           className="button button-primary"
-          disabled={!unreadable && waiting}
           onClick={props.onRelease}
         >
-          {unreadable
-            ? "I checked my wallet history: clear this record"
-            : waiting
-              ? "Checking the chain…"
-              : "I cancelled it: check and continue"}
+          Clear it
         </button>
       </div>
     </section>
@@ -243,27 +225,36 @@ export function PrBountiesView(props: PageProps) {
   return (
     <>
       <section className="workspace-card">
-        <h2>PR bounties: payout after an attested GitHub merge check</h2>
-        <p>
-          GitHub supplies the facts. The maintainer decides by merging. The
-          contract <code>{contract}</code> relies on OutLayer's authenticated
-          result and its approved workers, running Proven's verifier pinned at{" "}
-          <code>{config.verifier_hash.slice(0, 12)}…</code>. Anyone can check a
-          run's Intel quote independently from its attestation link. Proven
-          checks the merge, not the quality of the work or whether the pull
-          request solves the issue.
-        </p>
-        <p>
-          Payouts and refunds go to vaults that one withdrawal key controls, not
-          to account names. Each check attaches {near(config.run_deposit)}; the
-          unused part comes back to whoever paid. A bounty locks its reward and{" "}
-          {near(config.storage_deposit)} for its record.{" "}
-          <SponsorNote config={config} /> Pilot: one public repository,{" "}
-          <code>{config.pilot_repo}</code> (id {config.pilot_repo_id}),
-          maintainers on the owner's allowlist
-          {config.paused ? "; posting is paused" : ""}. A contributor proves
-          their GitHub account once, with a gist they own.
-        </p>
+        <p>Paid when the pull request is merged before the deadline.</p>
+        <dl className="workspace-review bounty-facts">
+          <dt>Repository</dt>
+          <dd>
+            <code>{config.pilot_repo}</code>
+          </dd>
+          <dt>Check fee</dt>
+          <dd>{near(config.run_deposit)}, unused part returned</dd>
+          <dt>Record deposit</dt>
+          <dd>{near(config.storage_deposit)} per bounty, kept</dd>
+          <dt>Contract</dt>
+          <dd>
+            <code>{contract}</code>
+            {config.paused ? " (posting paused)" : ""}
+          </dd>
+        </dl>
+        <details className="bounty-terms">
+          <summary>How payment is decided</summary>
+          <p>
+            Proven's verifier (<code>{config.verifier_hash.slice(0, 12)}…</code>
+            ) runs on OutLayer and reads GitHub. It checks the merge only, not
+            the quality of the work. Anyone can verify a run from its
+            attestation link.
+          </p>
+          <p>
+            Payouts and refunds go to vaults controlled by one withdrawal key,
+            not to account names. <SponsorNote config={config} /> Contributors
+            prove their GitHub account once, with a gist they own.
+          </p>
+        </details>
       </section>
       {props.pending ? (
         <PendingNotice
@@ -271,31 +262,6 @@ export function PrBountiesView(props: PageProps) {
           now={props.now}
           onCheck={props.onCheckPending}
           onRelease={props.onReleasePending}
-        />
-      ) : null}
-      <LinkPanel
-        contract={contract}
-        config={config}
-        wallet={props.wallet}
-        run={props.run}
-        chain={props.chain}
-        approved={props.approved}
-        busy={props.busy}
-        now={props.now}
-        link={props.link}
-        done={props.done}
-      />
-      {!config.paused ? (
-        <PostPreview
-          contract={contract}
-          config={config}
-          wallet={props.wallet}
-          run={props.run}
-          chain={props.chain}
-          approved={props.approved}
-          busy={props.busy}
-          poster={props.poster}
-          done={props.done}
         />
       ) : null}
       {bounties.length === 0 ? (
@@ -313,6 +279,31 @@ export function PrBountiesView(props: PageProps) {
             inVault={inVault}
           />
         ))}
+      {!config.paused && props.poster ? (
+        <PostPreview
+          contract={contract}
+          config={config}
+          wallet={props.wallet}
+          run={props.run}
+          chain={props.chain}
+          approved={props.approved}
+          busy={props.busy}
+          poster={props.poster}
+          done={props.done}
+        />
+      ) : null}
+      <LinkPanel
+        contract={contract}
+        config={config}
+        wallet={props.wallet}
+        run={props.run}
+        chain={props.chain}
+        approved={props.approved}
+        busy={props.busy}
+        now={props.now}
+        link={props.link}
+        done={props.done}
+      />
     </>
   );
 }

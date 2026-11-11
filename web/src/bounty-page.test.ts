@@ -38,10 +38,8 @@ export { renderToStaticMarkup } from "react-dom/server";`,
   };
 };
 
-test("the vault panel says browser withdrawal is pending and the sponsor note is shown", async () => {
+test("the vault panel shows unavailable numbers before a read, and the sponsor note is shown", async () => {
   const panel = await bundle("../ui/VaultPanel.tsx");
-  const BROWSER_WITHDRAWAL_SUPPORT = panel.BROWSER_WITHDRAWAL_SUPPORT as string;
-  assert.match(BROWSER_WITHDRAWAL_SUPPORT, /pending/);
   const html = panel.render(panel.VaultPanel, {
     vault: VAULT,
     network: "testnet",
@@ -58,21 +56,23 @@ test("the vault panel says browser withdrawal is pending and the sponsor note is
     now: 1_800_000_000,
     partyDelaySecs: 900,
   });
-  assert.ok(html.includes(BROWSER_WITHDRAWAL_SUPPORT));
+  // A browser-wallet withdrawal completed on testnet on November 11, so the page no longer
+  // calls it pending.
+  assert.doesNotMatch(html, /Browser wallet withdrawal: pending/);
   assert.equal(
     (html.match(/unavailable/g) ?? []).length,
     3,
     "no read yet: unavailable, never zero",
   );
-  assert.match(html, /shown for the vault as a whole/);
+  assert.match(html, /Shown for the whole vault\./);
   const page = await bundle("../ui/PrBounties.tsx");
   const note = page
     .render(page.SponsorNote, {
       config: { sponsor: "sponsor.testnet" },
     })
     .replaceAll("&#x27;", "'");
-  assert.match(note, /paid by the owner's sponsor float/);
-  assert.match(note, /unused\s+compute returns to the owner's sponsor account/);
+  assert.match(note, /paid from the owner's float/);
+  assert.match(note, /unused compute\s+returns to/);
   assert.match(note, /sponsor\.testnet/);
   // The contract keeps no per-bounty check budget, so the note promises none.
   assert.doesNotMatch(note, /budget|reserve|returns in full/i);

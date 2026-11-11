@@ -92,48 +92,43 @@ function Summary({ review }: { review: Review }) {
         </a>
         : {review.title}
       </dd>
-      <dt>Target branch</dt>
+      <dt>Branch</dt>
       <dd>
-        <code>{review.branch}</code>{" "}
+        <code>{review.branch}</code>
         {review.branch_overridden
-          ? `(you changed it; the repository's default is ${review.branch_suggested})`
-          : "(the repository's default branch)"}
+          ? ` (default is ${review.branch_suggested})`
+          : ""}
       </dd>
-      <dt>Deadlines</dt>
+      <dt>Claims</dt>
       <dd>
-        Open for claims until {utc(d.claim_by)}. A claim lasts{" "}
-        {duration(d.claim_secs)}. The pull request must be merged before{" "}
-        {utc(d.merge_deadline)}. Anyone can request a merge check until{" "}
-        {utc(d.checks_until)}; checks run only when someone requests one. A
-        check at least a minute after the deadline that finds it not merged lets
-        you be refunded from {utc(d.grace_ends)} ({duration(d.grace_secs)}{" "}
-        grace).
+        Until {utc(d.claim_by)}, each claim lasts {duration(d.claim_secs)}
       </dd>
-      <dt>If checks fail</dt>
+      <dt>Merge before</dt>
+      <dd>{utc(d.merge_deadline)}</dd>
+      <dt>Refund</dt>
       <dd>
-        A check that cannot read GitHub (a timeout or no result) changes nothing
-        and can be repeated. A merge before the deadline is paid at the first
-        check that reads it, even after the grace. If no check reads GitHub
-        before {utc(d.hard_refund_at)} ({duration(d.refund_cap_secs)} after the
-        grace), the reward is refunded to you even if the pull request was
-        merged on time, and the refund is final.
+        From {utc(d.grace_ends)} if a check at least a minute after the deadline
+        finds it not merged
+      </dd>
+      <dt>Risk</dt>
+      <dd>
+        Checks run only when someone requests one; a failed check changes
+        nothing. A merge before the deadline is paid at the first check that
+        reads it. If none reads GitHub before {utc(d.hard_refund_at)}, you are
+        refunded even if it was merged on time, and the refund is final.
       </dd>
       <dt>Fees</dt>
       <dd>
         Reward {near(review.reward)}
         {fees.check_reserve > 0n
-          ? `; check reserve ${near(fees.check_reserve)}, returned`
-          : ""}
-        ; record deposit {near(fees.storage_deposit)}, kept. Your wallet also
-        pays the network fee when you sign. A contributor attaches{" "}
-        {near(fees.submit_fee)} to submit a pull request and most of it comes
-        back.
+          ? ` · check reserve ${near(fees.check_reserve)}, returned`
+          : ""}{" "}
+        · record deposit {near(fees.storage_deposit)}, kept · network fee
       </dd>
       <dt>Total locked</dt>
       <dd>
-        <strong>{near(review.locked)}</strong>. If nothing is merged,{" "}
-        {near(review.returned_on_refund)} comes back to you and{" "}
-        {near(review.kept)} stays as the record.
+        <strong>{near(review.locked)}</strong> ·{" "}
+        {near(review.returned_on_refund)} back if nothing is merged
       </dd>
       {fees.source === "preview" ? (
         <>
@@ -194,11 +189,7 @@ export function PostFormView(props: FormViewProps) {
   return (
     <section className="workspace-card">
       <h2>Post a bounty</h2>
-      <p>
-        Paste the GitHub issue and set the reward. Proven reads the repository,
-        title and default branch from GitHub. The maintainer confirms the work
-        by merging the pull request on GitHub.
-      </p>
+      <p>Paste a GitHub issue and set the reward.</p>
       <div className="bounty-form">
         <label>
           GitHub issue link
@@ -275,7 +266,7 @@ export function PostFormView(props: FormViewProps) {
             aria-describedby="post-blocked"
             onClick={props.onCheckKey}
           >
-            Check which key my wallet signs messages with
+            Check wallet key
           </button>
           {props.keyCheck ? <p role="status">{props.keyCheck}</p> : null}
         </>
@@ -291,10 +282,10 @@ export function PostFormView(props: FormViewProps) {
       </button>
       <p id="post-blocked" className="workspace-empty">
         {[
-          review ? "" : "Enter an issue link and a reward to see the review.",
+          review ? "" : "Enter an issue link and a reward.",
           block,
           review && !block && props.onCheckKey && !keyChecked
-            ? "Check your wallet's key first. The money from a refund goes to a vault that this key alone controls."
+            ? "Check your wallet key first: refunds go to a vault only that key controls."
             : "",
         ]
           .filter(Boolean)

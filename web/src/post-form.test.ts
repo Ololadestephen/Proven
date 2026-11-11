@@ -142,39 +142,24 @@ test("the review shows the repository, issue, suggested branch, deadlines, fees 
   const html = render({ meta: ready, rewardText: "0.1" });
   assert.match(html, /Ololadestephen\/flop#1/);
   assert.match(html, /Proven testnet pilot A: merge and payout/);
-  assert.match(html, /<code>main<\/code> \(the repository's default branch\)/);
-  assert.match(html, /Open for claims until 2026-/);
-  assert.match(html, /A claim lasts 2 days/);
-  assert.match(html, /1 day grace/);
+  assert.match(html, /<dt>Branch<\/dt><dd><code>main<\/code><\/dd>/);
+  assert.match(html, /Until 2026-[^<]*, each claim lasts 2 days/);
+  assert.match(html, /<dt>Merge before<\/dt>/);
   assert.match(html, /Reward 0\.1 testnet NEAR/);
   assert.match(html, /record deposit 0\.03 testnet NEAR, kept/);
   assert.match(html, /<strong>0\.13 testnet NEAR<\/strong>/);
-  assert.match(
-    html,
-    /0\.1 testnet NEAR comes back to you and 0\.03 testnet NEAR stays as the record/,
-  );
+  assert.match(html, /0\.1 testnet NEAR back if nothing is merged/);
   assert.match(html, /Post and lock 0\.13 testnet NEAR/);
 });
 
 test("the review says that an on-time merge is refunded if verification stays unavailable", () => {
   const html = render({ meta: ready, rewardText: "0.1" });
-  assert.match(
-    html,
-    /A check that cannot read GitHub \(a timeout or no result\) changes nothing\s+and can be repeated/,
-  );
-  assert.match(
-    html,
-    /paid at the first\s+check that reads it, even after the grace/,
-  );
-  assert.match(html, /If no check reads GitHub\s+before 2026-/);
-  assert.match(html, /14 days after the\s+grace/);
-  assert.match(html, /Anyone can request a merge check until\s+2026-/);
-  assert.match(html, /checks run only when someone requests one/);
-  assert.match(html, /lets you be refunded from 2026-/);
-  assert.match(
-    html,
-    /refunded to you even if the pull request was merged on time/,
-  );
+  assert.match(html, /a failed check changes\s+nothing/);
+  assert.match(html, /paid at the first check that\s+reads it/);
+  assert.match(html, /If none reads GitHub before 2026-/);
+  assert.match(html, /Checks run only when someone requests one/);
+  assert.match(html, /From 2026-[^<]* if a check at least a minute after the/);
+  assert.match(html, /refunded even if it was merged on time/);
   assert.match(html, /the refund is final/);
 });
 
@@ -197,7 +182,7 @@ test("a branch override is flagged and a bad override is shown beside its field"
   });
   assert.match(
     changed,
-    /<code>proven-testnet-pilot<\/code> \(you changed it; the repository's default is main\)/,
+    /<code>proven-testnet-pilot<\/code> \(default is main\)/,
   );
   const bad = render({
     meta: ready,

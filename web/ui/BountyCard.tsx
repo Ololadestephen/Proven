@@ -649,10 +649,9 @@ export function Actions({
 export function SponsorNote({ config }: { config: Pick<Config, "sponsor"> }) {
   return (
     <>
-      Sponsored checks are paid by the owner's sponsor float, and their unused
-      compute returns to the owner's sponsor account{" "}
-      <code>{config.sponsor}</code>. A sponsored check attaches no NEAR from the
-      contributor.
+      Sponsored checks are paid from the owner's float, and unused compute
+      returns to <code>{config.sponsor}</code>; the contributor attaches
+      nothing.
     </>
   );
 }
@@ -675,14 +674,20 @@ export function BountyCard({
   const status = bountyStatus(bounty, now);
   const repo = `https://github.com/${bounty.repo}`;
   const settlements = present(bounty);
+  const me = ctx.wallet?.accountId;
   const vaults = [
-    ...new Set([bounty.maintainer_vault, bounty.claim?.vault].filter(Boolean)),
+    ...new Set(
+      [
+        me === bounty.buyer ? bounty.maintainer_vault : null,
+        me && me === bounty.claim?.wallet ? bounty.claim.vault : null,
+      ].filter(Boolean),
+    ),
   ] as string[];
   return (
     <article className="workspace-card bounty-card">
       <div className="workspace-section-heading">
         <h3>
-          Bounty {id}:{" "}
+          Bounty {id} ·{" "}
           <a
             href={`${repo}/issues/${bounty.issue}`}
             target="_blank"
@@ -691,39 +696,36 @@ export function BountyCard({
             {bounty.repo}#{bounty.issue}
           </a>
         </h3>
+        <span className="status-pill">{status.line}</span>
       </div>
-      <p className="bounty-status">
-        <span className="status-pill">{status.line}</span> {status.detail}
-      </p>
+      {status.detail ? <p className="bounty-status">{status.detail}</p> : null}
       <dl className="workspace-review bounty-facts">
         <dt>Reward</dt>
         <dd>{near(bounty.reward)}</dd>
-        <dt>Maintainer</dt>
+        <dt>Branch</dt>
         <dd>
-          {short(bounty.buyer)}, refunds go to vault{" "}
-          <code>{short(bounty.maintainer_vault)}</code>
+          <code>{bounty.base_ref}</code>
         </dd>
+        <dt>Maintainer</dt>
+        <dd>{short(bounty.buyer)}</dd>
         <dt>Contributor</dt>
         <dd>
           {bounty.claim
-            ? `${short(bounty.claim.wallet)}, GitHub id ${bounty.claim.github_id}, payout vault ${short(bounty.claim.vault)}`
-            : "Nobody has claimed it."}
+            ? `${short(bounty.claim.wallet)} (GitHub id ${bounty.claim.github_id})`
+            : "Unclaimed"}
         </dd>
-        <dt>Target</dt>
+        <dt>Claims until</dt>
         <dd>
-          Branch <code>{bounty.base_ref}</code> in {bounty.repo} (repository id{" "}
-          {bounty.repo_id})
+          {utc(bounty.claim_by)}, each claim lasts{" "}
+          {duration(Number(bounty.claim_secs))}
         </dd>
-        <dt>Deadlines</dt>
+        <dt>Merge before</dt>
+        <dd>{utc(bounty.merge_deadline)}</dd>
+        <dt>Refund</dt>
         <dd>
-          Claims until {utc(bounty.claim_by)}; a claim lasts{" "}
-          {duration(Number(bounty.claim_secs))}; merge before{" "}
-          {utc(bounty.merge_deadline)}; checks until{" "}
-          {utc(checksUntil(bounty, config.refund_cap_secs))}. A check after the
-          merge deadline (at least a minute after it) that finds the pull
-          request not merged opens the refund from {utc(graceEnds(bounty))}. If
-          no check reads GitHub, the refund opens{" "}
-          {utc(hardRefundAt(bounty, config.refund_cap_secs))}.
+          From {utc(graceEnds(bounty))} if a check at least a minute after the
+          deadline finds it not merged; otherwise from{" "}
+          {utc(hardRefundAt(bounty, config.refund_cap_secs))}
         </dd>
         <dt>Evidence</dt>
         <dd className="bounty-evidence">
@@ -763,11 +765,9 @@ export function BountyCard({
               {settlements.map(([kind, s]) => (
                 <span key={kind}>
                   {kindLabel(kind)} {near(s.principal)} to vault{" "}
-                  {short(s.vault)}, attempt {s.attempt}.{" "}
+                  <code>{short(s.vault)}</code>
                 </span>
               ))}
-              The settlement is separate from the status above: see each vault
-              below.
             </dd>
           </>
         ) : null}

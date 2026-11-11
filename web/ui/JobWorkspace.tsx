@@ -284,28 +284,26 @@ export function JobWorkspace({
               : ""}
           </p>
           <details>
-            <summary>What each side is protected from</summary>
-            <p>
-              <strong>What a worker is protected from.</strong> A check cannot
-              use a field outside this format. Proven never gives the buyer
-              rejected work. If well-formed work fails a rule, you keep the
-              0.015 NEAR attempt fee. The check is published when the bid
-              closes, so unfair ones can be seen.
-            </p>
-            <p>
-              <strong>What a worker is not protected from.</strong> A buyer can
-              still write an unfair check using only published fields. Then you
-              get the fee, not the full payment, and there is no dispute
-              process. The relay’s operator can read your work, and could
-              withhold a check. Reuse is blocked only for the exact same check
-              hash. Do not start work before funding.
-            </p>
-            <p>
-              <strong>What a buyer is not protected from.</strong> A worker who
-              never delivers uses up a funded attempt, and your money is locked
-              until the deadline. On an open bid, junk that fits the format can
-              take the fee. Listing allowed workers avoids both.
-            </p>
+            <summary>Protections and limits</summary>
+            <ul className="post-hint">
+              <li>
+                <strong>Worker, protected:</strong> checks use only this format;
+                rejected work never reaches the buyer; well-formed work that
+                fails keeps the 0.015 NEAR fee; the check is published at close.
+              </li>
+              <li>
+                <strong>Worker, not protected:</strong> an unfair check pays
+                only the fee, with no dispute process; the relay operator can
+                read work or withhold a check; reuse is blocked only for the
+                same check hash. Start work only after funding.
+              </li>
+              <li>
+                <strong>Buyer, not protected:</strong> a worker who never
+                delivers uses an attempt and locks the money until the deadline;
+                on an open bid, junk that fits the format can take the fee.
+                Listing allowed workers avoids both.
+              </li>
+            </ul>
           </details>
           {revealed}
         </>
@@ -315,9 +313,8 @@ export function JobWorkspace({
           <h2>Job evidence</h2>
           {bid.finished ? (
             <p className="post-hint">
-              This bid has ended and its storage went back to the buyer. The
-              full description and format stay in the transaction that posted
-              it; their hashes are below.
+              Ended; storage returned to the buyer. The description and format
+              are in the posting transaction (hashes below).
             </p>
           ) : null}
           <dl className="market-facts">

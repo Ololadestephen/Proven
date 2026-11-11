@@ -15,6 +15,7 @@ import {
   releaseUnapplied,
 } from "./pending-actions.ts";
 import { useBountyActions } from "./use-bounty-actions.ts";
+import { useAutoResolve } from "./auto-resolve.ts";
 const readPending = () => readJournal(localStorage, PENDING_KEY);
 async function readFreshMarket(): Promise<Market> {
   const value = await api<Market>("/api/market");
@@ -148,7 +149,7 @@ export function useMarket(bidId?: number) {
     if (!gate.current.enter()) return;
     if (pendingRef.current) {
       setError(
-        "An earlier action is still awaiting chain reconciliation. Check its wallet history before sending anything else.",
+        "The last action is still being confirmed on chain. Try again in a few seconds.",
       );
       gate.current.leave();
       return;
@@ -219,9 +220,25 @@ export function useMarket(bidId?: number) {
       saved,
       fresh,
     );
-    if (released) setNotice("Nothing reached the chain. You can carry on.");
+    if (released)
+      setNotice(
+        `${saved.label}: not on the chain, so nothing was sent. You can sign again.`,
+      );
     else await refresh();
   };
+  // Confirm or release the last action from the chain, without asking the person.
+  useAutoResolve({
+    pending,
+    busy: !!busy,
+    check: refresh,
+    release: releasePending,
+  });
+  useAutoResolve({
+    pending: bounty.pending,
+    busy: !!busy,
+    check: bounty.check,
+    release: bounty.autoRelease,
+  });
 
   return {
     market,

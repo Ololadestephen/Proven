@@ -22,12 +22,10 @@ import {
 } from "./vault-view.ts";
 
 const PATH = "/api/market/bounties";
-export const BROWSER_WITHDRAWAL_SUPPORT =
-  "Browser wallet withdrawal: pending. No real testnet wallet has completed a withdrawal through this page yet.";
 
 /** What the page tells a person about their vault, in one place. */
 export const VAULT_RULES =
-  "Money in the vault is not in your wallet until you withdraw it. Nothing is forwarded to a wallet automatically, and nothing is swept. Only the vault's withdrawal key can withdraw. If that key is lost, the money in the vault is lost.";
+  "Money stays in the vault until you withdraw it; nothing is forwarded. Only this vault's key can withdraw, and a lost key loses the money.";
 
 const storage = () => {
   try {
@@ -82,39 +80,36 @@ export function VaultView(props: VaultViewProps) {
   return (
     <div className="bounty-vault">
       <h4>
-        Vault <code>{props.vault}</code>
+        Your vault <code>{props.vault}</code>
       </h4>
-      <p>{VAULT_RULES}</p>
+      <p className="post-hint">{VAULT_RULES}</p>
       {credits.map((entry, i) => {
         const shown = settlementDisplay(entry.settlement, latest, clock);
         return (
           <p key={`${entry.label}-${i}`} className="vault-credit">
-            <strong>VAULT CREDIT</strong>
+            <strong>Credit</strong>
             {entry.label ? ` (${entry.label})` : ""}: {shown.vaultCreditText}
           </p>
         );
       })}
       <p className="wallet-withdrawal">
-        <strong>WALLET WITHDRAWAL</strong>: {wallet.walletText}
-        {props.shared > 1
-          ? " This vault holds more than one settlement on this page, so withdrawals are shown for the vault as a whole, not per settlement."
-          : ""}
+        <strong>Withdrawal</strong>: {wallet.walletText}
+        {props.shared > 1 ? " Shown for the whole vault." : ""}
       </p>
-      <dl className="workspace-review">
-        <dt>Withdrawable</dt>
-        <dd>{numbers.available}</dd>
-        <dt>Storage fund (kept by the vault)</dt>
-        <dd>{numbers.fund}</dd>
-        <dt>Next withdrawal number</dt>
-        <dd>{numbers.n}</dd>
-      </dl>
       {read && !read.exists ? (
-        <p>
-          This vault does not exist yet; its first deposit creates it. Until
-          then there is nothing to withdraw.
+        <p className="post-hint">
+          Not created yet: its first deposit creates it.
         </p>
-      ) : null}
-      <p>{BROWSER_WITHDRAWAL_SUPPORT}</p>
+      ) : (
+        <dl className="workspace-review">
+          <dt>Withdrawable</dt>
+          <dd>{numbers.available}</dd>
+          <dt>Storage fund (kept by the vault)</dt>
+          <dd>{numbers.fund}</dd>
+          <dt>Next withdrawal number</dt>
+          <dd>{numbers.n}</dd>
+        </dl>
+      )}
       {history.length ? (
         <ul className="bounty-withdrawals">
           {history.map((h, i) => (
@@ -142,7 +137,7 @@ export function VaultView(props: VaultViewProps) {
           ))}
         </ul>
       ) : null}
-      {props.connected && info ? (
+      {props.connected && info && BigInt(info.available) > 0n ? (
         <div className="bounty-action">
           <label>
             Destination account
@@ -160,12 +155,9 @@ export function VaultView(props: VaultViewProps) {
               inputMode="decimal"
             />
           </label>
-          <p>
-            Withdrawing asks your wallet for two things: a signature on a
-            message, with the vault's withdrawal key, and then a transaction
-            that you pay the gas for. The vault accepts the signature only from
-            that key. If your wallet signs messages with another key, the
-            withdrawal is refused and nothing is sent.
+          <p className="post-hint">
+            Your wallet signs a message with the vault key, then sends the
+            withdrawal. You pay the gas.
           </p>
           <button
             type="button"

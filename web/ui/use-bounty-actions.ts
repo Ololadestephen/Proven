@@ -30,6 +30,8 @@ export interface BountyActions {
   check(): Promise<void>;
   /** After a wallet cancel: clears the journal only if the chain shows no effect. */
   release(): Promise<void>;
+  /** The automatic release: the same check, with no error shown while the chain still lags. */
+  autoRelease(): Promise<void>;
 }
 
 /**
@@ -101,7 +103,7 @@ export function useBountyActions(shared: {
           "The unreadable record was cleared. Check your wallet history.",
         );
       } else if (await releaseBountyJournal(env, saved))
-        setNotice("Nothing reached the chain. You can carry on.");
+        setNotice("Not on the chain, so nothing was sent. You can sign again.");
       else {
         await check();
         if (pendingRef.current)
@@ -118,11 +120,21 @@ export function useBountyActions(shared: {
     }
   }, [env, check, setError, setNotice]);
 
+  const autoRelease = useCallback(async () => {
+    const saved = pendingRef.current;
+    if (!saved || !bountyIntentOf(saved)) return;
+    if (await releaseBountyJournal(env, saved))
+      setNotice(
+        `${saved.label}: not on the chain, so nothing was sent. You can sign again.`,
+      );
+    else await check();
+  }, [env, check, setNotice]);
+
   const run: BountyRun = async (label, what, task, progress) => {
     if (!gate.enter()) return;
     if (pendingRef.current) {
       setError(
-        "An earlier bounty action is still awaiting the chain. Check its wallet history before sending anything else.",
+        "The last action is still being confirmed on chain. Try again in a few seconds.",
       );
       gate.leave();
       return;
@@ -161,5 +173,5 @@ export function useBountyActions(shared: {
     }
   };
 
-  return { wallet, run, pending, check, release };
+  return { wallet, run, pending, check, release, autoRelease };
 }
