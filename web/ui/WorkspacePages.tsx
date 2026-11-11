@@ -182,7 +182,6 @@ function JobGrid({
   empty: string;
 }) {
   const [tab, setTab] = useState<JobTab>(initial);
-  const [query, setQuery] = useState("");
   const newest = bids.slice().sort((a, b) => b.id - a.id);
   const counts = Object.fromEntries(
     JOB_TABS.map(([t]) => [
@@ -190,27 +189,10 @@ function JobGrid({
       newest.filter((bid) => t === "all" || jobTab(bid) === t).length,
     ]),
   ) as Record<JobTab, number>;
-  const q = query.trim().toLowerCase();
-  const shown = newest.filter(
-    (bid) =>
-      (tab === "all" || jobTab(bid) === tab) &&
-      (!q ||
-        bidTitle(bid).toLowerCase().includes(q) ||
-        bid.buyer.toLowerCase().includes(q) ||
-        `job ${bid.id}`.includes(q.replace(/^#/, "job ")) ||
-        String(bid.id) === q.replace(/^#/, "")),
-  );
+  const shown = newest.filter((bid) => tab === "all" || jobTab(bid) === tab);
   return (
     <section className="bounty-board">
-      <TileToolbar
-        tabs={JOB_TABS}
-        counts={counts}
-        tab={tab}
-        onTab={setTab}
-        query={query}
-        onQuery={setQuery}
-        placeholder="Search by title, buyer or job number"
-      />
+      <TileToolbar tabs={JOB_TABS} counts={counts} tab={tab} onTab={setTab} />
       {shown.length ? (
         <div className="bounty-grid">
           {shown.map((bid) => (
@@ -235,17 +217,12 @@ function MarketList({
   // The server serves no query strings, so the completed view is chosen by the hash.
   const initial = location.hash === "#completed" ? "paid" : "open";
   return (
-    <>
-      <JobGrid
-        bids={bids}
-        viewer={viewer}
-        initial={initial}
-        empty="No jobs on this board yet."
-      />
-      <p className="bounty-about">
-        <a href="/guide">How a job works</a>
-      </p>
-    </>
+    <JobGrid
+      bids={bids}
+      viewer={viewer}
+      initial={initial}
+      empty="No jobs on this board yet."
+    />
   );
 }
 function MyJobs({ market, wallet }: { market: Market; wallet: Wallet | null }) {

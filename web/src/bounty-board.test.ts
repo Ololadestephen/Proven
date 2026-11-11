@@ -4,7 +4,6 @@ import test from "node:test";
 import type { Bounty } from "../ui/bounty-types.ts";
 import {
   activity,
-  matches,
   needsAction,
   progressPath,
   stepFromHash,
@@ -68,14 +67,6 @@ test("needs action: a claimant who has not submitted, and a maintainer whose ref
   const ineligible = b({ status: "Ineligible", claim });
   assert.equal(needsAction(ineligible, "maint.testnet", T0 + 20, cfg), true);
   assert.equal(needsAction(ineligible, "someone.testnet", T0 + 20, cfg), false);
-});
-
-test("search matches the repository, the issue number and the title", () => {
-  assert.ok(matches(base, undefined, "owner/repo"));
-  assert.ok(matches(base, undefined, "#7"));
-  assert.ok(matches(base, "Fix the parser", "parser"));
-  assert.ok(!matches(base, "Fix the parser", "lexer"));
-  assert.ok(matches(base, undefined, "  "));
 });
 
 test("the path marks the next step, and ends as it happened", () => {

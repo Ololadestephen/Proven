@@ -27,7 +27,6 @@ import {
   stepFromHash,
   activity,
   inTab,
-  matches,
   progressPath,
   TABS,
   tabCounts,
@@ -92,7 +91,6 @@ export function BountyList(props: {
   const { ctx } = props;
   const me = ctx.wallet?.accountId ?? null;
   const [tab, setTab] = useState<Tab>("open");
-  const [query, setQuery] = useState("");
   const newest = props.bounties.slice().reverse();
   const counts = tabCounts(
     newest.map(([, b]) => b),
@@ -100,10 +98,8 @@ export function BountyList(props: {
     ctx.now,
     ctx.config,
   );
-  const shown = newest.filter(
-    ([, b]) =>
-      inTab(tab, b, me, ctx.now, ctx.config) &&
-      matches(b, props.titleOf(b.repo, b.issue), query),
+  const shown = newest.filter(([, b]) =>
+    inTab(tab, b, me, ctx.now, ctx.config),
   );
   return (
     <section className="bounty-board">
@@ -112,9 +108,6 @@ export function BountyList(props: {
         counts={counts}
         tab={tab}
         onTab={setTab}
-        query={query}
-        onQuery={setQuery}
-        placeholder="Search by title or repository"
       />
       {shown.length ? (
         <div className="bounty-grid">

@@ -75,15 +75,6 @@ export function tabCounts(
   return counts;
 }
 
-/** Search on the repository, the issue number and the issue's title when it is known. */
-export function matches(b: Bounty, title: string | undefined, query: string) {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  return [`${b.repo}#${b.issue}`, title ?? ""].some((text) =>
-    text.toLowerCase().includes(q.replace(/^#/, "")),
-  );
-}
-
 export type StepState = "done" | "current" | "todo";
 export interface Step {
   label: string;

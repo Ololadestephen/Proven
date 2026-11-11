@@ -43,9 +43,6 @@ export function TileToolbar<T extends string>(props: {
   counts: Record<T, number>;
   tab: T;
   onTab: (tab: T) => void;
-  query: string;
-  onQuery: (query: string) => void;
-  placeholder: string;
 }) {
   return (
     <div className="bounty-toolbar">
@@ -63,14 +60,6 @@ export function TileToolbar<T extends string>(props: {
           </button>
         ))}
       </div>
-      <input
-        className="bounty-search"
-        type="search"
-        placeholder={props.placeholder}
-        value={props.query}
-        onChange={(e) => props.onQuery(e.target.value)}
-        aria-label={props.placeholder}
-      />
     </div>
   );
 }

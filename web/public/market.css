@@ -408,14 +408,6 @@ details.bounty-section > summary {
   font-size: 0.75rem;
   text-align: center;
 }
-.bounty-search {
-  flex: 1;
-  min-width: 200px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--paper);
-}
 .bounty-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
