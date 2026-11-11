@@ -121,7 +121,7 @@ const JOB_TABS: [JobTab, string][] = [
   ["open", "Open"],
   ["progress", "In progress"],
   ["paid", "Paid"],
-  ["closed", "Refunded or closed"],
+  ["closed", "Closed"],
 ];
 /** Which tab a job belongs to. A refund is never shown as paid. */
 export function jobTab(bid: MarketBid): Exclude<JobTab, "all"> {

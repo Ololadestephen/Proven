@@ -167,9 +167,9 @@ export function ClaimView(props: {
     <div className="bounty-action">
       <RefundNotice bounty={bounty} config={config} />
       <p className="post-hint">
-        Lasts {duration(Number(bounty.claim_secs))}; free; one claim per wallet.
-        Your wallet signs a message first: the payout goes to a vault only that
-        key controls.
+        A claim lasts {duration(Number(bounty.claim_secs))} and costs{" "}
+        {near(config.claim_fee)}; one per wallet. Your wallet signs a message
+        first: the payout goes to a vault only that key controls.
       </p>
       <TxButton
         variant="primary"
@@ -186,7 +186,7 @@ export function ClaimView(props: {
         </p>
       ) : null}
       <SigningNote approved={props.approved} />
-      {blocked ? <p className="workspace-empty">{blocked}</p> : null}
+      {blocked ? <p className="post-hint">{blocked}</p> : null}
     </div>
   );
 }
@@ -567,8 +567,8 @@ export function Actions({
   const warning = failedLookWarning(bounty, config.refund_cap_secs);
   return (
     <div className="bounty-actions">
-      {!wallet ? (
-        <p className="workspace-empty">Connect a wallet to act.</p>
+      {!wallet && !open ? (
+        <p className="post-hint">Connect a wallet to act.</p>
       ) : null}
       {open ? <ClaimSection id={id} bounty={bounty} ctx={ctx} /> : null}
       {canSubmit ? (

@@ -432,9 +432,16 @@ test("the refund notice stands above the Claim button, with the date and the fin
   );
 });
 
-test("the claim step shows the claim length and that a wallet claims once", () => {
-  const html = claimView({});
-  assert.match(html, /Lasts 2 days; free; one claim per wallet\./);
+test("the claim step shows the claim length, the claim fee and that a wallet claims once", () => {
+  const html = claimView({})
+    .replace(/<!-- -->/g, "")
+    .replace(/\s+/g, " ");
+  // The sandbox config's claim fee is 0.0001 NEAR.
+  assert.match(
+    html,
+    /A claim lasts 2 days and costs 0\.0001 (testnet )?NEAR; one per wallet\./,
+  );
+  assert.doesNotMatch(html, /free/);
 });
 
 test("the claim step needs a GitHub link and a wallet, and says which is missing", () => {
@@ -933,7 +940,7 @@ test("with signing off, no button on the page can send a transaction", () => {
   });
   // Buttons that read only, and never sign or send, stay available: the status tabs too.
   const reads =
-    /^(Cancel|Check again|Look up|Re-check|Try again|(All|Open|In progress|Paid|Refunded|Needs action) \d+)$/;
+    /^(Cancel|Check again|Look up|Re-check|Try again|(All|Open|In progress|Paid|Closed|Needs action) \d+)$/;
   const pages = [];
   for (const w of [MAINT, CONTRIB, STRANGER])
     for (let id = 1; id <= 8; id++)
@@ -985,13 +992,13 @@ test("the list opens on the Open tab and counts every status", () => {
   );
   const tabs = buttons(html)
     .map((b) => b.text)
-    .filter((t) => /^(All|Open|In progress|Paid|Refunded) \d+$/.test(t));
+    .filter((t) => /^(All|Open|In progress|Paid|Closed) \d+$/.test(t));
   assert.deepEqual(tabs, [
     "All 8",
     "Open 1",
     "In progress 4",
     "Paid 1",
-    "Refunded 2",
+    "Closed 2",
   ]);
   // The connected contributor still has to submit on bounty 2.
   assert.ok(buttons(html).some((b) => b.text === "Needs action 1"));
@@ -1007,7 +1014,9 @@ test("a bounty's page shows the path, the next step, parties, terms, records and
   // No back link: the side navigation already leads to the list.
   assert.doesNotMatch(html, /← Bounties/);
   const steps = [
-    ...html.matchAll(/class="bounty-step (\w+)"><span[^>]*><\/span>([^<]+)</g),
+    ...html.matchAll(
+      /<li data-status="(\w+)"[^>]*><span[^>]*><\/span>([^<]+)</g,
+    ),
   ].map((m) => `${m[2]}:${m[1]}`);
   assert.deepEqual(steps, [
     "Posted:done",
@@ -1026,7 +1035,10 @@ test("a bounty's page shows the path, the next step, parties, terms, records and
     /Nobody&#x27;s opinion decides it|Nobody's opinion decides it/,
   );
   const open = renderPage({ bountyId: 1 });
-  assert.match(open, /class="bounty-step current"><span[^>]*><\/span>Claimed/);
+  assert.match(
+    open,
+    /data-status="current" aria-current="step"><span[^>]*><\/span>Claimed/,
+  );
   assert.match(renderPage({ bountyId: 99 }), /There is no bounty 99\./);
 });
 

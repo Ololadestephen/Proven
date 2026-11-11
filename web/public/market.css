@@ -555,60 +555,6 @@ details.bounty-section > summary {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.bounty-path {
-  display: flex;
-  margin: 0;
-  padding: 16px 20px;
-  list-style: none;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--paper);
-  overflow-x: auto;
-}
-.bounty-step {
-  position: relative;
-  flex: 1;
-  min-width: 90px;
-  padding-top: 22px;
-  font-size: 0.8125rem;
-  color: var(--muted);
-}
-.bounty-step > span {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  border: 2px solid #c9ccd6;
-  background: var(--paper);
-}
-.bounty-step:not(:last-child)::before {
-  content: "";
-  position: absolute;
-  top: 6px;
-  left: 14px;
-  right: 2px;
-  height: 2px;
-  background: #e3e5ec;
-}
-.bounty-step.done {
-  color: var(--ink);
-}
-.bounty-step.done > span {
-  border-color: var(--green);
-  background: var(--green);
-}
-.bounty-step.done:not(:last-child)::before {
-  background: var(--green);
-}
-.bounty-step.current {
-  color: var(--purple);
-  font-weight: 600;
-}
-.bounty-step.current > span {
-  border-color: var(--purple);
-}
 .bounty-next {
   padding: 20px;
   border: 1px solid var(--line);
@@ -738,4 +684,88 @@ details.bounty-section > summary {
   padding: 4px 0;
   color: var(--muted);
   font-size: 0.875rem;
+}
+
+/* One scale for both item pages (a job and a bounty): the same card, panels, progress and type.
+   Title 28, amount 24, section 15, body 14, secondary 13, labels 12, code 12. */
+.workspace-app .bounty-page {
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow:
+    0 1px 2px #19152e04,
+    inset 0 1px #fff;
+}
+.workspace-app .job-progress[data-steps="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.workspace-app .job-progress[data-steps="5"] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.workspace-app :is(.market-bid, .bounty-page) .job-progress {
+  margin: 0;
+}
+.workspace-app :is(.market-bid, .bounty-page) .job-progress li {
+  font-size: 12px;
+}
+.workspace-app .bounty-page .bounty-next {
+  padding: 18px 20px;
+  border: 1px solid #d9d6f8;
+  border-radius: 12px;
+  background: #f8f7ff;
+}
+.workspace-app .bounty-page .bounty-vault {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--app-bg);
+}
+.workspace-app :is(.market-bid, .bounty-page) :is(h3, .bounty-vault h4) {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.workspace-app
+  :is(.market-bid, .bounty-page)
+  .bounty-page-main
+  :where(p, li, summary),
+.workspace-app :is(.market-bid, .bounty-page) .market-description,
+.workspace-app :is(.market-bid, .bounty-page) .job-result,
+.workspace-app :is(.market-bid, .bounty-page) .job-action p,
+.workspace-app :is(.market-bid, .bounty-page) .workspace-tabs button {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.workspace-app :is(.market-bid, .bounty-page) .bounty-page-main .post-hint,
+.workspace-app :is(.market-bid, .bounty-page) .bounty-page-status,
+.workspace-app :is(.market-bid, .bounty-page) .bounty-page-side dt,
+.workspace-app :is(.market-bid, .bounty-page) .bounty-page-side .post-hint,
+.workspace-app :is(.market-bid, .bounty-page) .bounty-activity time {
+  font-size: 13px;
+  line-height: 1.55;
+}
+.workspace-app :is(.market-bid, .bounty-page) .bounty-page-side dd,
+.workspace-app :is(.market-bid, .bounty-page) .bounty-activity li {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.workspace-app :is(.market-bid, .bounty-page) :is(code, .market-pre) {
+  font-size: 12px;
+}
+.workspace-app
+  :is(.market-bid, .bounty-page)
+  .bounty-page-main
+  .bounty-page-title {
+  font-size: 28px;
+  line-height: 1.15;
+}
+.workspace-app
+  :is(.market-bid, .bounty-page)
+  .bounty-page-main
+  .bounty-page-reward {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
 }

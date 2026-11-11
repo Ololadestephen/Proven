@@ -165,6 +165,7 @@ export function BountyPage(props: {
     ),
   ];
   const events = activity(bounty);
+  const path = progressPath(bounty);
   // A step link (from the agent tools, for example /app/bounties/3#submit-12) opens the page on
   // its step. Nothing is sent: the person still presses the button and approves in their wallet.
   const step = stepFromHash(
@@ -198,9 +199,17 @@ export function BountyPage(props: {
             {issueName(bounty, props.titleOf)}
           </h2>
           <p className="bounty-page-reward">{near(bounty.reward)}</p>
-          <ol className="bounty-path" aria-label="Progress">
-            {progressPath(bounty).map((step) => (
-              <li key={step.label} className={`bounty-step ${step.state}`}>
+          <ol
+            className="job-progress"
+            data-steps={path.length}
+            aria-label="Bounty progress"
+          >
+            {path.map((step) => (
+              <li
+                key={step.label}
+                data-status={step.state === "todo" ? undefined : step.state}
+                aria-current={step.state === "current" ? "step" : undefined}
+              >
                 <span aria-hidden="true" />
                 {step.label}
               </li>
@@ -249,7 +258,10 @@ export function BountyPage(props: {
               , as read from GitHub by Proven's verifier in an attested OutLayer
               run. Nobody's opinion decides it.
             </p>
-            <RefundNotice bounty={bounty} config={config} />
+            {/* While the bounty is open the claim step shows this notice above its button. */}
+            {bounty.status === "Open" ? null : (
+              <RefundNotice bounty={bounty} config={config} />
+            )}
           </section>
         </div>
         <aside className="bounty-page-side">

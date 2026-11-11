@@ -10,7 +10,7 @@ export const TABS: [Tab, string][] = [
   ["open", "Open"],
   ["progress", "In progress"],
   ["paid", "Paid"],
-  ["refunded", "Refunded"],
+  ["refunded", "Closed"],
   ["action", "Needs action"],
 ];
 

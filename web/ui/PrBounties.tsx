@@ -308,7 +308,7 @@ export function PrBountiesView(props: PageProps) {
         />
       )}
       <details className="bounty-terms bounty-about">
-        <summary>How payment is decided</summary>
+        <summary>How a bounty works</summary>
         <p>
           Any public GitHub repository. The minimum reward is{" "}
           {near(config.min_reward)}; a claim costs {near(config.claim_fee)}.

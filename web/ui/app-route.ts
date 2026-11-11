@@ -17,8 +17,8 @@ export function appRoute(path: string, hash = ""): AppRoute {
   if (path === "/app/market")
     return {
       section: "market",
-      title: "Find your next job.",
-      subtitle: "",
+      title: "Market",
+      subtitle: "Paid only when the work passes its check.",
     };
   if (path === "/app/agents")
     return {
@@ -39,7 +39,7 @@ export function appRoute(path: string, hash = ""): AppRoute {
     return {
       section: "bounties",
       title: "PR bounties",
-      subtitle: "Paid when the pull request merges before the deadline.",
+      subtitle: "Paid only when the pull request merges in time.",
     };
   if (path === "/app/jobs")
     return {
