@@ -234,3 +234,15 @@
   display: block;
   text-align: center;
 }
+/* The wallet row uses the account area's full width, so "Connect wallet" fits and the more menu
+   sits at the right edge. The network line keeps its inset. */
+.workspace-app .sidebar-account {
+  padding-inline: 0;
+}
+.workspace-app .sidebar-account .sidebar-status {
+  padding-inline: 13px;
+}
+.workspace-app .sidebar-account .market-wallet > .button,
+.workspace-app .sidebar-account .market-wallet summary {
+  padding-inline: 12px;
+}
