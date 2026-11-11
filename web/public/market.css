@@ -660,6 +660,67 @@ details.bounty-section > summary {
   font-size: 0.75rem;
   color: var(--muted);
 }
+/* Readable text on the bounty page: larger hints, room between paragraphs and rows. */
+.bounty-page-main {
+  gap: 28px;
+}
+.workspace-app .bounty-page .post-hint {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  max-width: 72ch;
+}
+.workspace-app .bounty-page-main section > p + p {
+  margin-top: 10px;
+}
+.bounty-page .bounty-vault {
+  display: grid;
+  gap: 10px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.bounty-page .bounty-vault h4 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+.workspace-app .bounty-page .bounty-vault p {
+  margin: 0;
+}
+.bounty-page .bounty-vault details summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.bounty-page .bounty-withdrawals {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.bounty-page-side dl {
+  padding-bottom: 20px;
+}
+.bounty-page-side dt {
+  margin-top: 14px;
+}
+.bounty-page-side dd {
+  margin-top: 3px;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+.bounty-page-side h4 {
+  margin-top: 28px;
+}
+.bounty-activity li {
+  margin-bottom: 14px;
+}
+.bounty-activity time {
+  margin-top: 2px;
+}
 @media (max-width: 1180px) {
   .bounty-page-grid {
     grid-template-columns: 1fr;
