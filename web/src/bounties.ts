@@ -1,8 +1,8 @@
 // Read-only routes for the PR merge bounty page: the bounty contract's configuration and bounties,
 // a maintainer's posting permission, a wallet's GitHub link and link challenge, the withdrawal-key
 // messages the contract itself builds, a vault's balance and deposit records, whether an account
-// exists, the latest block time, and a withdrawal's classified outcome. Testnet only for the
-// pilot; the contract is named by PROVEN_PR_BOUNTY_CONTRACT. Nothing here signs or sends a
+// exists, the latest block time, and a withdrawal's classified outcome. The contract is named by
+// PROVEN_PR_BOUNTY_CONTRACT, on the site's NEAR_NETWORK. Nothing here signs or sends a
 // transaction, and with no contract configured nothing is read at all.
 import { rpc, rpcAnswer } from "./read.ts";
 import { ReadError } from "./model.ts";
@@ -39,9 +39,14 @@ export function bountyContract(
   setting = process.env.PROVEN_PR_BOUNTY_CONTRACT,
   network = process.env.NEAR_NETWORK ?? "testnet",
 ): string | null {
-  if (network !== "testnet" || !setting) return null;
+  if ((network !== "testnet" && network !== "mainnet") || !setting) return null;
   if (!ACCOUNT.test(setting))
     throw new ReadError("PROVEN_PR_BOUNTY_CONTRACT is not a NEAR account id.");
+  // The contract's own name must belong to the network the site serves.
+  if (setting.endsWith(".testnet") !== (network === "testnet"))
+    throw new ReadError(
+      "PROVEN_PR_BOUNTY_CONTRACT is on a different network from NEAR_NETWORK.",
+    );
   return setting;
 }
 

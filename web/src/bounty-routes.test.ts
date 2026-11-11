@@ -52,13 +52,13 @@ const ROUTES = [
   `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet/${VAULT}/payee.testnet/1/0`,
 ];
 
-test("off testnet, every bounty route answers not configured and reads nothing", async () => {
+test("on an unknown network, every bounty route answers not configured and reads nothing", async () => {
   let calls = 0;
   const transport = (async () => {
     calls++;
     throw new Error("no read expected");
   }) as unknown as typeof fetch;
-  for (const network of ["mainnet", "", "betanet", "TESTNET"])
+  for (const network of ["", "betanet", "TESTNET", "MAINNET"])
     for (const path of ROUTES)
       assert.deepEqual(
         await bountiesRoute(path, transport, bountyContract(CONTRACT, network)),

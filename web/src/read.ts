@@ -47,10 +47,12 @@ export async function readJson(
   }
 }
 
-// The testnet RPC for bounty and snapshot reads. PROVEN_TESTNET_RPC_URL moves them to another
-// public testnet endpoint when this one rate-limits a busy page.
+// The RPC for bounty and snapshot reads, on the network this site serves. PROVEN_MAINNET_RPC_URL
+// or PROVEN_TESTNET_RPC_URL moves them to another public endpoint when one rate-limits a busy page.
 const RPC =
-  process.env.PROVEN_TESTNET_RPC_URL || "https://test.rpc.fastnear.com";
+  process.env.NEAR_NETWORK === "mainnet"
+    ? process.env.PROVEN_MAINNET_RPC_URL || "https://rpc.mainnet.fastnear.com"
+    : process.env.PROVEN_TESTNET_RPC_URL || "https://test.rpc.fastnear.com";
 export type RpcMethod = "block" | "query" | "EXPERIMENTAL_tx_status";
 /** The whole JSON-RPC answer, so a caller can tell a missing account from a failed read. */
 export async function rpcAnswer(
@@ -75,7 +77,7 @@ export async function rpc(
   const response = await rpcAnswer(method, params, transport);
   if (response.error || !("result" in response))
     throw new ReadError(
-      "Testnet RPC could not return this snapshot. No transaction was sent.",
+      "The NEAR RPC could not return this snapshot. No transaction was sent.",
     );
   return object(response.result);
 }

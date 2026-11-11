@@ -28,7 +28,13 @@ function chain(answers: Record<string, unknown>) {
 
 test("the page is off unless a testnet contract is named", () => {
   assert.equal(bountyContract(undefined, "testnet"), null);
-  assert.equal(bountyContract(CONTRACT, "mainnet"), null);
+  // A contract on another network than the site's is refused, not read.
+  assert.throws(() => bountyContract(CONTRACT, "mainnet"), /different network/);
+  assert.equal(
+    bountyContract("proven-bounties.near", "mainnet"),
+    "proven-bounties.near",
+  );
+  assert.throws(() => bountyContract("proven-bounties.near", "testnet"));
   assert.equal(bountyContract(CONTRACT, "testnet"), CONTRACT);
   assert.throws(() => bountyContract("Not An Account", "testnet"));
 });
