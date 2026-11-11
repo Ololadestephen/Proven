@@ -203,6 +203,9 @@ export interface PageProps {
   onReleasePending: () => void;
 }
 
+/** Statuses after which nothing more can happen to a bounty's money in the contract. */
+const CLOSED = new Set(["Paid", "Refunded", "Cancelled"]);
+
 /** The whole PR bounty page for one reading of the chain. State lives in `PrBounties`. */
 export function PrBountiesView(props: PageProps) {
   const { listing } = props;
@@ -235,6 +238,15 @@ export function PrBountiesView(props: PageProps) {
     done: props.done,
     link: props.link,
   };
+  // Newest first. A bounty is closed once its money has settled for good; an Ineligible one is
+  // still open until someone refunds it.
+  const newest = bounties.slice().reverse();
+  const isClosed = ([, b]: [number, Bounty]) => CLOSED.has(b.status);
+  const open = newest.filter((entry) => !isClosed(entry));
+  const closed = newest.filter(isClosed);
+  const card = ([id, bounty]: [number, Bounty]) => (
+    <BountyCard key={id} id={id} bounty={bounty} ctx={ctx} inVault={inVault} />
+  );
   return (
     <>
       <section className="workspace-card">
@@ -270,19 +282,26 @@ export function PrBountiesView(props: PageProps) {
       ) : null}
       {bounties.length === 0 ? (
         <p className="workspace-empty">No bounties yet.</p>
-      ) : null}
-      {bounties
-        .slice()
-        .reverse()
-        .map(([id, bounty]: [number, Bounty]) => (
-          <BountyCard
-            key={id}
-            id={id}
-            bounty={bounty}
-            ctx={ctx}
-            inVault={inVault}
-          />
-        ))}
+      ) : (
+        <>
+          <section className="bounty-section">
+            <h2>Open ({open.length})</h2>
+            {open.length ? (
+              open.map(card)
+            ) : (
+              <p className="workspace-empty">No open bounties.</p>
+            )}
+          </section>
+          {closed.length ? (
+            <details className="bounty-section">
+              <summary>
+                <h2>Closed ({closed.length})</h2>
+              </summary>
+              {closed.map(card)}
+            </details>
+          ) : null}
+        </>
+      )}
       {!config.paused && props.poster ? (
         <PostPreview
           contract={contract}

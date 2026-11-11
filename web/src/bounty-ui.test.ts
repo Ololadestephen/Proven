@@ -955,7 +955,8 @@ test("the page shows the link panel, the posting form and every bounty, newest f
   assert.match(html, /<h2>Your GitHub account<\/h2>/);
   assert.match(html, /<h2>Post a bounty<\/h2>/);
   const order = [...html.matchAll(/#(\d+) ·/g)].map((m) => m[1]);
-  assert.deepEqual(order, ["8", "7", "6", "5", "4", "3", "2", "1"]);
+  // Open bounties first, newest first; then the closed ones, newest first.
+  assert.deepEqual(order, ["8", "4", "3", "2", "1", "7", "6", "5"]);
   const statuses = [
     ...html.matchAll(/<span class="status-pill">([^<]*)</g),
   ].map((m) => m[1]);
@@ -963,15 +964,18 @@ test("the page shows the link panel, the posting form and every bounty, newest f
     statuses.map((s) => s?.split(",")[0]),
     [
       "Ineligible",
-      "Cancelled",
-      "Refunded",
-      "Paid",
       "Verifying merge",
       "PR submitted",
       "Claimed",
       "Open",
+      "Cancelled",
+      "Refunded",
+      "Paid",
     ],
   );
+  assert.match(html, /<h2>Open \(5\)<\/h2>/);
+  assert.match(html, /<summary><h2>Closed \(3\)<\/h2><\/summary>/);
+  assert.ok(html.indexOf("Open (5)") < html.indexOf("Closed (3)"));
   assert.doesNotMatch(html, /two keys|backup key|branch.?code|check budget/i);
 });
 

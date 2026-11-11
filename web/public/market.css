@@ -349,3 +349,17 @@
 .bounty-card[open] > summary.bounty-summary {
   margin-bottom: 12px;
 }
+.bounty-section {
+  display: grid;
+  gap: 12px;
+}
+.bounty-section > h2,
+.bounty-section > summary > h2 {
+  display: inline;
+  font-size: 1.05rem;
+  margin: 8px 0 0;
+}
+details.bounty-section > summary {
+  cursor: pointer;
+  margin-top: 8px;
+}
