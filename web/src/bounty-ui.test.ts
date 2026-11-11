@@ -202,8 +202,8 @@ const button = (html: string, text: RegExp) => {
   return found;
 };
 
-test("the shipped build keeps signing off", () => {
-  assert.equal(FEES_APPROVED, false);
+test("the shipped build signs, on the owner's fee approval of November 11", () => {
+  assert.equal(FEES_APPROVED, true);
 });
 
 // ---- Status lines ----

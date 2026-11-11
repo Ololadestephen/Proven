@@ -26,18 +26,19 @@ export interface FeeSchedule {
  * Whether the fees shown to a maintainer or contributor are approved. While this is false, no
  * button on the PR bounty page may sign a message or send a transaction, and every flow in
  * `bounty-actions.ts` refuses before it reaches a wallet. It is flipped to true only after the
- * owner approves the measured fees; no other code path may set it.
+ * owner approves the measured fees; no other code path may set it. The owner approved the mainnet
+ * fees and asked for the hosted page on November 11.
  */
-export const FEES_APPROVED = false;
+export const FEES_APPROVED = true;
 
-/** Sandbox sample values for the preview only. The 0.030 NEAR storage deposit is the new
- * contract's `STORAGE_DEPOSIT`; the whole schedule stays unapproved until `FEES_APPROVED` flips. */
+/** Sandbox sample values, shown only when the contract's config cannot be read. Samples are never
+ * approved, so nothing can be signed against them; signing uses the contract's own fees. */
 export const PREVIEW_FEES: FeeSchedule = {
   storage_deposit: 30n * MILLI,
   check_reserve: 0n,
   submit_fee: 10n * MILLI,
   source: "preview",
-  approved: FEES_APPROVED,
+  approved: false,
 };
 
 export interface Advanced {
