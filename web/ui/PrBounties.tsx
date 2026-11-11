@@ -66,13 +66,12 @@ function PostPreview(props: {
       max_reward: BigInt(config.max_reward),
       room: BigInt(config.max_held) - BigInt(config.held),
       refund_cap_secs: config.refund_cap_secs,
+      min_reward: BigInt(config.min_reward),
     }),
     [config.max_reward, config.max_held, config.held, config.refund_cap_secs],
   );
-  const pilot = useMemo(
-    () => ({ repo: config.pilot_repo, repo_id: Number(config.pilot_repo_id) }),
-    [config.pilot_repo, config.pilot_repo_id],
-  );
+  // Any public repository: the contract no longer fixes one.
+  const pilot = null;
   const fees = useMemo(() => feeSchedule(config, approved), [config, approved]);
   return (
     <PostBountyForm
@@ -311,8 +310,10 @@ export function PrBountiesView(props: PageProps) {
       <details className="bounty-terms bounty-about">
         <summary>How payment is decided</summary>
         <p>
-          Repository <code>{config.pilot_repo}</code>. Each check attaches{" "}
-          {near(config.run_deposit)}; the unused part comes back.
+          Any public GitHub repository. The minimum reward is{" "}
+          {near(config.min_reward)}; a claim costs {near(config.claim_fee)}.
+          Each check attaches {near(config.run_deposit)}; the unused part comes
+          back.
           {config.paused ? " Posting is paused." : ""}
         </p>
         <p>

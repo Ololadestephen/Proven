@@ -168,3 +168,10 @@ export function activity(b: Bounty): Activity[] {
       });
   return out.sort((x, y) => y.at - x.at);
 }
+
+/** The step a link names: "#claim", "#check", "#withdraw" or "#submit-<pull request number>". */
+export function stepFromHash(hash: string): { name: string; pr: string } {
+  const m = /^#(?:(claim|check|withdraw)|submit-([0-9]{1,10}))$/.exec(hash);
+  if (!m) return { name: "", pr: "" };
+  return m[1] ? { name: m[1], pr: "" } : { name: "submit", pr: m[2]! };
+}

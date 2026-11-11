@@ -200,7 +200,10 @@ export const linkCall = (contract: string, gistId: string, expiresAt: number) =>
     GAS.link,
   );
 
-/** `claim`: no deposit. The proof is the withdrawal key's signature over the claim message. */
+/** The contract's claim fee (0.0001 NEAR), attached to every claim and kept. */
+export const CLAIM_FEE = 100_000_000_000_000_000_000n;
+
+/** `claim`: exactly the claim fee. The proof is the withdrawal key's signature over the claim message. */
 export const claimCall = (
   contract: string,
   bountyId: number,
@@ -218,7 +221,7 @@ export const claimCall = (
         signature: signatureArg(proof.signature),
       },
     },
-    0n,
+    CLAIM_FEE,
     GAS.claim,
   );
 

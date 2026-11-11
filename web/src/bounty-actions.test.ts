@@ -151,7 +151,7 @@ test("link attaches exactly 0.017 NEAR (0.01 run and 0.007 storage) and 300 Tgas
   });
 });
 
-test("claim, the claim endings, cancel and settlement calls have the contract's arguments and no deposit", () => {
+test("a claim attaches exactly the claim fee; its endings, cancel and settlement calls attach nothing", () => {
   assert.deepEqual(
     claimCall(CONTRACT, 7, KEY, { expires_at: "9", signature: SIGNATURE }),
     {
@@ -162,7 +162,7 @@ test("claim, the claim endings, cancel and settlement calls have the contract's 
         key: KEY,
         proof: { expires_at: "9", signature: SIGNATURE },
       },
-      deposit: 0n,
+      deposit: 100_000_000_000_000_000_000n,
       gas: 30n * TGAS,
     },
   );

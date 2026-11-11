@@ -4,7 +4,7 @@ A maintainer funds a bounty on a GitHub issue. A contributor claims it with one 
 
 **What decides payment:** Proven's verifier, fixed by hash, runs inside an OutLayer TEE and reads GitHub's public API. The contract accepts only the answer of its own OutLayer request, bound to that bounty, run and pull request. The maintainer decides by merging. Proven checks the merge, not the quality of the work or whether the pull request solves the issue. No model and no person decides a payment.
 
-**Status:** a pilot. The deployed contract accepts posts only from allowlisted maintainers and only for one repository fixed at deployment (see "Pilot limits"). On testnet, November 11, 2026, both paths ran end to end with the reviewed builds: a paid merge, and a refund after a check found the pull request not merged (see "Evidence").
+**Status:** on testnet, November 11, 2026, both paths ran end to end with the pilot build, which took posts only from allowlisted maintainers for one repository: a paid merge, and a refund after a check found the pull request not merged (see "Evidence"). The current build opens posting to anyone, on any public repository, and adds a claim fee and a minimum reward (see "Limits"). It passes the unit and sandbox tests and has not been run on a live network.
 
 ## The parties
 
@@ -13,7 +13,7 @@ A maintainer funds a bounty on a GitHub issue. A contributor claims it with one 
 | Maintainer | Posts and funds the bounty; merges, or does not merge, on GitHub. Refunds go to the maintainer's vault |
 | Contributor | Links GitHub once, claims, opens and submits the pull request. The payout goes to the contributor's vault |
 | Anyone | May start a self-paid merge check, refund a bounty that can no longer pay, and run the recovery calls. Money only ever goes to the recorded vault |
-| Contract owner | Manages the poster allowlist, the caps, the sponsor limits and the pause on new bounties. Cannot move funds, change a bounty or record a result |
+| Contract owner | Can close posting to an allowlist, and manages the caps, the minimum reward, the sponsor limits and the pause on new bounties. Cannot move funds, change a bounty or record a result |
 | Sponsor account | Funds the float that pays for free merge checks, and receives their unused compute |
 
 Each person uses **one wallet** and signs **one transaction per step**. A step that binds money to a key also asks the wallet to sign a message (see "Vaults and keys").
@@ -22,7 +22,7 @@ Each person uses **one wallet** and signs **one transaction per step**. A step t
 
 1. **Link GitHub (once per wallet).** The page runs GitHub's device flow with a gists-only app, creates one secret gist holding a challenge that names the network, contract, wallet, link number and expiry, and sends `link` with **0.017 NEAR**: 0.01 for the check run (unused part returned) and 0.007 for storing the link (returned if nothing is stored). The verifier reads the gist; the contract records the GitHub user id. The page builds the challenge itself and refuses to create a gist unless the contract's `link_challenge` returns exactly the same text. The GitHub permission is never stored. Keep the gist: the submission check reads it again.
 2. **Post.** The maintainer pastes an issue link, sets a reward and the deadlines, signs the key message and sends `post_bounty` with exactly **reward + 0.03 NEAR** (the record deposit).
-3. **Claim.** A linked contributor signs the key message and sends `claim`. Free. A claim lasts the posted time (at least 1 hour), capped by the merge deadline. One claim per wallet per bounty: a released, revoked or expired claim cannot be made again by that wallet.
+3. **Claim.** A linked contributor signs the key message and sends `claim` with exactly **0.0001 NEAR**, the claim fee, which the contract keeps. A claim lasts the posted time (at least 1 hour), capped by the merge deadline. One claim per wallet per bounty: a released, revoked or expired claim cannot be made again by that wallet.
 4. **Submit.** The contributor opens a pull request into the agreed branch, then sends `submit_pr` with **0.01 NEAR**. One run reads the pull request and the link gist. The contract binds the pull request only if it is open and unmerged, targets the agreed branch of the bounty's repository, was authored by the GitHub id pinned at claim, and has never been bound before. It records the pull request id and number, the author id, the wallet and the payout key.
 5. **Merge.** The maintainer merges on GitHub, or does not.
 6. **Check the merge.** Anyone may send `check_merge` with **0.01 NEAR**. The bound contributor may instead use up to **3 free checks** paid by the sponsor float. Checks run only when someone asks.
@@ -56,7 +56,7 @@ The maintainer sets, at posting: claims until, how long a claim lasts, the merge
 |---|---|---|
 | Link GitHub | Contributor, once | 0.017 NEAR (0.01 run, unused part returned; 0.007 storage) |
 | Post | Maintainer | reward + 0.03 NEAR record deposit |
-| Claim | Contributor | nothing |
+| Claim | Contributor | 0.0001 NEAR claim fee, kept by the contract |
 | Submit | Contributor | 0.01 NEAR run, unused part returned |
 | Check the merge | Anyone; or the contributor, free, up to 3 times | 0.01 NEAR run, unused part returned; nothing when free |
 | Settle, cancel, release, revoke, expire | As above | nothing |
@@ -92,18 +92,26 @@ OutLayer keeps its charge for each run, about 0.0011 NEAR on testnet, and return
 - **No credential:** the verifier reads GitHub's public API with no token, so nothing can leak. The page's GitHub permission is used once, to create the gist, and is not stored.
 - **Not proved:** that the contributor did the work, that the pull request solves the issue, or that it is good. The maintainer decides by merging.
 
-## Pilot limits
+## Limits
 
 Set by the owner, within the contract's hard maximums:
 
-- the maximum reward per bounty (at most 5 NEAR) and the maximum held in total (at most 10 NEAR);
-- the maximum open bounties per maintainer (at most 5);
-- the poster allowlist;
+- the minimum reward per bounty (above zero), the maximum reward per bounty (at most 5 NEAR) and the maximum held in total (at most 10 NEAR);
+- the maximum open bounties per poster (at most 5);
+- whether posting is open to anyone, or closed to the poster allowlist;
 - the sponsor float cap (at most 1 NEAR) and the cap on total sponsored spending (at most 2 NEAR).
 
-The repository is fixed at deployment by its `owner/name` and numeric GitHub id. The owner's pause stops new bounties only; claiming, submitting, checking, settling, recovery and withdrawing always work.
+Posting is open to anyone at deployment, for any public repository named in each bounty by its `owner/name` and numeric GitHub id. The verifier checks every pull request against the bounty's own repository id, so a bounty that names the wrong repository can never pay; it refunds its poster. A poster need not maintain the repository: the bounty pays only if that repository's maintainers merge. The owner's pause stops new bounties only; claiming, submitting, checking, settling, recovery and withdrawing always work. Ownership moves only when the proposed account accepts it.
 
-**Planned before mainnet:** posting opens to anyone, on any public repository named in each bounty. The verifier already checks every pull request against the bounty's own repository id, so a bounty that names the wrong repository can never pay; it refunds its poster. The per-poster, per-reward and total caps and the record deposit stay. A bounty's poster need not maintain the repository; it pays only if that repository's maintainers merge.
+## Known limits of open posting
+
+Found in review and not fixed in the contract. The owner can close posting to the allowlist at any time; claims, checks, settlements and withdrawals keep working.
+
+- **The total cap can be filled.** The contract holds at most the set total (5 NEAR at launch). Someone willing to lock their own money can post bounties up to that total and cancel them later, and new posts are refused meanwhile. Each post costs them the 0.03 NEAR record deposit.
+- **One wallet can claim many bounties.** Nothing limits how many bounties a wallet claims at once. A maintainer can revoke a claim on their bounty; that wallet can then never claim it again.
+- **Free checks can be spent by anyone who posts.** A poster can claim their own bounty with a second linked wallet and use its 3 free checks. The sponsor float cap and the total sponsored spending cap bound this.
+- **A poster need not maintain the repository.** The page and the contract say "maintainer" for whoever posts. The bounty still pays only for a pull request merged into the named repository, by its id.
+- **The claim fee does not cover a claim's leftover record.** A claim that ends without a submission leaves a 73-byte record (0.00073 NEAR), more than the 0.0001 NEAR fee. The difference comes from the contract's spare balance.
 
 ## Evidence
 

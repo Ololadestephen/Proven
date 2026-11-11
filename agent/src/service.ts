@@ -5,6 +5,11 @@ import { createRuntime } from "./near.ts";
 import { attestationUrl } from "./network.ts";
 import { boardTools, executeBoardTool, isBoardTool } from "./board-tools.ts";
 import {
+  bountyTools,
+  executeBountyTool,
+  isBountyTool,
+} from "./bounty-tools.ts";
+import {
   accountId,
   checkPostingCaps,
   fields,
@@ -113,6 +118,7 @@ export const tools = [
     } as Record<string, unknown>,
   })),
   ...boardTools,
+  ...bountyTools,
 ];
 
 function checkedFiles(
@@ -453,6 +459,8 @@ export async function executeTool(
   args: unknown,
   options?: { actor?: Actor; dryRun?: boolean },
 ): Promise<unknown> {
+  // Bounty tools are read-only or unsigned plans: no config file, key or actor is involved.
+  if (isBountyTool(name)) return executeBountyTool(name, args);
   const config = loadConfig(options?.actor);
   const service = createService(createRuntime(config));
   if (isBoardTool(name))

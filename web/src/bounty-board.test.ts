@@ -7,6 +7,7 @@ import {
   matches,
   needsAction,
   progressPath,
+  stepFromHash,
   tabOf,
 } from "../ui/bounty-board.ts";
 
@@ -102,4 +103,20 @@ test("activity lists what happened, newest first", () => {
     events.map((e) => e.text),
     ["Claimed by the contributor", "Bounty posted"],
   );
+});
+
+test("a step link opens its step, and only a pull request number fills the submit box", () => {
+  assert.deepEqual(stepFromHash("#claim"), { name: "claim", pr: "" });
+  assert.deepEqual(stepFromHash("#submit-12"), { name: "submit", pr: "12" });
+  assert.deepEqual(stepFromHash("#check"), { name: "check", pr: "" });
+  assert.deepEqual(stepFromHash("#withdraw"), { name: "withdraw", pr: "" });
+  for (const bad of [
+    "",
+    "#",
+    "#submit-x",
+    "#claim-3",
+    "#pay",
+    "#submit-12345678901",
+  ])
+    assert.deepEqual(stepFromHash(bad), { name: "", pr: "" }, bad);
 });

@@ -45,7 +45,7 @@ export interface FormViewProps {
   advanced: Advanced;
   meta: MetaState;
   limits: Limits;
-  pilot: Pilot;
+  pilot: Pilot | null;
   fees: FeeSchedule;
   /** Seconds since the epoch, for the absolute deadlines. */
   now: number;
@@ -327,7 +327,7 @@ export function useIssueMetadata(
 export function PostBountyForm(
   props: {
     limits: Limits;
-    pilot: Pilot;
+    pilot: Pilot | null;
     fees: FeeSchedule;
     connected: boolean;
     poster: boolean;

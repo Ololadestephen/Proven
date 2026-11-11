@@ -352,13 +352,16 @@ export function Actions({
   id,
   bounty,
   ctx,
+  initialPr = "",
 }: {
   id: number;
   bounty: Bounty;
   ctx: CardContext;
+  /** A pull request number from a step link (#submit-12), filled in for the person to check. */
+  initialPr?: string;
 }) {
   const { wallet, config, contract, now, approved, busy } = ctx;
-  const [pr, setPr] = useState("");
+  const [pr, setPr] = useState(initialPr);
   const me = wallet?.accountId ?? "";
   const isBuyer = me !== "" && me === bounty.buyer;
   const isClaimant = me !== "" && me === bounty.claim?.wallet;

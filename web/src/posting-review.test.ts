@@ -126,7 +126,7 @@ test("signing needs approved fees, a wallet and a listed poster, in that order",
   );
   assert.match(
     signingBlock({ fees: approved, connected: true, poster: false }),
-    /approved posters/,
+    /limited to approved maintainers/,
   );
 });
 

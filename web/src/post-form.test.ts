@@ -224,7 +224,7 @@ test("who is connected changes only the reason posting is off", () => {
   );
   assert.match(
     render({ ...base, poster: false }),
-    /not on the pilot's list of approved posters/,
+    /Posting is limited to approved maintainers right now\./,
   );
   // Even when allowed, this build has no signing path: the button stays disabled.
   for (const b of buttons(render(base))) assert.match(b, /disabled=""/);

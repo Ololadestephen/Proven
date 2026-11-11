@@ -4,8 +4,6 @@
   "network": "testnet",
   "verifier_url": "https://test.fastfs.io/proven.testnet/outlayer.testnet/verifier.wasm",
   "verifier_hash": "6df5a630107bef075bdd09203d64bbd26ec072e6edfd329b2f946a534c4e32fa",
-  "pilot_repo": "proven-test/bounty-pilot",
-  "pilot_repo_id": "800000001",
   "vault_code_hash": "4HkGUXLf1kkhBjBRV9FytuBxjbNbPzWa7DXwLjBWgBUL",
   "sponsor": "sponsor.test.near",
   "paused": false,
@@ -29,5 +27,9 @@
   "reconcile_marker_ttl_secs": 600,
   "relink_delay_secs": 259200,
   "refund_cap_secs": 1209600,
-  "min_claim_secs": 3600
+  "min_claim_secs": 3600,
+  "open_posting": true,
+  "min_reward": "10000000000000000000000",
+  "claim_fee": "100000000000000000000",
+  "pending_owner": null
 }

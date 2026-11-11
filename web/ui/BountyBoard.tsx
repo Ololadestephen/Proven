@@ -1,7 +1,7 @@
 // The PR bounty list (status tabs, search, a grid of cards) and one page per bounty (progress
 // path, the next step for whoever is looking, parties, terms, on-chain records and activity).
 // Every action on the page is the existing `Actions` and `VaultPanel`, unchanged.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { short } from "./market-client.ts";
 import type { Bounty } from "./bounty-types.ts";
 import { near } from "./bounty-text.ts";
@@ -24,6 +24,7 @@ import { VaultPanel } from "./VaultPanel.tsx";
 import { TileToolbar, WorkTile, type TileKind } from "./WorkTile.tsx";
 import { kindLabel } from "./vault-view.ts";
 import {
+  stepFromHash,
   activity,
   inTab,
   matches,
@@ -164,6 +165,15 @@ export function BountyPage(props: {
     ),
   ];
   const events = activity(bounty);
+  // A step link (from the agent tools, for example /app/bounties/3#submit-12) opens the page on
+  // its step. Nothing is sent: the person still presses the button and approves in their wallet.
+  const step = stepFromHash(
+    typeof location === "undefined" ? "" : location.hash,
+  );
+  const nextStep = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (step.name) nextStep.current?.scrollIntoView({ block: "center" });
+  }, [step.name]);
   // Finished: nothing more can happen in the contract (withdrawals happen in the vault).
   const finished =
     ["Paid", "Refunded", "Cancelled"].includes(bounty.status) &&
@@ -197,7 +207,7 @@ export function BountyPage(props: {
             ))}
           </ol>
           {status.detail ? <p className="post-hint">{status.detail}</p> : null}
-          <section className="bounty-next">
+          <section className="bounty-next" ref={nextStep}>
             <h3>Your next step</h3>
             {finished ? (
               <p className="post-hint">
@@ -206,7 +216,7 @@ export function BountyPage(props: {
                 {vaults.length ? " Withdraw from your vault below." : ""}
               </p>
             ) : (
-              <Actions id={id} bounty={bounty} ctx={ctx} />
+              <Actions id={id} bounty={bounty} ctx={ctx} initialPr={step.pr} />
             )}
           </section>
           {vaults.map((v) => (

@@ -566,7 +566,7 @@ test("if the contract builds another text than the page, nothing is signed", asy
 
 // ---- Claim ----
 
-test("a claim is proved by the message key, shows the key check, and sends no deposit", async () => {
+test("a claim is proved by the message key, shows the key check, and attaches the 0.0001 NEAR claim fee", async () => {
   const f = fakeChain();
   const w = fakeWallet(f, { signWith: 2 });
   const done = await claimFlow({
@@ -582,7 +582,7 @@ test("a claim is proved by the message key, shows the key check, and sends no de
   assert.equal(done.keyCheck.kind, "different");
   assert.equal(done.key, MESSAGE_KEY);
   assert.equal(done.call.method, "claim");
-  assert.equal(done.call.deposit, 0n);
+  assert.equal(done.call.deposit, 100_000_000_000_000_000_000n);
   const args = done.call.args as {
     bounty_id: number;
     key: string;

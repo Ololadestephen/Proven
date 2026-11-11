@@ -82,8 +82,11 @@ export interface Config {
   network: string;
   verifier_url: string;
   verifier_hash: string;
-  pilot_repo: string;
-  pilot_repo_id: string;
+  /** Anyone may post, on any public repository, while this is true. */
+  open_posting: boolean;
+  min_reward: string;
+  claim_fee: string;
+  pending_owner: string | null;
   vault_code_hash: string;
   sponsor: string;
   paused: boolean;

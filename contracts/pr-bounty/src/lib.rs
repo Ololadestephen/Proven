@@ -1,6 +1,6 @@
 //! Proven PR bounties, one wallet each.
 //!
-//! A maintainer posts a bounty for one issue of the pilot repository (fixed at deployment) by
+//! A maintainer posts a bounty for one issue of any public GitHub repository, named with its id, by
 //! pasting its link and a reward; the contract locks the reward and a small storage deposit. The
 //! maintainer's wallet proves, with a NEP-413 signature, control of a withdrawal key before any
 //! money is locked: that key alone receives a refund, through a NEP-616 vault derived from it.
@@ -44,6 +44,12 @@ pub const SPONSORED_RUNS_PER_BOUNTY: u32 = 3;
 /// in flight. Measured in the sandbox for the worst case after Option A: a payout leaves 0.00928
 /// NEAR of this deposit unused and a refund 0.00900, so neither borrows from other balance.
 pub const STORAGE_DEPOSIT: NearToken = NearToken::from_millinear(30);
+/// Attached to every claim and kept by the contract: a small cost against throwaway claims, put
+/// towards the 73-byte record a claim that ends without a submission leaves (owner, November 11).
+pub const CLAIM_FEE: NearToken = NearToken::from_yoctonear(100_000_000_000_000_000_000);
+/// The repository field of a link run. A gist read uses no repository; the verifier only checks
+/// that the field is a well-formed owner/name and echoes it back.
+const LINK_REPO: &str = "proven/link";
 /// Pays for a wallet's link record (measured worst case 618 bytes, 0.00618 NEAR). It comes back
 /// to the caller unless the link, or the change it asks for, is recorded.
 pub const LINK_STORAGE_DEPOSIT: NearToken = NearToken::from_millinear(7);
@@ -401,8 +407,11 @@ pub struct Config {
     pub network: String,
     pub verifier_url: String,
     pub verifier_hash: String,
-    pub pilot_repo: String,
-    pub pilot_repo_id: U64,
+    /// When true (the default), anyone may post, on any public repository named in each bounty.
+    pub open_posting: bool,
+    pub min_reward: U128,
+    pub claim_fee: U128,
+    pub pending_owner: Option<AccountId>,
     pub vault_code_hash: Base58CryptoHash,
     pub sponsor: AccountId,
     pub paused: bool,
@@ -438,8 +447,11 @@ pub struct PrBounty {
     network: String,
     verifier_url: String,
     verifier_hash: String,
-    pilot_repo: String,
-    pilot_repo_id: u64,
+    /// Anyone may post when true; only allowlisted posters when false (an owner switch).
+    open_posting: bool,
+    min_reward: u128,
+    /// Set by `propose_owner`; becomes the owner when that account calls `accept_owner`.
+    pending_owner: Option<AccountId>,
     /// The reviewed vault code's hash, fixed at deployment.
     vault_code: CryptoHash,
     /// The owner's account that OutLayer refunds sponsored runs to, fixed at deployment.
@@ -575,10 +587,9 @@ impl PrBounty {
         network: String,
         verifier_url: String,
         verifier_hash: String,
-        pilot_repo: String,
-        pilot_repo_id: U64,
         vault_code_hash: Base58CryptoHash,
         sponsor: AccountId,
+        min_reward: U128,
         max_reward: U128,
         max_held: U128,
         max_open_per_buyer: u32,
@@ -597,16 +608,15 @@ impl PrBounty {
             is_sha256_hex(&verifier_hash),
             "verifier_hash must be 64 lowercase hex characters"
         );
-        require!(is_repo(&pilot_repo), "pilot_repo must be owner/name");
-        require!(pilot_repo_id.0 > 0, "pilot_repo_id is required");
         let mut contract = Self {
             owner,
             outlayer,
             network,
             verifier_url,
             verifier_hash,
-            pilot_repo,
-            pilot_repo_id: pilot_repo_id.0,
+            open_posting: true,
+            min_reward: 0,
+            pending_owner: None,
             vault_code: vault_code_hash.into(),
             sponsor,
             paused: false,
@@ -633,6 +643,7 @@ impl PrBounty {
             next_seq: 0,
         };
         contract.apply_caps(max_reward, max_held, max_open_per_buyer);
+        contract.apply_min_reward(min_reward);
         contract.apply_sponsor_limits(max_sponsor_float, max_sponsor_spent);
         contract
     }
@@ -661,6 +672,41 @@ impl PrBounty {
     pub fn set_caps(&mut self, max_reward: U128, max_held: U128, max_open_per_buyer: u32) {
         self.assert_owner();
         self.apply_caps(max_reward, max_held, max_open_per_buyer);
+    }
+
+    /// Open posting to anyone (true), or limit it to the allowlist again (false), for emergencies.
+    pub fn set_open_posting(&mut self, open: bool) {
+        self.assert_owner();
+        self.open_posting = open;
+        env::log_str(&format!("open_posting {open}"));
+    }
+
+    pub fn set_min_reward(&mut self, min_reward: U128) {
+        self.assert_owner();
+        self.apply_min_reward(min_reward);
+    }
+
+    /// Step one of an ownership handover; `None` withdraws a proposal.
+    pub fn propose_owner(&mut self, new_owner: Option<AccountId>) {
+        self.assert_owner();
+        env::log_str(&format!(
+            "owner_proposed {}",
+            new_owner.as_ref().map(|a| a.as_str()).unwrap_or("none")
+        ));
+        self.pending_owner = new_owner;
+    }
+
+    /// Step two: the proposed account takes ownership. The owner still cannot move funds,
+    /// change a bounty or record a result.
+    pub fn accept_owner(&mut self) {
+        let caller = env::predecessor_account_id();
+        require!(
+            self.pending_owner.as_ref() == Some(&caller),
+            "only the proposed owner can accept"
+        );
+        self.owner = caller.clone();
+        self.pending_owner = None;
+        env::log_str(&format!("owner_accepted {caller}"));
     }
 
     pub fn set_sponsor_limits(&mut self, max_sponsor_float: U128, max_sponsor_spent: U128) {
@@ -704,14 +750,12 @@ impl PrBounty {
         let buyer = env::predecessor_account_id();
         require!(!self.paused, "new bounties are paused");
         require!(
-            self.posters.contains(&buyer),
-            "only an approved maintainer can post"
+            self.open_posting || self.posters.contains(&buyer),
+            "posting is limited to approved maintainers right now"
         );
         let reward = terms.reward.0;
-        require!(
-            reward > 0 && reward <= self.max_reward,
-            "reward is over the cap"
-        );
+        require!(reward >= self.min_reward, "reward is under the minimum");
+        require!(reward <= self.max_reward, "reward is over the cap");
         require!(
             env::attached_deposit().as_yoctonear() == reward + STORAGE_DEPOSIT.as_yoctonear(),
             "attach exactly the reward plus the storage deposit"
@@ -725,10 +769,10 @@ impl PrBounty {
             open < self.max_open_per_buyer,
             "this maintainer has too many open bounties"
         );
-        require!(
-            terms.repo_id.0 == self.pilot_repo_id && terms.repo == self.pilot_repo,
-            "this pilot only pays for its approved repository"
-        );
+        // Any public repository. The verifier checks every pull request's base repository id
+        // against this one, so a bounty that names the wrong repository can never pay.
+        require!(is_repo(&terms.repo), "repo must be owner/name");
+        require!(terms.repo_id.0 > 0, "repo_id is required");
         require!(terms.issue > 0, "the issue number is required");
         require!(
             !terms.base_ref.is_empty()
@@ -883,7 +927,7 @@ impl PrBounty {
             expires_at.0,
         );
         let seq = self.next_seq();
-        let repo = self.pilot_repo.clone();
+        let repo = LINK_REPO.to_string();
         let input = self.input(
             0,
             seq,
@@ -944,7 +988,7 @@ impl PrBounty {
         } else if self.used_gists.contains(&pending.gist_id) {
             "mismatch:gist_used".to_string()
         } else {
-            let repo = self.pilot_repo.clone();
+            let repo = LINK_REPO.to_string();
             match parse(
                 &result,
                 &network,
@@ -1068,7 +1112,12 @@ impl PrBounty {
     /// Claims an open bounty for the calling wallet, which must have a GitHub link. The proof
     /// shows control of the payout key `key`. The claim lasts the bounty's claim time and cannot
     /// be repeated by a wallet whose claim ended.
+    #[payable]
     pub fn claim(&mut self, bounty_id: BountyId, key: PublicKey, proof: ClaimProof) {
+        require!(
+            env::attached_deposit() == CLAIM_FEE,
+            "attach exactly the claim fee (0.0001 NEAR)"
+        );
         let wallet = env::predecessor_account_id();
         let now = env::block_timestamp();
         self.refresh_link(&wallet);
@@ -1743,8 +1792,10 @@ impl PrBounty {
             network: self.network.clone(),
             verifier_url: self.verifier_url.clone(),
             verifier_hash: self.verifier_hash.clone(),
-            pilot_repo: self.pilot_repo.clone(),
-            pilot_repo_id: U64(self.pilot_repo_id),
+            open_posting: self.open_posting,
+            min_reward: U128(self.min_reward),
+            claim_fee: U128(CLAIM_FEE.as_yoctonear()),
+            pending_owner: self.pending_owner.clone(),
             vault_code_hash: self.vault_code.into(),
             sponsor: self.sponsor.clone(),
             paused: self.paused,
@@ -1773,8 +1824,9 @@ impl PrBounty {
         }
     }
 
+    /// Whether this account may post now: anyone while posting is open.
     pub fn is_poster(&self, account: AccountId) -> bool {
-        self.posters.contains(&account)
+        self.open_posting || self.posters.contains(&account)
     }
 
     pub fn bound_pr(&self, pr_id: U64) -> Option<BountyId> {
@@ -1901,6 +1953,10 @@ impl PrBounty {
             (1..=HARD_MAX_OPEN_PER_BUYER).contains(&max_open_per_buyer),
             "max_open_per_buyer must be 1 to 5"
         );
+        require!(
+            max_reward.0 >= self.min_reward,
+            "max_reward must be at least min_reward"
+        );
         self.max_reward = max_reward.0;
         self.max_held = max_held.0;
         self.max_open_per_buyer = max_open_per_buyer;
@@ -1908,6 +1964,15 @@ impl PrBounty {
             "caps max_reward={} max_held={} max_open_per_buyer={max_open_per_buyer}",
             max_reward.0, max_held.0
         ));
+    }
+
+    fn apply_min_reward(&mut self, min_reward: U128) {
+        require!(
+            min_reward.0 > 0 && min_reward.0 <= self.max_reward,
+            "min_reward must be above zero and at most max_reward"
+        );
+        self.min_reward = min_reward.0;
+        env::log_str(&format!("min_reward {}", min_reward.0));
     }
 
     fn apply_sponsor_limits(&mut self, max_float: U128, max_spent: U128) {

@@ -898,7 +898,7 @@ async fn two_wallets_claim_in_one_block_and_exactly_one_wins_then_expiry_and_the
     let stranger_args =
         json!({"bounty_id": id, "key": public(&env.contrib_key), "proof": args["proof"]});
     assert_refused(
-        &call(&env.stranger, &env, "claim", stranger_args, 0).await?,
+        &call(&env.stranger, &env, "claim", stranger_args, CLAIM_FEE).await?,
         "connect a GitHub account to this wallet first",
     );
     // The race.
@@ -914,6 +914,7 @@ async fn two_wallets_claim_in_one_block_and_exactly_one_wins_then_expiry_and_the
     let go = |who: &near_workspaces::Account, args: serde_json::Value| {
         who.call(env.bounty.id(), "claim")
             .args_json(args)
+            .deposit(NearToken::from_yoctonear(CLAIM_FEE))
             .gas(Gas::from_tgas(300))
             .transact_async()
     };
@@ -2252,7 +2253,7 @@ async fn claim_args_call(
         env,
         "claim",
         json!({"bounty_id": id, "key": public(&env.contrib_key), "proof": proof}),
-        0,
+        CLAIM_FEE,
     )
     .await
 }
@@ -2496,19 +2497,14 @@ async fn key_proofs_posting_rules_and_private_callbacks_are_enforced_with_nothin
     c["reward"] = json!((3 * NEAR).to_string());
     cases.push(("reward over the cap", c, "reward is over the cap"));
     let mut c = t.clone();
-    c["repo"] = json!("someone/else");
-    cases.push((
-        "another repository",
-        c,
-        "only pays for its approved repository",
-    ));
+    c["reward"] = json!((MIN_REWARD - 1).to_string());
+    cases.push(("reward under the minimum", c, "reward is under the minimum"));
     let mut c = t.clone();
-    c["repo_id"] = json!("1");
-    cases.push((
-        "another repository id",
-        c,
-        "only pays for its approved repository",
-    ));
+    c["repo"] = json!("not-a-repository");
+    cases.push(("malformed repository", c, "repo must be owner/name"));
+    let mut c = t.clone();
+    c["repo_id"] = json!("0");
+    cases.push(("no repository id", c, "repo_id is required"));
     let mut c = t.clone();
     c["base_ref"] = json!("");
     cases.push(("empty branch", c, "base_ref must be a branch name"));
@@ -2597,6 +2593,16 @@ async fn key_proofs_posting_rules_and_private_callbacks_are_enforced_with_nothin
         .await?,
         "attach exactly the reward plus the storage deposit",
     );
+    // Posting is open at init; once the owner closes it, only the allowlist may post.
+    let set_open = |open: bool| {
+        env.owner
+            .call(env.bounty.id(), "set_open_posting")
+            .args_json(json!({"open": open}))
+            .transact()
+    };
+    let r = set_open(false).await?;
+    env.tally(&r);
+    r.into_result()?;
     let r = try_post_as(
         &env,
         &env.stranger,
@@ -2606,7 +2612,10 @@ async fn key_proofs_posting_rules_and_private_callbacks_are_enforced_with_nothin
         None,
     )
     .await?;
-    assert_refused(&r, "only an approved maintainer can post");
+    assert_refused(&r, "posting is limited to approved maintainers right now");
+    let r = set_open(true).await?;
+    env.tally(&r);
+    r.into_result()?;
     assert_eq!(config(&env).await?["bounty_count"], 0);
     assert_eq!(held(&env).await?, (0, 0));
     assert_eq!(
@@ -2646,7 +2655,7 @@ async fn key_proofs_posting_rules_and_private_callbacks_are_enforced_with_nothin
         &env,
         "claim",
         json!({"bounty_id": id, "key": public(&env.contrib_key), "proof": for_other}),
-        0,
+        CLAIM_FEE,
     )
     .await?;
     assert_refused(&r, "the withdrawal key's proof does not match");
@@ -2665,7 +2674,7 @@ async fn key_proofs_posting_rules_and_private_callbacks_are_enforced_with_nothin
         &env,
         "claim",
         json!({"bounty_id": id, "key": public(&env.contrib_key), "proof": other_github}),
-        0,
+        CLAIM_FEE,
     )
     .await?;
     assert_refused(&r, "the withdrawal key's proof does not match");
@@ -2684,7 +2693,7 @@ async fn key_proofs_posting_rules_and_private_callbacks_are_enforced_with_nothin
         &env,
         "claim",
         json!({"bounty_id": id, "key": public(&env.contrib_key), "proof": old}),
-        0,
+        CLAIM_FEE,
     )
     .await?;
     assert_refused(&r, "expires_at must be in the future");

@@ -62,6 +62,9 @@ const config: Config = {
   storage_deposit: "30000000000000000000000",
   link_storage_deposit: "7000000000000000000000",
 };
+// Posting is open to any repository; the recorded bounties are on this one.
+const REPO = "proven-test/bounty-pilot";
+const REPO_ID = "800000001";
 const done = recorded<SettlementView>("settlement-done");
 const due = recorded<SettlementView>("settlement-due");
 const inFlight = recorded<SettlementView>("settlement-in-flight");
@@ -79,8 +82,8 @@ const bounty = (over: Partial<Bounty> = {}): Bounty => ({
   buyer: MAINT,
   reward: "100000000000000000000000",
   sponsored_runs: 1,
-  repo: config.pilot_repo,
-  repo_id: config.pilot_repo_id,
+  repo: REPO,
+  repo_id: REPO_ID,
   issue: 12,
   base_ref: "main",
   posted_at: String(BigInt(T0) * NANOS),
@@ -515,8 +518,7 @@ test("the submit button stays off until the input is a pull request of this repo
   assert.equal(submitButton(submitView("")).disabled, true);
   assert.equal(submitButton(submitView("42")).disabled, false);
   assert.equal(
-    submitButton(submitView(`https://github.com/${config.pilot_repo}/pull/42`))
-      .disabled,
+    submitButton(submitView(`https://github.com/${REPO}/pull/42`)).disabled,
     false,
   );
   const other = submitView("https://github.com/someone/else/pull/42");
@@ -525,7 +527,7 @@ test("the submit button stays off until the input is a pull request of this repo
     other,
     /role="alert"[^>]*>That pull request is in someone\/else/,
   );
-  const issue = submitView(`https://github.com/${config.pilot_repo}/issues/1`);
+  const issue = submitView(`https://github.com/${REPO}/issues/1`);
   assert.equal(submitButton(issue).disabled, true);
   assert.match(issue, /That is an issue link/);
   const junk = submitView("forty two");

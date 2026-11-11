@@ -40,6 +40,10 @@ pub const PR: u64 = 12;
 pub const PR_ID: u64 = 5_000_000_012;
 pub const MILLI: u128 = 1_000_000_000_000_000_000_000;
 pub const NEAR: u128 = 1000 * MILLI;
+/// Attached to every claim and kept by the contract (0.0001 NEAR).
+pub const CLAIM_FEE: u128 = MILLI / 10;
+/// The contract's minimum reward in these tests (0.01 NEAR).
+pub const MIN_REWARD: u128 = 10 * MILLI;
 /// The proposed pilot reward.
 pub const REWARD: u128 = 50 * MILLI;
 pub const RUN: u128 = 10 * MILLI;
@@ -288,8 +292,8 @@ pub async fn setup(o: Opts) -> anyhow::Result<Env> {
     let code = wasm(o.wasm)?;
     let init = json!({
         "owner": owner.id(), "outlayer": outlayer.id(), "network": "testnet",
-        "verifier_url": URL, "verifier_hash": HASH, "pilot_repo": o.repo, "pilot_repo_id": REPO_ID.to_string(),
-        "vault_code_hash": b58(&code_hash), "sponsor": sponsor.id(),
+        "verifier_url": URL, "verifier_hash": HASH,
+        "vault_code_hash": b58(&code_hash), "sponsor": sponsor.id(), "min_reward": MIN_REWARD.to_string(),
         "max_reward": (2 * NEAR).to_string(), "max_held": (5 * NEAR).to_string(), "max_open_per_buyer": 5,
         "max_sponsor_float": (100 * MILLI).to_string(), "max_sponsor_spent": (200 * MILLI).to_string(),
     });
@@ -851,7 +855,12 @@ pub fn request(env: &Env, op: verifier::Op) -> verifier::Request {
         contract: env.bounty.id().to_string(),
         bounty: 0,
         seq: 0,
-        repo: env.repo.clone(),
+        // A link run names no repository; the contract sends this placeholder.
+        repo: if matches!(op, verifier::Op::Gist { .. }) {
+            "proven/link".into()
+        } else {
+            env.repo.clone()
+        },
         op,
     }
 }
@@ -1133,7 +1142,7 @@ pub async fn claim(
         env,
         "claim",
         json!({"bounty_id": id, "key": public(key), "proof": proof}),
-        0,
+        CLAIM_FEE,
     )
     .await
 }
@@ -1677,7 +1686,7 @@ pub async fn claim_as(
     signer: &SigningKey,
 ) -> anyhow::Result<ExecutionFinalResult> {
     let args = claim_args(env, tx_account.id(), id, key, signer).await?;
-    call(tx_account, env, "claim", args, 0).await
+    call(tx_account, env, "claim", args, CLAIM_FEE).await
 }
 
 /// Links `who` and asserts the outcome.

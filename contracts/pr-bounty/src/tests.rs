@@ -19,6 +19,7 @@ const URL: &str = "https://test.fastfs.io/proven.testnet/outlayer.testnet/verifi
 const HASH: &str = "6df5a630107bef075bdd09203d64bbd26ec072e6edfd329b2f946a534c4e32fa";
 const VAULT_CODE: [u8; 32] = [7; 32];
 const REPO: &str = "proven-test/bounty-pilot";
+const MIN_REWARD: u128 = 10_000_000_000_000_000_000_000; // 0.01 NEAR
 const REPO_ID: u64 = 800_000_001;
 const ISSUE: u64 = 3;
 const GH: u64 = 900_000_001;
@@ -239,10 +240,9 @@ fn contract() -> PrBounty {
         "testnet".into(),
         URL.into(),
         HASH.into(),
-        REPO.into(),
-        U64(REPO_ID),
         Base58CryptoHash::from(VAULT_CODE),
         sponsor(),
+        U128(MIN_REWARD),
         U128(2 * REWARD),
         U128(5 * REWARD),
         3,
@@ -508,7 +508,7 @@ fn gist_request(s: &LinkStart) -> Request {
         contract: this().to_string(),
         bounty: 0,
         seq: s.seq,
-        repo: REPO.into(),
+        repo: "proven/link".into(),
         op: Op::Gist {
             gist_id: s.gist.clone(),
             challenge: s.challenge.clone(),
@@ -581,7 +581,7 @@ fn active_github(c: &PrBounty, who: &AccountId) -> Option<u64> {
 fn claim_as(c: &mut PrBounty, id: BountyId, who: &AccountId, github_id: u64, at: u64) {
     let signer = withdrawal_sk(who);
     let key = pk(&signer);
-    act(who.clone(), zero(), at);
+    act(who.clone(), CLAIM_FEE, at);
     let proof = claim_proof(&signer, id, who, github_id, &key, at / SEC + 1_800);
     c.claim(id, key, proof);
 }
@@ -2235,7 +2235,7 @@ fn a_due_link_change_is_applied_at_the_next_claim_and_pinned_into_it() {
     // Claim the bounty after the change is due: the claim names and pins the new id.
     let at = due * SEC;
     let key = pk(&withdrawal_sk(&wallet()));
-    act(wallet(), zero(), at);
+    act(wallet(), CLAIM_FEE, at);
     let stale = claim_proof(
         &withdrawal_sk(&wallet()),
         first,
@@ -2303,7 +2303,7 @@ fn a_wallet_whose_transaction_key_differs_from_the_withdrawal_key_still_claims()
     let (signer, tx_key) = (withdrawal_sk(&wallet()), pk(&sk(9)));
     let key = pk(&signer);
     assert_ne!(key, tx_key);
-    let mut builder = context(wallet(), zero(), T_CLAIM);
+    let mut builder = context(wallet(), CLAIM_FEE, T_CLAIM);
     builder.signer_account_pk(tx_key.clone());
     testing_env!(builder.build());
     let proof = claim_proof(&signer, id, &wallet(), GH, &key, T_CLAIM / SEC + 600);
@@ -2320,7 +2320,7 @@ fn a_claim_needs_an_active_github_link() {
     let id = post(&mut c);
     // No link at all.
     let key = pk(&withdrawal_sk(&wallet2()));
-    act(wallet2(), zero(), T_CLAIM);
+    act(wallet2(), CLAIM_FEE, T_CLAIM);
     let proof = claim_proof(
         &withdrawal_sk(&wallet2()),
         id,
@@ -2340,7 +2340,7 @@ fn a_claim_needs_an_active_github_link() {
     // One second after the link was recorded, well inside the relink delay of every build.
     assert!(RELINK_DELAY_SECS > 1);
     let soon = T_LINK + 61 * SEC;
-    act(wallet2(), zero(), soon);
+    act(wallet2(), CLAIM_FEE, soon);
     let proof = claim_proof(
         &withdrawal_sk(&wallet2()),
         id,
@@ -2368,7 +2368,7 @@ fn assert_claim_refused(
         let mut id = post(&mut c);
         let signer = withdrawal_sk(&wallet());
         let mut key = pk(&signer);
-        act(wallet(), zero(), T_CLAIM);
+        act(wallet(), CLAIM_FEE, T_CLAIM);
         let mut proof = claim_proof(&signer, id, &wallet(), GH, &key, T_CLAIM / SEC + 1_800);
         let real = id;
         edit(&mut id, &mut key, &mut proof);
@@ -2489,7 +2489,7 @@ fn a_second_claim_by_another_wallet_in_the_same_block_is_refused_as_not_open() {
     let before = snap(&c);
     let signer = withdrawal_sk(&wallet2());
     let key = pk(&signer);
-    act(wallet2(), zero(), T_CLAIM);
+    act(wallet2(), CLAIM_FEE, T_CLAIM);
     let proof = claim_proof(&signer, id, &wallet2(), OTHER_GH, &key, T_CLAIM / SEC + 600);
     assert_refused(&mut c, "this bounty is not open to claims", |c| {
         c.claim(id, key, proof)
@@ -2504,7 +2504,7 @@ fn the_same_wallet_cannot_claim_twice_even_with_a_new_key() {
     let before = snap(&c);
     let signer = sk(11);
     let key = pk(&signer);
-    act(wallet(), zero(), T_CLAIM + SEC);
+    act(wallet(), CLAIM_FEE, T_CLAIM + SEC);
     let proof = claim_proof(&signer, id, &wallet(), GH, &key, T_CLAIM / SEC + 600);
     assert_refused(&mut c, "this bounty is not open to claims", |c| {
         c.claim(id, key, proof)
@@ -2524,7 +2524,7 @@ fn a_claim_at_or_after_claim_by_is_refused_and_one_just_before_it_is_accepted() 
             let id = post(&mut c);
             let before = snap(&c);
             let key = pk(&withdrawal_sk(&wallet()));
-            act(wallet(), zero(), at);
+            act(wallet(), CLAIM_FEE, at);
             let proof = claim_proof(
                 &withdrawal_sk(&wallet()),
                 id,
@@ -2585,7 +2585,7 @@ fn a_claim_on_a_bound_or_missing_bounty_is_refused() {
         OTHER_GH,
         T_SUBMIT + 50 * SEC,
     );
-    act(wallet2(), zero(), T_SUBMIT + 100 * SEC);
+    act(wallet2(), CLAIM_FEE, T_SUBMIT + 100 * SEC);
     let proof = claim_proof(
         &signer,
         id,
@@ -2665,7 +2665,7 @@ fn releasing_revoking_or_expiring_a_claim_reopens_the_bounty_and_bars_the_wallet
             let signer = sk(12);
             let key = pk(&signer);
             let at = CLAIM_ENDS * SEC + SEC;
-            act(wallet(), zero(), at);
+            act(wallet(), CLAIM_FEE, at);
             let proof = claim_proof(&signer, id, &wallet(), GH, &key, at / SEC + 600);
             let before = snap(&c);
             let again = refusal(&mut c, |c| c.claim(id, key, proof));
@@ -5155,29 +5155,42 @@ fn assert_terms_accepted(edit: impl FnOnce(&mut PostTerms) + Send + 'static) {
 }
 
 #[test]
-fn only_an_approved_poster_can_post_and_a_removed_poster_cannot() {
-    assert_posting_refused("only an approved maintainer can post", |p| {
-        p.who = stranger();
-        p.signed(&maint_sk(), &stranger(), POST_EXPIRES);
-    });
+fn anyone_can_post_while_posting_is_open_and_only_the_allowlist_while_it_is_closed() {
+    // Open by default: a wallet that was never allowlisted posts.
     isolated(|| {
         let mut c = contract();
-        assert!(c.is_poster(buyer()) && !c.is_poster(stranger()));
-        act(owner(), zero(), START);
-        c.add_poster(stranger());
+        assert!(c.get_config().open_posting);
         assert!(c.is_poster(stranger()));
         let mut posting = Posting::valid();
         posting.who = stranger();
         posting.signed(&maint_sk(), &stranger(), POST_EXPIRES);
         assert_eq!(posting.call(&mut c, START), 0);
+    });
+    // Closed by the owner: only allowlisted posters, and a removed one cannot.
+    isolated(|| {
+        let mut c = contract();
+        act(owner(), zero(), START);
+        c.set_open_posting(false);
+        assert!(c.is_poster(buyer()) && !c.is_poster(stranger()));
+        let mut posting = Posting::valid();
+        posting.who = stranger();
+        posting.signed(&maint_sk(), &stranger(), POST_EXPIRES);
+        let msg = refusal(&mut c, |c| posting.call(c, START));
+        assert!(
+            msg.contains("posting is limited to approved maintainers right now"),
+            "{msg}"
+        );
+        assert_eq!(Posting::valid().call(&mut c, START), 0);
         act(owner(), zero(), START);
         c.remove_poster(buyer());
         assert!(!c.is_poster(buyer()));
         let msg = refusal(&mut c, |c| Posting::valid().call(c, START));
         assert!(
-            msg.contains("only an approved maintainer can post"),
+            msg.contains("posting is limited to approved maintainers right now"),
             "{msg}"
         );
+        act(stranger(), zero(), START);
+        assert_refused(&mut c, "only the owner", |c| c.set_open_posting(true));
         assert_eq!(c.get_config().bounty_count, 1);
     });
 }
@@ -5249,13 +5262,37 @@ fn a_paused_contract_refuses_new_bounties_before_the_nonce_is_used_and_everythin
 }
 
 #[test]
-fn the_reward_must_be_positive_and_no_more_than_the_reward_cap() {
-    assert_terms_refused("reward is over the cap", |t| t.reward = U128(0));
+fn the_reward_must_be_at_least_the_minimum_and_no_more_than_the_reward_cap() {
+    let under = "reward is under the minimum";
+    assert_terms_refused(under, |t| t.reward = U128(0));
+    assert_terms_refused(under, |t| t.reward = U128(MIN_REWARD - 1));
     assert_terms_refused("reward is over the cap", |t| {
         t.reward = U128(2 * REWARD + 1)
     });
     assert_terms_accepted(|t| t.reward = U128(2 * REWARD));
-    assert_terms_accepted(|t| t.reward = U128(1));
+    assert_terms_accepted(|t| t.reward = U128(MIN_REWARD));
+}
+
+#[test]
+fn the_minimum_reward_stays_between_zero_and_the_reward_cap() {
+    let mut c = contract();
+    act(owner(), zero(), START);
+    c.set_min_reward(U128(MIN_REWARD * 2));
+    assert_eq!(c.get_config().min_reward.0, MIN_REWARD * 2);
+    let bad = "min_reward must be above zero and at most max_reward";
+    act(owner(), zero(), START);
+    assert_refused(&mut c, bad, |c| c.set_min_reward(U128(0)));
+    act(owner(), zero(), START);
+    assert_refused(&mut c, bad, |c| c.set_min_reward(U128(2 * REWARD + 1)));
+    // Lowering the cap below the minimum is refused too.
+    act(owner(), zero(), START);
+    assert_refused(&mut c, "max_reward must be at least min_reward", |c| {
+        c.set_caps(U128(MIN_REWARD), U128(5 * REWARD), 3)
+    });
+    act(stranger(), zero(), START);
+    assert_refused(&mut c, "only the owner", |c| {
+        c.set_min_reward(U128(MIN_REWARD))
+    });
 }
 
 /// A posting of `reward` with a fresh nonce that must be refused; returns the refusal text.
@@ -5287,7 +5324,7 @@ fn the_total_held_cap_counts_every_reward_until_a_vault_confirms_it() {
     act(buyer(), zero(), START + SEC);
     c.cancel(first);
     assert_eq!(c.get_config().held.0, cap);
-    let msg = refused_posting_of(&mut c, 1, &hash_hex(91));
+    let msg = refused_posting_of(&mut c, MIN_REWARD, &hash_hex(91));
     assert!(msg.contains("the contract's total cap is reached"), "{msg}");
     // The vault receipt releases it.
     callback(START + 2 * SEC, PromiseResult::Successful(vec![]));
@@ -5401,11 +5438,71 @@ fn caps_and_sponsor_limits_are_checked_against_the_hard_limits_and_each_other() 
 }
 
 #[test]
-fn only_the_approved_repository_and_its_id_can_be_posted() {
-    let approved = "this pilot only pays for its approved repository";
-    assert_terms_refused(approved, |t| t.repo = "proven-test/other".into());
-    assert_terms_refused(approved, |t| t.repo_id = U64(REPO_ID + 1));
-    assert_terms_refused(approved, |t| t.repo = String::new());
+fn any_well_formed_repository_and_id_can_be_posted() {
+    // Any public repository: the verifier checks each pull request against this id.
+    assert_terms_accepted(|t| t.repo = "another-owner/another-repo".into());
+    assert_terms_accepted(|t| t.repo_id = U64(REPO_ID + 1));
+    let shape = "repo must be owner/name";
+    assert_terms_refused(shape, |t| t.repo = String::new());
+    assert_terms_refused(shape, |t| t.repo = "no-slash".into());
+    assert_terms_refused(shape, |t| t.repo = "a/b/c".into());
+    assert_terms_refused("repo_id is required", |t| t.repo_id = U64(0));
+}
+
+#[test]
+fn ownership_moves_only_when_the_proposed_account_accepts() {
+    let mut c = contract();
+    act(stranger(), zero(), START);
+    assert_refused(&mut c, "only the owner", |c| {
+        c.propose_owner(Some(stranger()))
+    });
+    act(owner(), zero(), START);
+    c.propose_owner(Some(stranger()));
+    assert_eq!(c.get_config().pending_owner, Some(stranger()));
+    // Nothing changes until the proposed account accepts, and nobody else can.
+    act(buyer(), zero(), START);
+    assert_refused(&mut c, "only the proposed owner can accept", |c| {
+        c.accept_owner()
+    });
+    assert_eq!(c.get_config().owner, owner());
+    act(stranger(), zero(), START);
+    c.accept_owner();
+    let cfg = c.get_config();
+    assert_eq!((cfg.owner, cfg.pending_owner), (stranger(), None));
+    // The old owner has lost its powers; the new one has them.
+    act(owner(), zero(), START);
+    assert_refused(&mut c, "only the owner", |c| c.set_paused(true));
+    act(stranger(), zero(), START);
+    c.set_paused(true);
+    // A proposal can be withdrawn.
+    c.propose_owner(Some(buyer()));
+    c.propose_owner(None);
+    act(buyer(), zero(), START);
+    assert_refused(&mut c, "only the proposed owner can accept", |c| {
+        c.accept_owner()
+    });
+}
+
+#[test]
+fn a_claim_must_attach_exactly_the_claim_fee() {
+    for wrong in [
+        zero(),
+        NearToken::from_yoctonear(CLAIM_FEE.as_yoctonear() - 1),
+        NearToken::from_millinear(1),
+    ] {
+        isolated(move || {
+            let mut c = linked();
+            let id = post(&mut c);
+            let signer = withdrawal_sk(&wallet());
+            let key = pk(&signer);
+            act(wallet(), wrong, T_CLAIM);
+            let proof = claim_proof(&signer, id, &wallet(), GH, &key, T_CLAIM / SEC + 600);
+            let before = snap(&c);
+            let msg = refusal(&mut c, |c| c.claim(id, key, proof));
+            assert!(msg.contains("attach exactly the claim fee"), "{msg}");
+            assert_eq!(snap(&c), before);
+        });
+    }
 }
 
 #[test]
@@ -5497,10 +5594,10 @@ fn get_config_reports_the_timing_constants_the_storage_deposit_and_the_fees() {
         ("testnet", URL)
     );
     assert_eq!(cfg.verifier_hash, HASH);
-    assert_eq!(
-        (cfg.pilot_repo.as_str(), cfg.pilot_repo_id.0),
-        (REPO, REPO_ID)
-    );
+    assert!(cfg.open_posting);
+    assert_eq!(cfg.min_reward.0, MIN_REWARD);
+    assert_eq!(cfg.claim_fee.0, CLAIM_FEE.as_yoctonear());
+    assert_eq!(cfg.pending_owner, None);
     assert_eq!(cfg.vault_code_hash, Base58CryptoHash::from(VAULT_CODE));
     assert_eq!(cfg.max_reward.0, 2 * REWARD);
     assert_eq!(cfg.max_held.0, 5 * REWARD);

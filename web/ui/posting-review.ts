@@ -4,6 +4,7 @@
 // guessed: an override that cannot be used is reported against its own field.
 import { NEAR } from "./market-types.ts";
 import { parseNearAmount } from "./near-amount.ts";
+import { near as nearText } from "./bounty-text.ts";
 import type { IssueMetadata } from "./github-issue.ts";
 
 const MILLI = NEAR / 1000n;
@@ -72,6 +73,8 @@ export interface Limits {
    * Taken from the contract's config; the 14-day default is only for a missing value.
    */
   refund_cap_secs?: number;
+  /** The contract's minimum reward, in yoctoNEAR; none when absent. */
+  min_reward?: bigint;
 }
 
 /** The only repository this pilot pays for. */
@@ -174,7 +177,8 @@ export function reviewPosting(input: {
   rewardText: string;
   advanced: Advanced;
   limits: Limits;
-  pilot: Pilot;
+  /** A repository the post must be for; null when any public repository may be posted. */
+  pilot?: Pilot | null;
   fees: FeeSchedule;
   /** Seconds since the epoch. */
   now: number;
@@ -183,8 +187,9 @@ export function reviewPosting(input: {
   const refundCap = limits.refund_cap_secs ?? REFUND_CAP_SECS;
   const problems: Problem[] = [];
   if (
-    meta.repo_id !== pilot.repo_id ||
-    meta.repo.toLowerCase() !== pilot.repo.toLowerCase()
+    pilot &&
+    (meta.repo_id !== pilot.repo_id ||
+      meta.repo.toLowerCase() !== pilot.repo.toLowerCase())
   )
     problems.push({
       field: "repository",
@@ -199,6 +204,11 @@ export function reviewPosting(input: {
       message: error instanceof Error ? error.message : "Enter a reward.",
     });
   }
+  if (reward > 0n && limits.min_reward && reward < limits.min_reward)
+    problems.push({
+      field: "reward",
+      message: `The reward must be at least ${nearText(limits.min_reward)}.`,
+    });
   const locked = reward + fees.check_reserve + fees.storage_deposit;
   if (reward > 0n && reward + fees.check_reserve > limits.room)
     problems.push({
@@ -314,7 +324,7 @@ export function signingBlock(input: {
     return "Preview only: the fees shown are samples and are not approved, and the new contract is not deployed, so nothing can be signed yet.";
   if (!input.connected) return "Connect a wallet to post.";
   if (!input.poster)
-    return "This account is not on the pilot's list of approved posters.";
+    return "Posting is limited to approved maintainers right now.";
   return "";
 }
 
