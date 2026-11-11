@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AgentsPage } from "./AgentsPage.tsx";
 import { PrBounties } from "./PrBounties.tsx";
+import type { BountyActions } from "./use-bounty-actions.ts";
 import { JobWorkspace } from "./JobWorkspace.tsx";
 import { PostJob } from "./PostJob.tsx";
 import type { Market, Wallet, Run } from "./market-types.ts";
@@ -218,6 +219,8 @@ export function WorkspacePages({
   run,
   clock,
   busy,
+  bounty,
+  bountyBusy,
 }: {
   route: AppRoute;
   market: Market | null;
@@ -225,6 +228,10 @@ export function WorkspacePages({
   run: Run;
   clock: number;
   busy: boolean;
+  /** The PR bounty page's wallet, run function and journal. */
+  bounty: BountyActions;
+  /** An action is running. The bounty page does not wait on the job board. */
+  bountyBusy: boolean;
 }) {
   if (!market) return <p role="status">Reading the board…</p>;
   if (route.bidId !== undefined) {
@@ -250,7 +257,7 @@ export function WorkspacePages({
   if (route.section === "agents")
     return <AgentsPage wallet={wallet} run={run} busy={busy} />;
   if (route.section === "bounties")
-    return <PrBounties wallet={wallet} run={run} busy={busy} />;
+    return <PrBounties actions={bounty} busy={bountyBusy} />;
   if (route.section === "market") return <MarketList bids={market.bids} />;
   if (route.section === "jobs")
     return <MyJobs market={market} wallet={wallet} />;

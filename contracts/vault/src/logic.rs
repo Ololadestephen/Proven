@@ -9,7 +9,7 @@ pub const BYTE_COST: u128 = 10_000_000_000_000_000_000;
 /// The latest a withdrawal's deadline may be, after the executing block's time (15 minutes).
 pub const MAX_DEADLINE_AHEAD_NS: u64 = 900 * 1_000_000_000;
 pub const RECORD_LEN: usize = 25;
-pub const INFO_LEN: usize = 106;
+pub const INFO_LEN: usize = 73;
 pub const MAX_MESSAGE: usize = 512;
 pub const MAX_PAYLOAD: usize = 4 + 4 + MAX_MESSAGE + 32 + 4 + 64 + 1;
 
@@ -449,19 +449,17 @@ pub fn ed25519_key(stored: &[u8]) -> Result<[u8; 32], &'static str> {
     Ok(k)
 }
 
-/// The 106-byte `info` answer.
+/// The 73-byte `info` answer: key (33), next withdrawal number (8), storage fund (16), available (16).
 pub fn encode_info(
-    primary: &[u8; 33],
-    backup: &[u8; 33],
+    key: &[u8; 33],
     n: u64,
     fund: u128,
     available: u128,
 ) -> [u8; INFO_LEN] {
     let mut out = [0u8; INFO_LEN];
-    put_at(&mut out, 0, primary);
-    put_at(&mut out, 33, backup);
-    put_at(&mut out, 66, &n.to_le_bytes());
-    put_at(&mut out, 74, &fund.to_le_bytes());
-    put_at(&mut out, 90, &available.to_le_bytes());
+    put_at(&mut out, 0, key);
+    put_at(&mut out, 33, &n.to_le_bytes());
+    put_at(&mut out, 41, &fund.to_le_bytes());
+    put_at(&mut out, 57, &available.to_le_bytes());
     out
 }

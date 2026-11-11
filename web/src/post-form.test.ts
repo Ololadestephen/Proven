@@ -147,23 +147,29 @@ test("the review shows the repository, issue, suggested branch, deadlines, fees 
   assert.match(html, /A claim lasts 2 days/);
   assert.match(html, /1 day grace/);
   assert.match(html, /Reward 0\.1 testnet NEAR/);
-  assert.match(html, /record deposit 0\.029 testnet NEAR, kept/);
-  assert.match(html, /<strong>0\.129 testnet NEAR<\/strong>/);
+  assert.match(html, /record deposit 0\.03 testnet NEAR, kept/);
+  assert.match(html, /<strong>0\.13 testnet NEAR<\/strong>/);
   assert.match(
     html,
-    /0\.1 testnet NEAR comes back to you and 0\.029 testnet NEAR stays as the record/,
+    /0\.1 testnet NEAR comes back to you and 0\.03 testnet NEAR stays as the record/,
   );
-  assert.match(html, /Post and lock 0\.129 testnet NEAR/);
+  assert.match(html, /Post and lock 0\.13 testnet NEAR/);
 });
 
 test("the review says that an on-time merge is refunded if verification stays unavailable", () => {
   const html = render({ meta: ready, rewardText: "0.1" });
   assert.match(
     html,
-    /A failed look at GitHub changes nothing and can be repeated/,
+    /A check that cannot read GitHub \(a timeout or no result\) changes nothing\s+and can be repeated/,
   );
-  assert.match(html, /cannot be read at all until 2026-/);
-  assert.match(html, /14 days after the checking window/);
+  assert.match(
+    html,
+    /paid at the first\s+check that reads it, even after the grace/,
+  );
+  assert.match(html, /If no check reads GitHub\s+before 2026-/);
+  assert.match(html, /14 days after the\s+grace/);
+  assert.match(html, /Merges are checked until 2026-/);
+  assert.match(html, /lets you be refunded from 2026-/);
   assert.match(
     html,
     /refunded to you even if the pull request was merged on time/,

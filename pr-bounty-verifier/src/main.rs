@@ -41,6 +41,15 @@ fn answer(request: &Request) -> Result<Answer, Reason> {
             let body = fetch(&pull_path(&request.repo, *number))?;
             parse_pull(&body).map(Answer::Pull)
         }
+        Op::PullGist {
+            number,
+            gist_id,
+            challenge,
+        } => {
+            let pull = parse_pull(&fetch(&pull_path(&request.repo, *number))?)?;
+            let gist = parse_gist(&fetch(&gist_path(gist_id))?, gist_id, challenge)?;
+            Ok(Answer::PullGist(pull, gist))
+        }
         Op::Gist { gist_id, challenge } => {
             let body = fetch(&gist_path(gist_id))?;
             parse_gist(&body, gist_id, challenge).map(Answer::Gist)

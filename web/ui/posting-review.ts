@@ -21,14 +21,22 @@ export interface FeeSchedule {
   approved: boolean;
 }
 
-/** Sandbox sample values for the preview only. The 0.029 NEAR storage deposit is what the
- * reviewed pilot contract measured; the new contract's figure is measured after design review. */
+/**
+ * Whether the fees shown to a maintainer or contributor are approved. While this is false, no
+ * button on the PR bounty page may sign a message or send a transaction, and every flow in
+ * `bounty-actions.ts` refuses before it reaches a wallet. It is flipped to true only after the
+ * owner approves the measured fees; no other code path may set it.
+ */
+export const FEES_APPROVED = false;
+
+/** Sandbox sample values for the preview only. The 0.030 NEAR storage deposit is the new
+ * contract's `STORAGE_DEPOSIT`; the whole schedule stays unapproved until `FEES_APPROVED` flips. */
 export const PREVIEW_FEES: FeeSchedule = {
-  storage_deposit: 29n * MILLI,
+  storage_deposit: 30n * MILLI,
   check_reserve: 0n,
   submit_fee: 10n * MILLI,
   source: "preview",
-  approved: false,
+  approved: FEES_APPROVED,
 };
 
 export interface Advanced {
@@ -71,6 +79,9 @@ export interface Deadlines {
   /** Seconds since the epoch. */
   claim_by: number;
   merge_deadline: number;
+  /** End of the grace: a check that finds the pull request not merged opens the refund from here. */
+  grace_ends: number;
+  /** Merge checks are accepted until here: the hard refund cutoff. */
   checks_until: number;
   /** The earliest the maintainer can be refunded without a definite look at the merge. */
   hard_refund_at: number;
@@ -267,7 +278,8 @@ export function reviewPosting(input: {
       deadlines: {
         claim_by: now + open,
         merge_deadline: now + merge,
-        checks_until: now + merge + grace,
+        grace_ends: now + merge + grace,
+        checks_until: now + merge + grace + REFUND_CAP_SECS,
         hard_refund_at: now + merge + grace + REFUND_CAP_SECS,
         claim_secs: claim,
         grace_secs: grace,

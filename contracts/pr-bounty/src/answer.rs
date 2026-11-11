@@ -5,9 +5,11 @@ use near_sdk::serde::Deserialize;
 use near_sdk::serde_json;
 use near_sdk::{AccountId, PromiseError};
 
-/// The verifier's largest answer is under 1 KiB; anything longer is not its answer.
-pub const MAX_OUTPUT_BYTES: usize = 1024;
-const OUTPUT_VERSION: u32 = 3;
+/// The verifier never prints more than this (its `MAX_ANSWER_BYTES`): its worst real answer, a
+/// submission with the longest names and a 255-byte branch of escaped characters, is 1,333
+/// bytes, and anything longer it replaces with a bound `no_result:oversized`.
+pub const MAX_OUTPUT_BYTES: usize = 1536;
+const OUTPUT_VERSION: u32 = 4;
 const OUTPUT_KIND: &str = "proven-pr-bounty-facts";
 const MAX_REF_LEN: usize = 255;
 /// The verifier's own no-result codes. Any other is treated as a malformed answer.
@@ -72,6 +74,8 @@ pub struct GistFacts {
 #[derive(Clone, Copy)]
 pub enum Parsed<'a> {
     Pull(u64),
+    /// A submission: the pull request and the wallet's link gist, read in one run.
+    PullGist(u64, &'a str),
     Gist(&'a str),
 }
 
@@ -117,6 +121,10 @@ pub fn parse(
     }
     let (op, target) = match asked {
         Parsed::Pull(number) => ("pull", raw.number == Some(number) && raw.gist_id.is_none()),
+        Parsed::PullGist(number, id) => (
+            "pull",
+            raw.number == Some(number) && raw.gist_id.as_deref() == Some(id),
+        ),
         Parsed::Gist(id) => (
             "gist",
             raw.gist_id.as_deref() == Some(id) && raw.number.is_none(),
@@ -141,7 +149,9 @@ pub fn parse(
         {
             Err(no_result(&reason))
         }
-        ("ok", None, Some(pull), None, Parsed::Pull(_)) => {
+        ("ok", None, Some(pull), gist, asked @ (Parsed::Pull(_) | Parsed::PullGist(..)))
+            if gist.is_some() == matches!(asked, Parsed::PullGist(..)) =>
+        {
             let consistent = matches!(pull.state.as_str(), "open" | "closed")
                 && !pull.base_ref.is_empty()
                 && pull.base_ref.len() <= MAX_REF_LEN
@@ -153,7 +163,7 @@ pub fn parse(
             Ok(Answer {
                 request_id,
                 pull: Some(pull),
-                gist: None,
+                gist,
             })
         }
         ("ok", None, None, Some(gist), Parsed::Gist(_)) => Ok(Answer {

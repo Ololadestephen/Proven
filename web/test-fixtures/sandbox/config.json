@@ -20,12 +20,14 @@
   "max_sponsor_spent": "200000000000000000000000",
   "bounty_count": 0,
   "run_deposit": "10000000000000000000000",
-  "budget": "30000000000000000000000",
   "sponsored_runs_per_bounty": 3,
   "storage_deposit": "29000000000000000000000",
   "deposit_fee": "6000000000000000000000",
   "reconcile_deposit": "10000000000000000000000",
   "party_reconcile_delay_secs": 900,
   "open_reconcile_delay_secs": 86400,
-  "reconcile_marker_ttl_secs": 600
+  "reconcile_marker_ttl_secs": 600,
+  "relink_delay_secs": 259200,
+  "refund_cap_secs": 1209600,
+  "min_claim_secs": 3600
 }

@@ -1,68 +1,85 @@
-//! Fault-build sandbox tests (`--features test-faults`): lost settlement callbacks, a failed
-//! first deposit, a deposit delayed past its seal, a failed reconcile callback, the reconcile
-//! caller and timing rules, concurrent reconciles, the total cap while a settlement is pending,
-//! and the pause. The faults are keyed by issue number (see `faults` in src/lib.rs):
-//!   9000..  both settlement callbacks fail
-//!   9500..9899  also the first deposit fails
-//!   9900  also the first deposit is delayed by 60 self-calls
+//! Fault-build sandbox tests (`--features test-faults`): lost settlement callbacks for a payout
+//! and for a refund, a failed first deposit, a deposit delayed past its seal, a failed reconcile
+//! callback, the reconcile caller and timing rules, concurrent reconciles, the total cap while a
+//! settlement is unconfirmed, the pause and an empty sponsor float. The faults are keyed by issue
+//! number (see `faults` in src/lib.rs):
+//!   9000..9499  the deposit succeeds, both settlement callbacks fail
+//!   9500..9899  the first deposit fails, both callbacks fail
+//!   9900        the first deposit is delayed by 60 self-calls, both callbacks fail
 //! and a reconcile signed by an account whose name starts with `fault-` has its callback fail.
 //! The fault build's delays: a party may reconcile 3 s after a send, anyone 9 s after, and a
-//! reconcile marker blocks others for 4 s. Build first (see tests/common/mod.rs).
+//! reconcile marker blocks others for 4 s. Build first (see tests/common/mod.rs). Run with
+//! `cargo test --offline --test recovery -- --test-threads 1`.
+//! Whenever an attempt's result is unknown, the principal stays in `held`; it leaves `held`
+//! only on the vault's own record of a deposit, exactly once. A payout is never refunded.
 
 mod common;
 use common::*;
 use near_workspaces::types::{Gas, NearToken};
+use near_workspaces::Account;
 use serde_json::json;
 
 const PARTY_DELAY_NS: u64 = 3_000_000_000;
 const OPEN_DELAY_NS: u64 = 9_000_000_000;
 const MARKER_NS: u64 = 4_000_000_000;
 
-async fn cancel(
-    env: &Env,
-    id: u64,
-) -> anyhow::Result<near_workspaces::result::ExecutionFinalResult> {
-    call(&env.maint, env, "cancel", json!({"bounty_id": id}), 0).await
+fn secs(v: &serde_json::Value) -> u64 {
+    v.as_str().expect("a U64 string").parse().expect("a number")
 }
 
-/// A second posting by the maintainer, with nonce `n`, to test the total cap.
+/// Posts, claims and binds the contributor's pull request on bounty `issue` (fault timing).
+async fn bind(env: &Env, issue: u64) -> anyhow::Result<(u64, PullSpec)> {
+    let id = post(env, issue, Timing::FAULT).await?;
+    let pull = PullSpec::open(env, GH);
+    claim_and_bind(env, &env.contrib, &env.contrib_key.clone(), GH, id, &pull).await?;
+    Ok((id, pull))
+}
+
+/// A second posting by the maintainer, to test the total cap.
 async fn post_next(
     env: &Env,
-    n: u64,
+    issue: u64,
 ) -> anyhow::Result<near_workspaces::result::ExecutionFinalResult> {
     let now = now_secs(env).await?;
-    let t = terms(1, now, 600, 900, 3_600);
+    let t = terms(env, issue, now, Timing::FAULT);
     let proof = posting_proof(
         env,
         &t,
-        &env.maint_keys,
+        &env.maint_key,
         env.maint.id(),
-        &nonce(n),
+        &env.next_nonce(),
         now + 1800,
     )
     .await?;
     try_post(env, t, proof).await
 }
 
-async fn send_due(
+/// Reconciles from `who` once the party delay has passed; returns the call's result.
+async fn reconcile_when_due(
     env: &Env,
+    who: &Account,
     id: u64,
+    kind: &str,
+    attempt: u32,
+    delay_ns: u64,
 ) -> anyhow::Result<near_workspaces::result::ExecutionFinalResult> {
-    call(&env.stranger, env, "send_due", json!({"bounty_id": id}), 0).await
+    let sent_at = sstate(env, id, kind).await?.2;
+    sleep_past_ns(env, sent_at + delay_ns).await?;
+    reconcile(env, who, id, kind, attempt).await
 }
 
 #[tokio::test]
-async fn lost_callbacks_after_successful_deposits_are_reconciled_exactly_once() -> anyhow::Result<()>
-{
+async fn a_lost_payout_callback_is_reconciled_exactly_once_and_the_payout_is_never_refunded(
+) -> anyhow::Result<()> {
     let env = setup_with(FAULT_WASM).await?;
-    let id = post(&env, 9_001, 1, 600, 900, 3_600).await?;
-    claim_and_bind(&env, id, 1).await?;
-    let cvault = vault_of(&env, &env.contrib_keys).await?;
-    let mvault = vault_of(&env, &env.maint_keys).await?;
-    let paid = merged_check(&env, id, 3, false).await?;
+    let cvault = vault_of(&env, &env.contrib_key).await?;
+    let mvault = vault_of(&env, &env.maint_key).await?;
+    let ledger = Ledger::new(&env, &[cvault.clone(), mvault.clone()]).await?;
+    let (id, pull) = bind(&env, 9_001).await?;
+    let paid = merged_check(&env, id, &pull, false).await?;
     let rows = trace(
         &env,
-        "paid; both deposits succeed, all four settlement callbacks fail",
+        "paid; the deposit succeeds, both settlement callbacks fail",
         &paid,
         env.stranger.id(),
     )
@@ -71,7 +88,7 @@ async fn lost_callbacks_after_successful_deposits_are_reconciled_exactly_once() 
         rows.iter()
             .filter(|(_, _, a, f)| a.contains("FunctionCall deposit") && f.is_none())
             .count(),
-        2
+        1
     );
     assert!(failed_with(
         &rows,
@@ -90,8 +107,8 @@ async fn lost_callbacks_after_successful_deposits_are_reconciled_exactly_once() 
     );
     assert_eq!(
         held(&env).await?,
-        (REWARD + BUDGET, REWARD + BUDGET),
-        "both principals still held and in flight"
+        (REWARD, REWARD),
+        "the principal is still held and in flight"
     );
     let s0 = snapshot(&env, "after the lost callbacks", id, "Payout", &cvault).await?;
     assert_eq!(
@@ -99,6 +116,57 @@ async fn lost_callbacks_after_successful_deposits_are_reconciled_exactly_once() 
         REWARD.to_string(),
         "the payout is in the vault"
     );
+
+    // The party delay: the contributor's own try straight after the send is too early.
+    let early = reconcile(&env, &env.contrib, id, "Payout", 1).await?;
+    let early_at = exec_ns(&env, &early).await?;
+    assert_refused(&early, "too early to reconcile");
+    assert!(
+        early_at < sent_at + PARTY_DELAY_NS,
+        "the early try ran inside the delay ({} ms after the send)",
+        (early_at - sent_at) / 1_000_000
+    );
+    assert!(same_state(
+        &s0,
+        &snapshot(&env, "refused: too early", id, "Payout", &cvault).await?
+    ));
+
+    // An unknown payout is never refunded: nothing refunds, cancels or resends it.
+    assert_refused(
+        &settle_call(&env, &env.stranger, id).await?,
+        "cannot be refunded yet",
+    );
+    assert_refused(
+        &cancel_bounty(&env, id).await?,
+        "only a bounty with no claim can be cancelled",
+    );
+    assert_refused(
+        &send_due(&env, id).await?,
+        "no settlement of this bounty could be sent now",
+    );
+    let r = call(
+        &env.stranger,
+        &env,
+        "recover_settlement",
+        json!({"bounty_id": id, "kind": "Payout"}),
+        0,
+    )
+    .await?;
+    assert_refused(
+        &r,
+        "no outcome is recorded for this attempt; reconcile instead",
+    );
+    let b = get_bounty(&env, id).await?;
+    assert!(b["refund"].is_null(), "no refund exists");
+    assert_eq!(
+        bal(&env, &mvault).await?,
+        0,
+        "the maintainer vault was never created"
+    );
+    assert!(same_state(
+        &s0,
+        &snapshot(&env, "after the refused calls", id, "Payout", &cvault).await?
+    ));
 
     // Wrong attempts are refused at any time; a stranger is refused before the open delay.
     for (who, attempt, text) in [
@@ -113,13 +181,21 @@ async fn lost_callbacks_after_successful_deposits_are_reconciled_exactly_once() 
             &snapshot(&env, &format!("refused: {text}"), id, "Payout", &cvault).await?
         ));
     }
-    // The party delay boundary: the contributor's wallet tries until it is accepted. Every
-    // refused try ran before sent_at + delay, the accepted one at or after it.
-    let mut last_refused = 0;
-    let accepted = loop {
+    // The party delay boundary: every refused try ran before sent_at + delay, the accepted one after.
+    let mut last_refused = early_at;
+    let (r, at) = loop {
+        let before = bal(&env, env.contrib.id()).await?;
         let r = reconcile(&env, &env.contrib, id, "Payout", 1).await?;
         let at = exec_ns(&env, &r).await?;
         if r.is_success() {
+            // The seal of a deposited record writes nothing: the whole 0.01 NEAR came back, so the
+            // caller paid gas only.
+            let (_, burnt) = gas_burnt_total(&r);
+            assert_eq!(
+                before - bal(&env, env.contrib.id()).await?,
+                burnt,
+                "a reconcile that changes no vault storage costs gas only"
+            );
             break (r, at);
         }
         assert_refused(&r, "too early to reconcile");
@@ -129,17 +205,15 @@ async fn lost_callbacks_after_successful_deposits_are_reconciled_exactly_once() 
         ));
         last_refused = at;
     };
-    let (r, at) = accepted;
     env.note(format!(
         "  party delay boundary: sent_at {sent_at}, last refused at {last_refused} (+{} ms), accepted at {at} (+{} ms)",
         last_refused.saturating_sub(sent_at) / 1_000_000,
         (at - sent_at) / 1_000_000
     ));
-    assert!(last_refused > 0, "at least one early try was refused");
     assert!(last_refused < sent_at + PARTY_DELAY_NS && at >= sent_at + PARTY_DELAY_NS);
     let rows = trace(
         &env,
-        "contributor reconciles the payout",
+        "the contributor reconciles the payout",
         &r,
         env.contrib.id(),
     )
@@ -159,41 +233,92 @@ async fn lost_callbacks_after_successful_deposits_are_reconciled_exactly_once() 
     );
     assert_eq!(
         held(&env).await?,
-        (BUDGET, BUDGET),
+        (0, 0),
         "the payout left held exactly once"
     );
     assert_eq!(
         s1["withdrawable"], s0["withdrawable"],
         "a seal of a deposited record changes nothing in the vault"
     );
+    let rec = record(&env, &cvault, id, 0).await?;
+    assert_eq!(
+        (rec.deposited, rec.attempt, rec.amount, rec.sealed_through),
+        (true, 1, REWARD, 0)
+    );
     assert_refused(
         &reconcile(&env, &env.contrib, id, "Payout", 1).await?,
         "not in flight",
     );
-
-    // Two reconciles of the budget return submitted together: at most one applies.
-    sleep_past_ns(
+    assert_refused(
+        &send_due(&env, id).await?,
+        "no settlement of this bounty could be sent now",
+    );
+    assert_refused(
+        &settle_call(&env, &env.stranger, id).await?,
+        "cannot be refunded yet",
+    );
+    assert_eq!(held(&env).await?, (0, 0), "nothing counted twice");
+    withdraw_exact(
         &env,
-        sstate(&env, id, "BudgetReturn").await?.2 + PARTY_DELAY_NS,
+        &env.contrib_key.clone(),
+        &cvault,
+        env.payee.id(),
+        REWARD,
+        "withdrawal of the reconciled payout",
     )
     .await?;
+    assert_closed(&env, &ledger, "payout reconciled").await?;
+    env.save_trace("recovery-lost-payout-callback")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lost_refund_callback_is_reconciled_by_anyone_and_concurrent_reconciles_apply_once(
+) -> anyhow::Result<()> {
+    let env = setup_with(FAULT_WASM).await?;
+    let mvault = vault_of(&env, &env.maint_key).await?;
+    let ledger = Ledger::new(&env, &[mvault.clone()]).await?;
+    let id = post(&env, 9_002, Timing::FAULT).await?;
+    let r = cancel_bounty(&env, id).await?;
+    trace(
+        &env,
+        "cancel: the refund deposit succeeds, both callbacks fail",
+        &r,
+        env.maint.id(),
+    )
+    .await?;
+    let (state, attempt, sent_at, outcome, _) = sstate(&env, id, "Refund").await?;
+    assert_eq!(
+        (state.as_str(), attempt, outcome.as_str()),
+        ("InFlight", 1, "Unknown")
+    );
+    assert_eq!(held(&env).await?, (REWARD, REWARD));
+    assert_eq!(info(&env, &mvault).await?.available, REWARD);
+    // A stranger is refused until the open delay; two reconciles submitted together apply once.
+    assert_refused(
+        &reconcile(&env, &env.stranger, id, "Refund", 1).await?,
+        "too early to reconcile",
+    );
+    sleep_past_ns(&env, sent_at + OPEN_DELAY_NS).await?;
     let before = snapshot(
         &env,
         "before the concurrent reconciles",
         id,
-        "BudgetReturn",
+        "Refund",
         &mvault,
     )
     .await?;
-    let tx = |who: &near_workspaces::Account| {
+    let tx = |who: &Account| {
         who.call(env.bounty.id(), "reconcile")
-            .args_json(json!({"bounty_id": id, "kind": "BudgetReturn", "attempt": 1}))
+            .args_json(json!({"bounty_id": id, "kind": "Refund", "attempt": 1}))
             .deposit(NearToken::from_yoctonear(RECONCILE))
             .gas(Gas::from_tgas(100))
             .transact_async()
     };
-    let (a, b) = (tx(&env.maint).await?, tx(&env.contrib).await?);
+    let (a, b) = (tx(&env.maint).await?, tx(&env.stranger).await?);
     let (a, b) = (a.await?, b.await?);
+    env.tally(&a);
+    env.tally(&b);
     let answers = [answer(&a), answer(&b)];
     env.note(format!("  concurrent reconciles answered: {answers:?}"));
     trace(
@@ -205,9 +330,9 @@ async fn lost_callbacks_after_successful_deposits_are_reconciled_exactly_once() 
     .await?;
     trace(
         &env,
-        "concurrent reconcile 2 (contributor)",
+        "concurrent reconcile 2 (stranger)",
         &b,
-        env.contrib.id(),
+        env.stranger.id(),
     )
     .await?;
     assert_eq!(
@@ -225,46 +350,58 @@ async fn lost_callbacks_after_successful_deposits_are_reconciled_exactly_once() 
         &env,
         "after the concurrent reconciles",
         id,
-        "BudgetReturn",
+        "Refund",
         &mvault,
     )
     .await?;
     assert_eq!(after["state"], "Done");
     assert_eq!(
         u(&before["held"]) - u(&after["held"]),
-        BUDGET,
-        "the budget left held exactly once"
+        REWARD,
+        "the principal left held exactly once"
     );
     assert_eq!(held(&env).await?, (0, 0));
-
-    // Both vaults pay exactly.
-    for (keys, vault, amount) in [
-        (&env.contrib_keys, &cvault, REWARD),
-        (&env.maint_keys, &mvault, BUDGET),
-    ] {
-        let p0 = bal(&env, env.payee.id()).await?;
-        let w = withdraw(&env, &keys.primary, vault, env.payee.id(), amount).await?;
-        assert!(w.is_success(), "{:?}", w.failures());
-        assert_eq!(bal(&env, env.payee.id()).await? - p0, amount);
-    }
-    env.save_trace("recovery-lost-callbacks-success")?;
+    assert_eq!(
+        info(&env, &mvault).await?.available,
+        REWARD,
+        "one principal in the vault"
+    );
+    assert_eq!(status_of(&env, id).await?, "Cancelled");
+    withdraw_exact(
+        &env,
+        &env.maint_key.clone(),
+        &mvault,
+        env.maint.id(),
+        REWARD,
+        "withdrawal of the reconciled refund",
+    )
+    .await?;
+    assert_closed(&env, &ledger, "refund reconciled").await?;
+    env.save_trace("recovery-lost-refund-callback")?;
     Ok(())
 }
 
+async fn status_of(env: &Env, id: u64) -> anyhow::Result<String> {
+    Ok(get_bounty(env, id).await?["status"]
+        .as_str()
+        .unwrap_or("?")
+        .to_string())
+}
+
 #[tokio::test]
-async fn a_failed_deposit_is_sealed_due_and_resent_once_while_the_cap_holds() -> anyhow::Result<()>
-{
+async fn a_failed_first_deposit_is_sealed_due_and_resent_once_while_the_cap_holds(
+) -> anyhow::Result<()> {
     let env = setup_with(FAULT_WASM).await?;
-    let p = REWARD + BUDGET;
     env.owner
         .call(env.bounty.id(), "set_caps")
-        .args_json(json!({"max_reward": REWARD.to_string(), "max_held": p.to_string(), "max_open_per_buyer": 5}))
+        .args_json(json!({"max_reward": REWARD.to_string(), "max_held": REWARD.to_string(), "max_open_per_buyer": 5}))
         .transact()
         .await?
         .into_result()?;
-    let id = post(&env, 9_501, 1, 600, 900, 3_600).await?;
-    let mvault = vault_of(&env, &env.maint_keys).await?;
-    let r = cancel(&env, id).await?;
+    let id = post(&env, 9_501, Timing::FAULT).await?;
+    let mvault = vault_of(&env, &env.maint_key).await?;
+    let ledger = Ledger::new(&env, &[mvault.clone()]).await?;
+    let r = cancel_bounty(&env, id).await?;
     let rows = trace(
         &env,
         "cancel: the refund deposit fails and both callbacks fail",
@@ -277,13 +414,9 @@ async fn a_failed_deposit_is_sealed_due_and_resent_once_while_the_cap_holds() ->
             || failed_with(&rows, mvault.as_str(), "MethodNotFound")
     );
     assert!(
-        sent(&rows, "system", env.bounty.id().as_str(), p + DEPOSIT_FEE),
+        sent(&rows, "system", env.bounty.id().as_str(), REWARD + env.fee),
         "the failed deposit's NEAR returned in full"
     );
-    save_fixture(
-        "settlement-in-flight",
-        &settlement(&env, id, "Refund").await?,
-    )?;
     let s0 = snapshot(
         &env,
         "refund in flight, its deposit failed",
@@ -301,7 +434,6 @@ async fn a_failed_deposit_is_sealed_due_and_resent_once_while_the_cap_holds() ->
         0,
         "the failed batch created no vault"
     );
-    // A stranger is refused before the open delay; posting is refused while the cap is in flight.
     assert_refused(
         &reconcile(&env, &env.stranger, id, "Refund", 1).await?,
         "too early to reconcile",
@@ -319,33 +451,50 @@ async fn a_failed_deposit_is_sealed_due_and_resent_once_while_the_cap_holds() ->
         .await?
     ));
 
-    sleep_past_ns(&env, sstate(&env, id, "Refund").await?.2 + PARTY_DELAY_NS).await?;
-    let r = reconcile(&env, &env.maint, id, "Refund", 1).await?;
-    trace(
+    // The maintainer's reconcile creates the vault and seals attempt 1 with no deposit: the
+    // refund is due again, still held; a seal costs the caller exactly the vault's new storage.
+    let caller0 = bal(&env, env.maint.id()).await?;
+    let r = reconcile_when_due(&env, &env.maint, id, "Refund", 1, PARTY_DELAY_NS).await?;
+    let rows = trace(
         &env,
-        "maintainer reconciles: the vault seals attempt 1 with no deposit",
+        "the maintainer reconciles: the vault seals attempt 1 with no deposit",
         &r,
         env.maint.id(),
     )
     .await?;
     assert_eq!(answer(&r), "sealed_without_deposit");
-    save_fixture("settlement-due", &settlement(&env, id, "Refund").await?)?;
+    assert!(rows.iter().any(|(_, to, a, f)| to == mvault.as_str()
+        && a.contains("DeterministicStateInit")
+        && a.contains("FunctionCall seal")
+        && f.is_none()));
+    let fund = info(&env, &mvault).await?.fund;
+    assert_eq!(
+        fund,
+        u128::from(storage(&env, &mvault).await?) * BYTE,
+        "the fund is the vault's storage"
+    );
+    let (_, burnt) = gas_burnt_total(&r);
+    assert_eq!(
+        caller0 - bal(&env, env.maint.id()).await?,
+        fund + burnt,
+        "the caller paid the new vault's storage and gas; the rest of 0.01 NEAR came back"
+    );
     let s1 = snapshot(&env, "after the seal", id, "Refund", &mvault).await?;
     assert_eq!(
         (s1["state"].as_str(), s1["attempt"].as_u64()),
         (Some("Due"), Some(1))
     );
-    assert_eq!(held(&env).await?, (p, 0), "the principal stays held");
-    let rec = record(&env, &mvault, id, 2).await?;
+    assert_eq!(held(&env).await?, (REWARD, 0), "the principal stays held");
+    let rec = record(&env, &mvault, id, 1).await?;
     assert_eq!((rec.deposited, rec.sealed_through), (false, 1));
+    assert_eq!(s1["withdrawable"], "0");
     assert_refused(&post_next(&env, 2).await?, "total cap is reached");
 
-    // A stranger resends; the fresh attempt restarts the reconcile clock, so the stranger
-    // cannot interrupt it at once.
+    // A stranger resends; the fresh attempt restarts the reconcile clock.
     let r = send_due(&env, id).await?;
     let rows = trace(
         &env,
-        "stranger resends as attempt 2; its callbacks fail again",
+        "a stranger resends as attempt 2; its callbacks fail again",
         &r,
         env.stranger.id(),
     )
@@ -360,7 +509,7 @@ async fn a_failed_deposit_is_sealed_due_and_resent_once_while_the_cap_holds() ->
     );
     assert_eq!(
         s2["withdrawable"],
-        p.to_string(),
+        REWARD.to_string(),
         "attempt 2 deposited exactly the principal"
     );
     assert_refused(
@@ -372,23 +521,30 @@ async fn a_failed_deposit_is_sealed_due_and_resent_once_while_the_cap_holds() ->
         &reconcile(&env, &env.maint, id, "Refund", 1).await?,
         "only the current attempt",
     );
-    sleep_past_ns(&env, sstate(&env, id, "Refund").await?.2 + PARTY_DELAY_NS).await?;
-    let r = reconcile(&env, &env.maint, id, "Refund", 2).await?;
-    trace(&env, "maintainer reconciles attempt 2", &r, env.maint.id()).await?;
+    assert_refused(
+        &send_due(&env, id).await?,
+        "no settlement of this bounty could be sent now",
+    );
+    let r = reconcile_when_due(&env, &env.maint, id, "Refund", 2, PARTY_DELAY_NS).await?;
+    trace(
+        &env,
+        "the maintainer reconciles attempt 2",
+        &r,
+        env.maint.id(),
+    )
+    .await?;
     assert_eq!(answer(&r), "deposited");
-    save_fixture("settlement-done", &settlement(&env, id, "Refund").await?)?;
-    save_fixture("bounty-refunded", &get_bounty(&env, id).await?)?;
     let s3 = snapshot(&env, "refund done", id, "Refund", &mvault).await?;
     assert_eq!(s3["state"], "Done");
     assert_eq!(held(&env).await?, (0, 0));
-    let rec = record(&env, &mvault, id, 2).await?;
+    let rec = record(&env, &mvault, id, 1).await?;
     assert_eq!(
         (rec.deposited, rec.attempt, rec.amount, rec.sealed_through),
-        (true, 2, p, 1)
+        (true, 2, REWARD, 1)
     );
     assert_eq!(
         info(&env, &mvault).await?.available,
-        p,
+        REWARD,
         "exactly one principal in the vault"
     );
     let r = post_next(&env, 2).await?;
@@ -397,21 +553,95 @@ async fn a_failed_deposit_is_sealed_due_and_resent_once_while_the_cap_holds() ->
         "posting is accepted once the deposit is confirmed: {:?}",
         r.failures()
     );
-    let p0 = bal(&env, env.maint.id()).await?;
-    withdraw(&env, &env.maint_keys.backup, &mvault, env.maint.id(), p)
-        .await?
-        .into_result()?;
-    assert_eq!(bal(&env, env.maint.id()).await? - p0, p);
+    withdraw_exact(
+        &env,
+        &env.maint_key.clone(),
+        &mvault,
+        env.maint.id(),
+        REWARD,
+        "withdrawal of the resent refund",
+    )
+    .await?;
+    assert_closed(&env, &ledger, "failed first deposit").await?;
     env.save_trace("recovery-failed-deposit-and-cap")?;
     Ok(())
 }
 
 #[tokio::test]
+async fn a_failed_first_payout_deposit_is_sealed_and_resent_once_and_never_refunded(
+) -> anyhow::Result<()> {
+    let env = setup_with(FAULT_WASM).await?;
+    let cvault = vault_of(&env, &env.contrib_key).await?;
+    let mvault = vault_of(&env, &env.maint_key).await?;
+    let ledger = Ledger::new(&env, &[cvault.clone(), mvault.clone()]).await?;
+    let (id, pull) = bind(&env, 9_503).await?;
+    let paid = merged_check(&env, id, &pull, false).await?;
+    let rows = trace(
+        &env,
+        "paid; the first payout deposit fails and the callbacks fail",
+        &paid,
+        env.stranger.id(),
+    )
+    .await?;
+    assert!(
+        failed_with(&rows, cvault.as_str(), "no_such_method")
+            || failed_with(&rows, cvault.as_str(), "MethodNotFound")
+    );
+    assert_eq!(held(&env).await?, (REWARD, REWARD));
+    assert_eq!(bal(&env, &cvault).await?, 0);
+    // The contributor reconciles: sealed, due. Nobody can turn the payout into a refund.
+    let r = reconcile_when_due(&env, &env.contrib, id, "Payout", 1, PARTY_DELAY_NS).await?;
+    assert_eq!(answer(&r), "sealed_without_deposit");
+    assert_eq!(held(&env).await?, (REWARD, 0));
+    assert_refused(
+        &settle_call(&env, &env.stranger, id).await?,
+        "cannot be refunded yet",
+    );
+    assert!(get_bounty(&env, id).await?["refund"].is_null());
+    // A late deposit of attempt 1 would be refused by the vault; the resend (attempt 2) lands once.
+    let r = send_due(&env, id).await?;
+    assert_eq!(answer_u32(&r), 1);
+    // The maintainer is the bounty's buyer, so it is a party and may reconcile after 3 s.
+    let r = reconcile_when_due(&env, &env.maint, id, "Payout", 2, PARTY_DELAY_NS).await?;
+    assert_eq!(answer(&r), "deposited");
+    let rec = record(&env, &cvault, id, 0).await?;
+    assert_eq!(
+        (rec.deposited, rec.attempt, rec.amount, rec.sealed_through),
+        (true, 2, REWARD, 1)
+    );
+    assert_eq!(held(&env).await?, (0, 0));
+    assert_eq!(info(&env, &cvault).await?.available, REWARD);
+    assert_eq!(
+        bal(&env, &mvault).await?,
+        0,
+        "the maintainer vault never existed"
+    );
+    withdraw_exact(
+        &env,
+        &env.contrib_key.clone(),
+        &cvault,
+        env.payee.id(),
+        REWARD,
+        "withdrawal of the resent payout",
+    )
+    .await?;
+    assert_closed(&env, &ledger, "failed first payout deposit").await?;
+    env.save_trace("recovery-failed-payout-deposit")?;
+    Ok(())
+}
+
+fn answer_u32(r: &near_workspaces::result::ExecutionFinalResult) -> u32 {
+    r.clone()
+        .json::<u32>()
+        .unwrap_or_else(|_| panic!("not a count: {:?}", r.failures()))
+}
+
+#[tokio::test]
 async fn a_failed_reconcile_callback_is_retried_after_its_marker_expires() -> anyhow::Result<()> {
     let env = setup_with(FAULT_WASM).await?;
-    let id = post(&env, 9_002, 1, 600, 900, 3_600).await?;
-    let mvault = vault_of(&env, &env.maint_keys).await?;
-    let r = cancel(&env, id).await?;
+    let id = post(&env, 9_004, Timing::FAULT).await?;
+    let mvault = vault_of(&env, &env.maint_key).await?;
+    let r = cancel_bounty(&env, id).await?;
     trace(
         &env,
         "cancel: refund deposited, callbacks fail",
@@ -420,7 +650,6 @@ async fn a_failed_reconcile_callback_is_retried_after_its_marker_expires() -> an
     )
     .await?;
     let sent_at = sstate(&env, id, "Refund").await?.2;
-    // After the open delay anyone may reconcile; this one's callback fails, leaving its marker.
     sleep_past_ns(&env, sent_at + OPEN_DELAY_NS).await?;
     let r = reconcile(&env, &env.fault_stranger, id, "Refund", 1).await?;
     let rows = trace(
@@ -448,18 +677,18 @@ async fn a_failed_reconcile_callback_is_retried_after_its_marker_expires() -> an
         (s0["state"].as_str(), s0["marker"].as_bool()),
         (Some("InFlight"), Some(true))
     );
-    assert_eq!(held(&env).await?, (REWARD + BUDGET, REWARD + BUDGET));
+    assert_eq!(held(&env).await?, (REWARD, REWARD));
     // While the marker lives, even a party is refused; after it expires a retry applies.
     let r = reconcile(&env, &env.maint, id, "Refund", 1).await?;
-    if exec_ns(&env, &r).await? < started + MARKER_NS {
-        assert_refused(&r, "in progress");
-        assert!(same_state(
-            &s0,
-            &snapshot(&env, "refused: marker", id, "Refund", &mvault).await?
-        ));
-    } else {
-        panic!("the marker expired before the check; raise the fault build's marker time");
-    }
+    assert!(
+        exec_ns(&env, &r).await? < started + MARKER_NS,
+        "the marker expired before the check; raise the fault build's marker time"
+    );
+    assert_refused(&r, "in progress");
+    assert!(same_state(
+        &s0,
+        &snapshot(&env, "refused: marker", id, "Refund", &mvault).await?
+    ));
     sleep_past_ns(&env, started + MARKER_NS).await?;
     let r = reconcile(&env, &env.stranger, id, "Refund", 1).await?;
     trace(
@@ -476,7 +705,7 @@ async fn a_failed_reconcile_callback_is_retried_after_its_marker_expires() -> an
         (Some("Done"), Some(false))
     );
     assert_eq!(held(&env).await?, (0, 0));
-    assert_eq!(info(&env, &mvault).await?.available, REWARD + BUDGET);
+    assert_eq!(info(&env, &mvault).await?.available, REWARD);
     env.save_trace("recovery-failed-reconcile-callback")?;
     Ok(())
 }
@@ -484,15 +713,18 @@ async fn a_failed_reconcile_callback_is_retried_after_its_marker_expires() -> an
 #[tokio::test]
 async fn a_seal_overtakes_a_delayed_deposit_and_the_resend_waits_for_its_refund(
 ) -> anyhow::Result<()> {
-    // The owner funded only 0.03 NEAR beyond storage and the float, so a resend can only be
-    // paid with the failed deposit's own NEAR.
-    let env = setup_opts(FAULT_WASM, "maint", "contrib", Some(30 * MILLI)).await?;
-    let p = REWARD + BUDGET;
-    let id = post(&env, 9_900, 1, 600, 900, 3_600).await?;
-    let mvault = vault_of(&env, &env.maint_keys).await?;
+    // The contract's spare balance is set to one deposit fee plus 4 milliNEAR (room for the
+    // cancel's own storage growth) after posting, so after the first attempt's fee is out a
+    // resend can only be paid with the failed deposit's own NEAR.
+    let env = setup_with(FAULT_WASM).await?;
+    let id = post(&env, 9_900, Timing::FAULT).await?;
+    // The cancel itself grows the contract's storage, so allow for that growth as well.
+    set_free(&env, env.fee + 4 * MILLI).await?;
+    let mvault = vault_of(&env, &env.maint_key).await?;
+    let ledger = Ledger::new(&env, &[mvault.clone()]).await?;
     env.note(format!(
-        "  free balance after posting: {}",
-        near(u(&env.bounty.view("get_free_balance").await?.json()?))
+        "  free balance before the refund: {}",
+        near(free_balance(&env).await?)
     ));
     let pending = env
         .maint
@@ -535,7 +767,7 @@ async fn a_seal_overtakes_a_delayed_deposit_and_the_resend_waits_for_its_refund(
         (s0["state"].as_str(), s0["attempt"].as_u64()),
         (Some("Due"), Some(1))
     );
-    // Before the failed deposit's NEAR is back, a resend is refused with no state change.
+    // Before the failed deposit's NEAR is back the contract cannot pay for a resend.
     let r = send_due(&env, id).await?;
     assert_refused(&r, "no settlement of this bounty could be sent now");
     let refused_at = exec_height(&env, &r).await?;
@@ -550,8 +782,10 @@ async fn a_seal_overtakes_a_delayed_deposit_and_the_resend_waits_for_its_refund(
         )
         .await?
     ));
-
     let done = pending.await?;
+    // A long receipt tree: the workspaces result lists only part of it, so count the burnt
+    // tokens from the node's own record of every receipt.
+    tally_exact(&env, &done, env.maint.id()).await?;
     let rows = trace(
         &env,
         "cancel, finished: the delayed deposit is refused by the sealed vault",
@@ -565,7 +799,7 @@ async fn a_seal_overtakes_a_delayed_deposit_and_the_resend_waits_for_its_refund(
         "this attempt is sealed"
     ));
     assert!(
-        sent(&rows, "system", env.bounty.id().as_str(), p + DEPOSIT_FEE),
+        sent(&rows, "system", env.bounty.id().as_str(), REWARD + env.fee),
         "its full NEAR returned"
     );
     let back_at = transfer_height(
@@ -574,7 +808,7 @@ async fn a_seal_overtakes_a_delayed_deposit_and_the_resend_waits_for_its_refund(
         env.maint.id(),
         "system",
         env.bounty.id().as_str(),
-        p + DEPOSIT_FEE,
+        REWARD + env.fee,
     )
     .await?
     .unwrap();
@@ -601,17 +835,22 @@ async fn a_seal_overtakes_a_delayed_deposit_and_the_resend_waits_for_its_refund(
     )
     .await?;
     assert!(r.is_success(), "{:?}", r.failures());
-    sleep_past_ns(&env, sstate(&env, id, "Refund").await?.2 + PARTY_DELAY_NS).await?;
-    let r = reconcile(&env, &env.maint, id, "Refund", 2).await?;
+    let r = reconcile_when_due(&env, &env.maint, id, "Refund", 2, PARTY_DELAY_NS).await?;
     assert_eq!(answer(&r), "deposited");
     snapshot(&env, "refund done", id, "Refund", &mvault).await?;
     assert_eq!(held(&env).await?, (0, 0));
-    let rec = record(&env, &mvault, id, 2).await?;
+    let rec = record(&env, &mvault, id, 1).await?;
     assert_eq!(
         (rec.deposited, rec.attempt, rec.amount, rec.sealed_through),
-        (true, 2, p, 1)
+        (true, 2, REWARD, 1)
     );
-    assert_eq!(info(&env, &mvault).await?.available, p);
+    assert_eq!(
+        info(&env, &mvault).await?.available,
+        REWARD,
+        "no double deposit"
+    );
+    assert!(slack(&env).await? >= 0, "no principal paid for fees");
+    assert_closed(&env, &ledger, "delayed deposit").await?;
     env.save_trace("recovery-late-deposit")?;
     Ok(())
 }
@@ -619,130 +858,105 @@ async fn a_seal_overtakes_a_delayed_deposit_and_the_resend_waits_for_its_refund(
 #[tokio::test]
 async fn while_paused_every_exit_still_works_and_only_posting_stops() -> anyhow::Result<()> {
     let env = setup_with(FAULT_WASM).await?;
-    let id = post(&env, 9_503, 1, 600, 900, 3_600).await?;
-    let expiring = post(&env, 2, 2, 30, 60, 120).await?;
-    env.owner
+    let cvault = vault_of(&env, &env.contrib_key).await?;
+    let mvault = vault_of(&env, &env.maint_key).await?;
+    let ledger = Ledger::new(&env, &[cvault.clone(), mvault.clone()]).await?;
+    let id = post(&env, 9_505, Timing::FAULT).await?;
+    let expiring = post(
+        &env,
+        2,
+        Timing {
+            claim_by: 20,
+            claim_secs: 10,
+            merge: 30,
+            grace: 600,
+        },
+    )
+    .await?;
+    let r = env
+        .owner
         .call(env.bounty.id(), "set_paused")
         .args_json(json!({"paused": true}))
         .transact()
-        .await?
-        .into_result()?;
-    let now = now_secs(&env).await?;
-    let t = terms(3, now, 600, 900, 3_600);
-    let proof = posting_proof(
-        &env,
-        &t,
-        &env.maint_keys,
-        env.maint.id(),
-        &nonce(3),
-        now + 1800,
-    )
-    .await?;
-    assert_refused(&try_post(&env, t, proof).await?, "new bounties are paused");
-    assert!(!env
-        .bounty
-        .view("is_nonce_used")
-        .args_json(json!({"maintainer": env.maint.id(), "nonce": nonce(3)}))
-        .await?
-        .json::<bool>()?);
-    // Claim proof, nomination and merge check.
-    claim_and_bind(&env, id, 1).await?;
-    let paid = merged_check(&env, id, 3, true).await?;
+        .await?;
+    env.tally(&r);
+    r.into_result()?;
+    let r = post_next(&env, 3).await?;
+    assert_refused(&r, "new bounties are paused");
+    // Link, claim, submit and the sponsored merge check all still work.
+    let pull = PullSpec::open(&env, GH);
+    claim_and_bind(&env, &env.contrib, &env.contrib_key.clone(), GH, id, &pull).await?;
+    let paid = merged_check(&env, id, &pull, true).await?;
     trace(
         &env,
-        "paused: a sponsored check pays out; both first deposits fail",
+        "paused: a sponsored check pays out; the first deposit fails",
         &paid,
         env.contrib.id(),
     )
     .await?;
-    let cvault = vault_of(&env, &env.contrib_keys).await?;
-    let mvault = vault_of(&env, &env.maint_keys).await?;
-    // Reconcile both (sealed, due), resend both, reconcile both (deposited).
-    for (kind, vault) in [("Payout", &cvault), ("BudgetReturn", &mvault)] {
-        sleep_past_ns(&env, sstate(&env, id, kind).await?.2 + PARTY_DELAY_NS).await?;
-        assert_eq!(
-            answer(&reconcile(&env, &env.contrib, id, kind, 1).await?),
-            "sealed_without_deposit",
-            "{kind}"
-        );
-        snapshot(&env, "paused: sealed", id, kind, vault).await?;
-    }
-    let r = send_due(&env, id).await?;
-    assert_eq!(r.json::<u32>()?, 2, "both resent");
-    for (kind, vault) in [("Payout", &cvault), ("BudgetReturn", &mvault)] {
-        sleep_past_ns(&env, sstate(&env, id, kind).await?.2 + PARTY_DELAY_NS).await?;
-        assert_eq!(
-            answer(&reconcile(&env, &env.maint, id, kind, 2).await?),
-            "deposited",
-            "{kind}"
-        );
-        snapshot(&env, "paused: done", id, kind, vault).await?;
-    }
-    // Withdrawals.
-    let p0 = bal(&env, env.payee.id()).await?;
-    withdraw(
+    // Reconcile (sealed, due), resend, reconcile (deposited), withdraw.
+    let r = reconcile_when_due(&env, &env.contrib, id, "Payout", 1, PARTY_DELAY_NS).await?;
+    assert_eq!(answer(&r), "sealed_without_deposit");
+    assert_eq!(answer_u32(&send_due(&env, id).await?), 1);
+    let r = reconcile_when_due(&env, &env.maint, id, "Payout", 2, PARTY_DELAY_NS).await?;
+    assert_eq!(answer(&r), "deposited");
+    withdraw_exact(
         &env,
-        &env.contrib_keys.primary,
+        &env.contrib_key.clone(),
         &cvault,
         env.payee.id(),
         REWARD,
-    )
-    .await?
-    .into_result()?;
-    withdraw(
-        &env,
-        &env.maint_keys.primary,
-        &mvault,
-        env.payee.id(),
-        BUDGET,
-    )
-    .await?
-    .into_result()?;
-    assert_eq!(bal(&env, env.payee.id()).await? - p0, REWARD + BUDGET);
-    // Settlement after expiry.
-    let claim_by: u64 = get_bounty(&env, expiring).await?["claim_by"]
-        .as_str()
-        .unwrap()
-        .parse()?;
-    wait_past(&env, claim_by + 15 * 60).await?;
-    let r = call(
-        &env.stranger,
-        &env,
-        "settle",
-        json!({"bounty_id": expiring}),
-        0,
+        "paused: payout withdrawn",
     )
     .await?;
+    // The expiring bounty's refund after its claim window.
+    let claim_by = secs(&get_bounty(&env, expiring).await?["claim_by"]);
+    wait_past(&env, claim_by).await?;
+    let r = settle_call(&env, &env.stranger, expiring).await?;
     assert!(r.is_success(), "{:?}", r.failures());
     assert_eq!(settlement(&env, expiring, "Refund").await?["state"], "Done");
     assert_eq!(held(&env).await?, (0, 0));
     assert_eq!(
         info(&env, &mvault).await?.available,
-        REWARD + BUDGET,
+        REWARD,
         "the refund joined the maintainer's vault"
     );
+    withdraw_exact(
+        &env,
+        &env.maint_key.clone(),
+        &mvault,
+        env.maint.id(),
+        REWARD,
+        "paused: refund withdrawn",
+    )
+    .await?;
+    assert_closed(&env, &ledger, "paused").await?;
     env.save_trace("recovery-paused")?;
     Ok(())
 }
 
 #[tokio::test]
-async fn an_empty_float_leaves_checks_refunds_recovery_and_withdrawals_working(
+async fn an_empty_sponsor_float_leaves_checks_refunds_recovery_and_withdrawals_working(
 ) -> anyhow::Result<()> {
     // The float holds exactly one sponsored run.
-    let env = setup_full(FAULT_WASM, "maint", "contrib", None, RUN).await?;
-    let id = post(&env, 9_003, 1, 600, 900, 3_600).await?;
-    let expiring = post(&env, 4, 2, 30, 60, 120).await?;
-    claim_and_bind(&env, id, 1).await?;
-    reply(&env, "reply", Some(pull_reply(&env, id, 3, None))).await?;
-    let r = call(
-        &env.contrib,
+    let env = setup(Opts::new(FAULT_WASM).float(RUN)).await?;
+    let cvault = vault_of(&env, &env.contrib_key).await?;
+    let mvault = vault_of(&env, &env.maint_key).await?;
+    let ledger = Ledger::new(&env, &[cvault.clone(), mvault.clone()]).await?;
+    let (id, pull) = bind(&env, 9_006).await?;
+    let expiring = post(
         &env,
-        "check_merge",
-        json!({"bounty_id": id}),
-        0,
+        4,
+        Timing {
+            claim_by: 20,
+            claim_secs: 10,
+            merge: 30,
+            grace: 600,
+        },
     )
     .await?;
-    assert!(logged(&r, "outcome=pending"), "{:?}", r.logs());
+    let r = check(&env, &env.contrib, id, &pull, 0).await?;
+    assert_eq!(answer(&r), "pending");
     let c = config(&env).await?;
     assert_eq!(
         (u(&c["sponsor_float"]), u(&c["sponsor_spent"])),
@@ -764,8 +978,8 @@ async fn an_empty_float_leaves_checks_refunds_recovery_and_withdrawals_working(
         before,
         "the refusal changed nothing"
     );
-    // A self-funded check pays out; both settlement callbacks are lost; reconcile recovers both.
-    let paid = merged_check(&env, id, 4, false).await?;
+    // A self-funded check pays; the callbacks are lost; reconcile recovers the payout.
+    let paid = merged_check(&env, id, &pull, false).await?;
     trace(
         &env,
         "empty float: a self-funded check pays out, callbacks lost",
@@ -773,63 +987,40 @@ async fn an_empty_float_leaves_checks_refunds_recovery_and_withdrawals_working(
         env.stranger.id(),
     )
     .await?;
-    let cvault = vault_of(&env, &env.contrib_keys).await?;
-    let mvault = vault_of(&env, &env.maint_keys).await?;
-    for (kind, who) in [("Payout", &env.contrib), ("BudgetReturn", &env.maint)] {
-        sleep_past_ns(&env, sstate(&env, id, kind).await?.2 + PARTY_DELAY_NS).await?;
-        let r = reconcile(&env, who, id, kind, 1).await?;
-        assert_eq!(answer(&r), "deposited", "{kind}");
-    }
+    let r = reconcile_when_due(&env, &env.contrib, id, "Payout", 1, PARTY_DELAY_NS).await?;
+    assert_eq!(answer(&r), "deposited");
     assert_eq!(
         held(&env).await?,
-        (REWARD + BUDGET, 0),
+        (REWARD, 0),
         "only the expiring bounty is still held"
     );
-    // The expiry refund still works, and every vault withdraws exactly.
-    let claim_by: u64 = get_bounty(&env, expiring).await?["claim_by"]
-        .as_str()
-        .unwrap()
-        .parse()?;
-    wait_past(&env, claim_by + 15 * 60).await?;
-    let r = call(
-        &env.stranger,
-        &env,
-        "settle",
-        json!({"bounty_id": expiring}),
-        0,
-    )
-    .await?;
+    // The expiry refund works with an empty float, and every vault withdraws exactly.
+    let claim_by = secs(&get_bounty(&env, expiring).await?["claim_by"]);
+    wait_past(&env, claim_by).await?;
+    let r = settle_call(&env, &env.stranger, expiring).await?;
     assert!(r.is_success(), "{:?}", r.failures());
     assert_eq!(settlement(&env, expiring, "Refund").await?["state"], "Done");
     assert_eq!(held(&env).await?, (0, 0));
-    assert_eq!(
-        info(&env, &mvault).await?.available,
-        BUDGET + REWARD + BUDGET
-    );
-    let p0 = bal(&env, env.payee.id()).await?;
-    withdraw(
+    withdraw_exact(
         &env,
-        &env.contrib_keys.backup,
+        &env.contrib_key.clone(),
         &cvault,
         env.payee.id(),
         REWARD,
+        "empty float: payout withdrawn",
     )
-    .await?
-    .into_result()?;
-    withdraw(
+    .await?;
+    withdraw_exact(
         &env,
-        &env.maint_keys.primary,
+        &env.maint_key.clone(),
         &mvault,
-        env.payee.id(),
-        REWARD + 2 * BUDGET,
+        env.maint.id(),
+        REWARD,
+        "empty float: refund withdrawn",
     )
-    .await?
-    .into_result()?;
-    assert_eq!(
-        bal(&env, env.payee.id()).await? - p0,
-        2 * REWARD + 2 * BUDGET
-    );
+    .await?;
     assert_eq!(u(&config(&env).await?["sponsor_float"]), 0);
+    assert_closed(&env, &ledger, "empty float").await?;
     env.save_trace("recovery-empty-float")?;
     Ok(())
 }

@@ -1,36 +1,49 @@
-// The PR bounty network gate for every route, the new read routes' validation, the two-key
-// confirmation rules, and the page text the owner required. No network and no wallet.
+// The PR bounty network gate for every route, the read routes' validation and the views they ask
+// the contract for. No network and no wallet.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { build } from "esbuild";
-import { ed25519 } from "@noble/curves/ed25519.js";
 import { bountiesRoute, bountyContract } from "./bounties.ts";
-import {
-  claimMessage,
-  keyProofHash,
-  keyText,
-  base64,
-} from "../ui/bounty-keys.ts";
-import {
-  KEY_STATEMENTS,
-  LEDGER_NOTE,
-  SEPARATE_CONFIRMATION,
-  TESTED_WALLETS,
-  initialKeyState,
-  keyReducer,
-  submitCheck,
-  type KeyAction,
-  type KeyConfirmState,
-} from "../ui/key-confirm-state.ts";
 
 const CONTRACT = "pr-bounty.proven-funding.testnet";
 const VAULT = `0s${"ab".repeat(20)}`;
 const KEY = `ed25519:${"1".repeat(32)}`;
 
+const TERMS = {
+  reward: "1000000000000000000000000",
+  repo: "proven-test/bounty-pilot",
+  repo_id: "800000001",
+  issue: 9501,
+  base_ref: "main",
+  claim_by: "1794310019",
+  claim_secs: "3600",
+  merge_deadline: "1794313019",
+  grace_secs: "600",
+};
+/** The terms part of a posting-message or posting-digest route. */
+const termsPart = (extra: Record<string, unknown> = {}) =>
+  Buffer.from(
+    JSON.stringify({
+      terms: TERMS,
+      key: KEY,
+      maintainer: "maint.testnet",
+      nonce: "a".repeat(64),
+      ...extra,
+    }),
+  ).toString("base64url");
 const ROUTES = [
   "/api/market/bounties",
   "/api/market/bounties/poster/maint.testnet",
-  `/api/market/bounties/challenge/3/contrib.testnet/1794300000/${KEY}/${KEY}`,
+  "/api/market/bounties/bounty/3",
+  "/api/market/bounties/link/contrib.testnet",
+  "/api/market/bounties/link-challenge/contrib.testnet/1794300000",
+  "/api/market/bounties/link-number/contrib.testnet",
+  "/api/market/bounties/github-owner/900000001",
+  `/api/market/bounties/claim-message/3/contrib.testnet/900000001/${KEY}/1794300000`,
+  `/api/market/bounties/posting-message/${termsPart({ expires_at: "1794300000" })}`,
+  `/api/market/bounties/posting-digest/${termsPart()}`,
+  `/api/market/bounties/vault-of/${KEY}`,
+  "/api/market/bounties/barred/3/contrib.testnet",
+  `/api/market/bounties/posted/maint.testnet/${"0".repeat(64)}`,
   `/api/market/bounties/nonce/maint.testnet/${"0".repeat(64)}`,
   `/api/market/bounties/vault/${VAULT}`,
   `/api/market/bounties/slot/${VAULT}/3/Payout`,
@@ -109,10 +122,10 @@ test("a vault that does not exist yet reads as not existing, never as zero", asy
 });
 
 test("the vault route decodes the vault's own info view", async () => {
-  const info = new Uint8Array(106);
-  info[66] = 2; // n = 2
-  info[74] = 5; // fund = 5
-  info[90] = 9; // available = 9
+  const info = new Uint8Array(73);
+  info[33] = 2; // n = 2
+  info[41] = 5; // fund = 5
+  info[57] = 9; // available = 9
   const { transport } = chain(() => bytes(info));
   const reply = (await bountiesRoute(
     `/api/market/bounties/vault/${VAULT}`,
@@ -125,7 +138,22 @@ test("the vault route decodes the vault's own info view", async () => {
     { n: reply.info.n, fund: reply.info.fund, available: reply.info.available },
     { n: "2", fund: "5", available: "9" },
   );
-  assert.equal(reply.info.primary, `ed25519:${"1".repeat(32)}`);
+  assert.equal(reply.info.key, `ed25519:${"1".repeat(32)}`);
+  assert.deepEqual(Object.keys(reply.info).sort(), [
+    "available",
+    "fund",
+    "key",
+    "n",
+  ]);
+  // The pilot's two-key view is not this vault's.
+  const old = chain(() => bytes(new Uint8Array(106)));
+  await assert.rejects(
+    bountiesRoute(
+      `/api/market/bounties/vault/${VAULT}`,
+      old.transport,
+      CONTRACT,
+    ),
+  );
 });
 
 test("the slot route asks the vault for this contract's record", async () => {
@@ -148,7 +176,7 @@ test("the slot route asks the vault for this contract's record", async () => {
   );
   const args = Buffer.from(String(asked[0]?.params.args_base64), "base64");
   assert.equal(args.subarray(4, 4 + CONTRACT.length).toString(), CONTRACT);
-  assert.equal(args.at(-1), 2, "kind Refund");
+  assert.equal(args.at(-1), 1, "kind Refund");
 });
 
 test("account, block and nonce routes", async () => {
@@ -212,8 +240,33 @@ test("malformed route parts are refused before any read", async () => {
     `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet/${VAULT}/payee.testnet/x/0`,
     `/api/market/bounties/withdrawal/${"1".repeat(44)}/relayer.testnet/maint.testnet/payee.testnet/1/0`,
     `/api/market/bounties/nonce/maint.testnet/${"A".repeat(64)}`,
-    `/api/market/bounties/challenge/3/contrib.testnet/1794300000/secp256k1:abc/${KEY}`,
-    "/api/market/bounties/challenge/3/contrib.testnet/1794300000",
+    "/api/market/bounties/bounty/x",
+    "/api/market/bounties/bounty/3/extra",
+    "/api/market/bounties/link/Bad..Account",
+    "/api/market/bounties/link-challenge/contrib.testnet/soon",
+    "/api/market/bounties/link-challenge/contrib.testnet",
+    "/api/market/bounties/link-number/Bad..Account",
+    "/api/market/bounties/link-number/contrib.testnet/extra",
+    "/api/market/bounties/github-owner/octocat",
+    `/api/market/bounties/claim-message/3/contrib.testnet/900000001/secp256k1:abc/1794300000`,
+    `/api/market/bounties/claim-message/3/contrib.testnet/900000001/${KEY}`,
+    `/api/market/bounties/claim-message/x/contrib.testnet/900000001/${KEY}/1794300000`,
+    "/api/market/bounties/vault-of/secp256k1:abc",
+    "/api/market/bounties/barred/3",
+    "/api/market/bounties/barred/x/contrib.testnet",
+    "/api/market/bounties/posted/maint.testnet/short",
+    "/api/market/bounties/posting-digest/not%20base64",
+    "/api/market/bounties/posting-digest/e30",
+    `/api/market/bounties/posting-digest/${termsPart({ key: "secp256k1:abc" })}`,
+    `/api/market/bounties/posting-digest/${termsPart({ nonce: "A".repeat(64) })}`,
+    `/api/market/bounties/posting-digest/${termsPart({ maintainer: "Bad Account" })}`,
+    `/api/market/bounties/posting-digest/${termsPart({ terms: { ...TERMS, reward: "1e24" } })}`,
+    `/api/market/bounties/posting-digest/${termsPart({ terms: { ...TERMS, repo: "no-slash" } })}`,
+    `/api/market/bounties/posting-digest/${termsPart({ terms: { ...TERMS, issue: "1" } })}`,
+    `/api/market/bounties/posting-digest/${termsPart({ terms: { ...TERMS, issue: 0 } })}`,
+    `/api/market/bounties/posting-digest/${termsPart({ terms: { ...TERMS, base_ref: "a\nb" } })}`,
+    `/api/market/bounties/posting-digest/${termsPart({ terms: { ...TERMS, contributor_github_id: undefined, claim_secs: undefined } })}`,
+    `/api/market/bounties/posting-message/${termsPart()}`,
     "/api/market/bounties/block/extra",
   ])
     await assert.rejects(bountiesRoute(bad, transport, CONTRACT), bad);
@@ -264,238 +317,249 @@ test("a withdrawal route answer is classified against the signed fields", async 
     "pending",
   );
 });
-// ---- The two-key confirmation ----
-
-const secret = (n: number) => new Uint8Array(32).fill(n);
-const pub = (n: number) => keyText(ed25519.getPublicKey(secret(n)));
-const message = (state: KeyConfirmState, signing: "primary" | "backup") =>
-  claimMessage(
-    "testnet",
-    CONTRACT,
-    state.actor as string,
-    3,
-    "900000001",
-    { primary: state.primary as string, backup: state.backup as string },
-    state.expiresAt as number,
-    signing,
-  );
-const sign = (
-  state: KeyConfirmState,
-  signing: "primary" | "backup",
-  key: number,
-): KeyAction => {
-  const text = message(state, signing);
-  return {
-    type: "signed",
-    signing,
-    publicKey: pub(key),
-    signature: base64(ed25519.sign(keyProofHash(text, CONTRACT), secret(key))),
-    message: text,
-    contract: CONTRACT,
-  };
-};
-const run = (actions: ((s: KeyConfirmState) => KeyAction)[]) =>
-  actions.reduce((s, a) => keyReducer(s, a(s)), initialKeyState);
-
-test("both proofs must verify, by the named keys, before submission is allowed", () => {
-  const start = (s: KeyConfirmState): KeyAction => ({
-    type: "start",
-    actor: "contrib.testnet",
-    expiresAt: 2_000,
-  });
-  const ready = run([
-    () => ({ type: "primary", key: pub(1) }),
-    () => ({ type: "backup", key: pub(2) }),
-    start,
-    (s) => sign(s, "backup", 2),
-    (s) => sign(s, "primary", 1),
-  ]);
-  assert.equal(ready.error, null);
-  assert.deepEqual(submitCheck(ready, "contrib.testnet", 1_000), {
-    ok: false,
-    reason: "separate",
-  });
-  const confirmed = keyReducer(ready, { type: "separate", value: true });
-  assert.deepEqual(submitCheck(confirmed, "contrib.testnet", 1_000), {
-    ok: true,
-  });
-  // Another connected account: both proofs are dropped.
-  const other = submitCheck(confirmed, "someone.testnet", 1_000);
-  assert.deepEqual(other, { ok: false, reason: "actor" });
-  assert.deepEqual(
-    keyReducer(confirmed, { type: "refused", check: other }).proofs,
-    {},
-  );
-  // Expired at the moment of submission.
-  const late = submitCheck(confirmed, "contrib.testnet", 2_000);
-  assert.deepEqual(late, { ok: false, reason: "expired" });
-  assert.deepEqual(
-    keyReducer(confirmed, { type: "refused", check: late }).proofs,
-    {},
-  );
-});
-
-test("a wrong key, a wrong signature or equal keys never become a proof", () => {
-  const prepared = run([
-    () => ({ type: "primary", key: pub(1) }),
-    () => ({ type: "backup", key: pub(2) }),
-    () => ({ type: "start", actor: "contrib.testnet", expiresAt: 2_000 }),
-    (s) => sign(s, "backup", 2),
-  ]);
-  assert.ok(prepared.proofs.backup);
-  // The primary proof signed by another key: refused, the backup proof kept.
-  const wrongKey = keyReducer(prepared, sign(prepared, "primary", 3));
-  assert.equal(wrongKey.proofs.primary, undefined);
-  assert.ok(wrongKey.proofs.backup);
-  assert.match(wrongKey.error ?? "", /primary key/);
-  // A signature over another message, presented with the right key.
-  const bad = sign(prepared, "primary", 1) as Extract<
-    KeyAction,
-    { type: "signed" }
-  >;
-  const swapped = keyReducer(prepared, {
-    ...bad,
-    message: message(prepared, "backup"),
-  });
-  assert.equal(swapped.proofs.primary, undefined);
-  // A key that is not ed25519.
-  const notEd = keyReducer(prepared, { ...bad, publicKey: "secp256k1:abc" });
-  assert.equal(notEd.proofs.primary, undefined);
-  // The wallet closed its prompt: nothing is lost.
-  const rejected = keyReducer(prepared, {
-    type: "rejected",
-    signing: "primary",
-  });
-  assert.ok(rejected.proofs.backup);
-  assert.deepEqual(submitCheck(rejected, "contrib.testnet", 1_000), {
-    ok: false,
-    reason: "missing",
-  });
-  // Equal keys.
-  const same = keyReducer(
-    keyReducer(initialKeyState, { type: "primary", key: pub(1) }),
-    {
-      type: "backup",
-      key: pub(1),
-    },
-  );
-  assert.equal(same.backup, null);
-  assert.match(same.error ?? "", /must differ/);
-});
-
-// ---- Page text ----
-
-/** Bundles a component with its own React, and renders it with that same React. */
-const bundle = async (entry: string) => {
-  const path = new URL(entry, import.meta.url).pathname;
-  const built = await build({
-    stdin: {
-      contents: `export * from ${JSON.stringify(path)};
-export { createElement } from "react";
-export { renderToStaticMarkup } from "react-dom/server";`,
-      resolveDir: new URL("..", import.meta.url).pathname,
-      loader: "ts",
-    },
-    bundle: true,
-    write: false,
-    platform: "node",
-    format: "esm",
-    jsx: "automatic",
-    // React's server renderer is CommonJS and requires Node built-ins.
-    banner: {
-      js: `import { createRequire } from "node:module"; const require = createRequire(${JSON.stringify(path)});`,
-    },
-  });
-  const module = await import(
-    `data:text/javascript;base64,${Buffer.from(built.outputFiles[0]!.text).toString("base64")}`
-  );
-  return {
-    ...module,
-    render: (component: unknown, props: unknown) =>
-      module.renderToStaticMarkup(
-        module.createElement(component, props),
-      ) as string,
-  };
-};
-
-test("the confirmation panel states every required fact, and a wallet that cannot sign keeps it disabled", async () => {
-  const ui = await bundle("../ui/KeyConfirm.tsx");
-  const render = (wallet: Record<string, unknown>) =>
-    ui.render(ui.KeyConfirm, {
-      wallet,
-      contract: CONTRACT,
-      vaultCodeHash: "11111111111111111111111111111111",
-      message: () => "",
-      state: initialKeyState,
-      dispatch: () => {},
-      busy: false,
-      role: "contributor",
+// ---- Views and the arguments they are asked with ----
+/** A fake contract whose views answer `answers[method]`, recording every call's arguments. */
+function views(answers: Record<string, unknown>) {
+  const asked: { method: string; account: string; args: unknown }[] = [];
+  const transport = (async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body));
+    const method = body.params.method_name as string;
+    asked.push({
+      method,
+      account: body.params.account_id,
+      args: JSON.parse(
+        Buffer.from(body.params.args_base64, "base64").toString(),
+      ),
     });
-  const able = render({
-    accountId: "contrib.testnet",
-    label: "Test wallet",
-    signNep413: async () => ({}),
-  });
-  const html = able.replaceAll("&#x27;", "'");
-  for (const statement of KEY_STATEMENTS)
-    assert.ok(html.includes(statement), statement);
-  assert.ok(html.includes(SEPARATE_CONFIRMATION));
-  assert.ok(html.includes(`signing test: ${TESTED_WALLETS}`));
-  assert.ok(html.includes(LEDGER_NOTE));
-  const unable = render({
-    accountId: "contrib.testnet",
-    label: "Old wallet",
-  }).replaceAll("&#x27;", "'");
-  assert.ok(unable.includes("Old wallet cannot sign key proofs"));
-  const buttons = unable.match(/<button[^>]*>/g) ?? [];
-  assert.ok(buttons.length > 0);
-  for (const b of buttons) assert.match(b, /disabled=""/);
-  assert.match(unable, /<input type="checkbox"[^>]*disabled=""/);
-  // The backup key's account gets its own signing card; a wallet that cannot sign gets none.
-  const signer = (wallet: Record<string, unknown>) =>
-    ui.render(ui.BackupSigner, { wallet, contract: CONTRACT, busy: false });
-  assert.match(
-    signer({
-      accountId: "backup.testnet",
-      label: "Test wallet",
-      signNep413: async () => ({}),
-    }).replaceAll("&#x27;", "'"),
-    /Offer Test wallet's key as a backup key/,
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "x",
+        result: { result: [...Buffer.from(JSON.stringify(answers[method]))] },
+      }),
+    );
+  }) as typeof fetch;
+  return { asked, transport };
+}
+const route = (
+  path: string,
+  answers: Record<string, unknown>,
+): Promise<unknown> => {
+  const fake = views(answers);
+  return bountiesRoute(
+    `/api/market/bounties/${path}`,
+    fake.transport,
+    CONTRACT,
   );
-  assert.equal(
-    signer({ accountId: "backup.testnet", label: "Old wallet" }),
-    "",
+};
+const lastAsk = async (path: string, answers: Record<string, unknown>) => {
+  const fake = views(answers);
+  const reply = await bountiesRoute(
+    `/api/market/bounties/${path}`,
+    fake.transport,
+    CONTRACT,
+  );
+  assert.equal(fake.asked.length, 1, path);
+  return { reply, ask: fake.asked[0]! };
+};
+
+test("each new route asks the contract's own view with the contract's argument names", async () => {
+  const cases: [string, string, unknown, Record<string, unknown>, unknown][] = [
+    [
+      "bounty/3",
+      "get_bounty",
+      { status: "Open" },
+      { bounty_id: 3 },
+      { bounty: { status: "Open" } },
+    ],
+    [
+      "link/contrib.testnet",
+      "get_link",
+      { active: null, pending: null },
+      { wallet: "contrib.testnet" },
+      {
+        wallet: "contrib.testnet",
+        link: { active: null, pending: null },
+      },
+    ],
+    [
+      "link-challenge/contrib.testnet/1794300000",
+      "link_challenge",
+      "proven-link:abc",
+      { wallet: "contrib.testnet", expires_at: "1794300000" },
+      { challenge: "proven-link:abc" },
+    ],
+    [
+      "link-number/contrib.testnet",
+      "get_link_number",
+      "3",
+      { wallet: "contrib.testnet" },
+      { wallet: "contrib.testnet", number: "3" },
+    ],
+    [
+      "github-owner/900000001",
+      "github_owner_of",
+      "owner.testnet",
+      { github_id: "900000001" },
+      { github_id: "900000001", wallet: "owner.testnet" },
+    ],
+    [
+      `claim-message/3/contrib.testnet/900000001/${KEY}/1794300000`,
+      "claim_key_message",
+      "the text",
+      {
+        bounty_id: 3,
+        wallet: "contrib.testnet",
+        github_id: "900000001",
+        key: KEY,
+        expires_at: "1794300000",
+      },
+      { message: "the text" },
+    ],
+    [
+      `vault-of/${KEY}`,
+      "vault_of",
+      VAULT,
+      { key: KEY },
+      { key: KEY, vault: VAULT },
+    ],
+    [
+      "barred/3/contrib.testnet",
+      "is_barred",
+      true,
+      { bounty_id: 3, wallet: "contrib.testnet" },
+      { barred: true },
+    ],
+  ];
+  for (const [path, method, answer, args, expected] of cases) {
+    const { reply, ask } = await lastAsk(path, { [method]: answer });
+    assert.equal(ask.method, method, path);
+    assert.equal(ask.account, CONTRACT, path);
+    assert.deepEqual(ask.args, args, path);
+    assert.deepEqual(reply, expected, path);
+  }
+  // A GitHub id that no wallet holds is reported as no wallet, not as an error.
+  assert.deepEqual(
+    (await lastAsk("github-owner/900000001", { github_owner_of: null })).reply,
+    { github_id: "900000001", wallet: null },
   );
 });
 
-test("the vault panel says browser withdrawal is pending and the sponsor note is shown", async () => {
-  const panel = await bundle("../ui/VaultPanel.tsx");
-  const BROWSER_WITHDRAWAL_SUPPORT = panel.BROWSER_WITHDRAWAL_SUPPORT as string;
-  assert.match(BROWSER_WITHDRAWAL_SUPPORT, /pending/);
-  const html = panel.render(panel.VaultPanel, {
-    vault: VAULT,
-    network: "testnet",
-    wallet: null,
-    run: async () => {},
-    busy: false,
-    near: (y: string) => `${y}`,
-    shared: 2,
+test("posting views are asked with the exact terms, the key, the maintainer and the nonce", async () => {
+  const wanted = {
+    terms: TERMS,
+    key: KEY,
+    maintainer: "maint.testnet",
+    nonce: "a".repeat(64),
+  };
+  const digest = await lastAsk(`posting-digest/${termsPart()}`, {
+    posting_terms_digest: "d".repeat(64),
   });
-  assert.ok(html.includes(BROWSER_WITHDRAWAL_SUPPORT));
-  assert.equal(
-    (html.match(/unavailable/g) ?? []).length,
-    3,
-    "no read yet: unavailable, never zero",
+  assert.equal(digest.ask.method, "posting_terms_digest");
+  assert.deepEqual(digest.ask.args, wanted);
+  assert.deepEqual(digest.reply, { digest: "d".repeat(64) });
+  const message = await lastAsk(
+    `posting-message/${termsPart({ expires_at: "1794300000" })}`,
+    { posting_key_message: "the text" },
   );
-  assert.match(html, /shown for the vault as a whole/);
-  const page = await bundle("../ui/PrBounties.tsx");
-  const note = page
-    .render(page.SponsorNote, {
-      config: { sponsor: "sponsor.testnet", budget: "30000000000000000000000" },
-    })
-    .replaceAll("&#x27;", "'");
-  assert.match(note, /paid by the owner's sponsor float/);
-  assert.match(note, /unused\s+compute returns to the owner's sponsor account/);
-  assert.match(note, /sponsor\.testnet/);
-  assert.match(note, /returns in full to the maintainer's vault/);
+  assert.equal(message.ask.method, "posting_key_message");
+  assert.deepEqual(message.ask.args, { ...wanted, expires_at: "1794300000" });
+  assert.deepEqual(message.reply, { message: "the text" });
+  // Fields the contract does not take are dropped, never forwarded.
+  const extra = await lastAsk(
+    `posting-digest/${termsPart({ stray: "x", terms: { ...TERMS, stray: 1 } })}`,
+    { posting_terms_digest: "d" },
+  );
+  assert.deepEqual(extra.ask.args, wanted);
+  // The message needs its expiry.
+  await assert.rejects(
+    route(`posting-message/${termsPart()}`, { posting_key_message: "x" }),
+  );
+});
+
+test("the old two-key claim challenge route no longer exists", async () => {
+  const fake = views({});
+  await assert.rejects(
+    bountiesRoute(
+      `/api/market/bounties/challenge/3/contrib.testnet/1794300000/${KEY}/${KEY}`,
+      fake.transport,
+      CONTRACT,
+    ),
+    /Route not found/,
+  );
+  assert.equal(fake.asked.length, 0);
+});
+
+test("a posted bounty is found by maintainer and nonce across pages, or reported as none", async () => {
+  const nonce = "b".repeat(64);
+  const row = (id: number, buyer: string, posting_nonce: string) => [
+    id,
+    { buyer, posting_nonce },
+  ];
+  const pages: unknown[][] = [
+    Array.from({ length: 50 }, (_, i) =>
+      row(i, "other.testnet", "0".repeat(64)),
+    ),
+    [row(50, "maint.testnet", "0".repeat(64)), row(51, "maint.testnet", nonce)],
+  ];
+  const fake = (() => {
+    const asked: { from_id: number; limit: number }[] = [];
+    const transport = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      const args = JSON.parse(
+        Buffer.from(body.params.args_base64, "base64").toString(),
+      );
+      asked.push(args);
+      const answer = pages[args.from_id / 50] ?? [];
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: "x",
+          result: { result: [...Buffer.from(JSON.stringify(answer))] },
+        }),
+      );
+    }) as typeof fetch;
+    return { asked, transport };
+  })();
+  const path = (maintainer: string, n: string) =>
+    `/api/market/bounties/posted/${maintainer}/${n}`;
+  assert.deepEqual(
+    await bountiesRoute(path("maint.testnet", nonce), fake.transport, CONTRACT),
+    { id: 51 },
+  );
+  assert.deepEqual(fake.asked, [
+    { from_id: 0, limit: 50 },
+    { from_id: 50, limit: 50 },
+  ]);
+  // The same nonce under another maintainer is not this posting.
+  assert.deepEqual(
+    await bountiesRoute(
+      path("other2.testnet", nonce),
+      fake.transport,
+      CONTRACT,
+    ),
+    { id: null },
+  );
+});
+
+test("a failed view is an error, never an empty answer", async () => {
+  const failing = chain(() => ({
+    jsonrpc: "2.0",
+    id: "x",
+    error: { cause: { name: "TIMEOUT_ERROR" } },
+  }));
+  for (const path of [
+    "bounty/3",
+    "link/contrib.testnet",
+    "barred/3/contrib.testnet",
+    `vault-of/${KEY}`,
+  ])
+    await assert.rejects(
+      bountiesRoute(
+        `/api/market/bounties/${path}`,
+        failing.transport,
+        CONTRACT,
+      ),
+      path,
+    );
 });

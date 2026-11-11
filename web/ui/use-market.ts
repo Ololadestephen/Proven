@@ -10,30 +10,12 @@ import {
 } from "./action-guard.ts";
 import {
   guardedCall,
+  readJournal,
   reconcilePending,
   releaseUnapplied,
 } from "./pending-actions.ts";
-function readPending(): PendingAction | null {
-  try {
-    const value = localStorage.getItem(PENDING_KEY);
-    if (!value) return null;
-    const parsed = JSON.parse(value) as PendingAction;
-    if (
-      typeof parsed.account !== "string" ||
-      typeof parsed.before !== "string" ||
-      typeof parsed.label !== "string"
-    )
-      throw new Error("Invalid pending action");
-    return parsed;
-  } catch {
-    return {
-      account: "unknown",
-      before: "",
-      label: "An earlier action needs reconciliation",
-      createdAt: 0,
-    };
-  }
-}
+import { useBountyActions } from "./use-bounty-actions.ts";
+const readPending = () => readJournal(localStorage, PENDING_KEY);
 async function readFreshMarket(): Promise<Market> {
   const value = await api<Market>("/api/market");
   if (value.snapshot_stale)
@@ -56,6 +38,14 @@ export function useMarket(bidId?: number) {
   const [clock, setClock] = useState(Date.now());
   const { wallet: baseWallet, connect, connecting, dev, useDev } = useWallet();
   const intentRef = useRef<PendingAction | null>(null);
+  // The PR bounty page: its own wallet, run function and journal, sharing the busy line.
+  const bounty = useBountyActions({
+    wallet: baseWallet,
+    gate: gate.current,
+    setBusy,
+    setError,
+    setNotice,
+  });
   const wallet = useMemo<Wallet | null>(
     () =>
       baseWallet
@@ -250,5 +240,6 @@ export function useMarket(bidId?: number) {
     run,
     refresh,
     releasePending,
+    bounty,
   };
 }

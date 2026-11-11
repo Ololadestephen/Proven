@@ -56,6 +56,14 @@ export interface FormViewProps {
   onReward: (value: string) => void;
   onAdvanced: (key: keyof Advanced, value: string) => void;
   onRetry: () => void;
+  /** An action is running, so nothing new may start. */
+  busy?: boolean;
+  /** What the wallet's message-key check said, once it has run. */
+  keyCheck?: string | null;
+  /** Asks the wallet which key it signs messages with. Absent: the page offers no key check. */
+  onCheckKey?: () => void;
+  /** Posts the reviewed bounty. Absent: the Post button stays off. */
+  onPost?: (review: Review) => void;
 }
 
 function FieldError({
@@ -96,16 +104,18 @@ function Summary({ review }: { review: Review }) {
       <dd>
         Open for claims until {utc(d.claim_by)}. A claim lasts{" "}
         {duration(d.claim_secs)}. The pull request must be merged before{" "}
-        {utc(d.merge_deadline)}; merges are checked until {utc(d.checks_until)}{" "}
-        ({duration(d.grace_secs)} grace).
+        {utc(d.merge_deadline)}. Merges are checked until {utc(d.checks_until)}.
+        A check after the deadline that finds it not merged lets you be refunded
+        from {utc(d.grace_ends)} ({duration(d.grace_secs)} grace).
       </dd>
       <dt>If checks fail</dt>
       <dd>
-        A failed look at GitHub changes nothing and can be repeated. If the
-        merge cannot be read at all until {utc(d.hard_refund_at)} (
-        {duration(REFUND_CAP_SECS)} after the checking window), the reward is
-        refunded to you even if the pull request was merged on time, and the
-        refund is final.
+        A check that cannot read GitHub (a timeout or no result) changes nothing
+        and can be repeated. A merge before the deadline is paid at the first
+        check that reads it, even after the grace. If no check reads GitHub
+        before {utc(d.hard_refund_at)} ({duration(REFUND_CAP_SECS)} after the
+        grace), the reward is refunded to you even if the pull request was
+        merged on time, and the refund is final.
       </dd>
       <dt>Fees</dt>
       <dd>
@@ -178,6 +188,8 @@ export function PostFormView(props: FormViewProps) {
     poster: props.poster,
   });
   const review = outcome?.ok ? outcome.review : null;
+  const idle = !block && !props.busy;
+  const keyChecked = !!props.keyCheck;
   return (
     <section className="workspace-card">
       <h2>Post a bounty</h2>
@@ -253,11 +265,26 @@ export function PostFormView(props: FormViewProps) {
           ))}
         </div>
       </details>
+      {props.onCheckKey ? (
+        <>
+          <button
+            type="button"
+            className="button button-secondary"
+            disabled={!idle || !review}
+            aria-describedby="post-blocked"
+            onClick={props.onCheckKey}
+          >
+            Check which key my wallet signs messages with
+          </button>
+          {props.keyCheck ? <p role="status">{props.keyCheck}</p> : null}
+        </>
+      ) : null}
       <button
         type="button"
         className="button button-primary"
-        disabled
+        disabled={!idle || !review || !keyChecked || !props.onPost}
         aria-describedby="post-blocked"
+        onClick={() => review && props.onPost?.(review)}
       >
         {review ? `Post and lock ${near(review.locked)}` : "Post and lock"}
       </button>
@@ -265,6 +292,9 @@ export function PostFormView(props: FormViewProps) {
         {[
           review ? "" : "Enter an issue link and a reward to see the review.",
           block,
+          review && !block && props.onCheckKey && !keyChecked
+            ? "Check your wallet's key first. The money from a refund goes to a vault that this key alone controls."
+            : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -312,13 +342,15 @@ export function useIssueMetadata(
   return { meta, retry: () => setAttempt((n) => n + 1) };
 }
 
-export function PostBountyForm(props: {
-  limits: Limits;
-  pilot: Pilot;
-  fees: FeeSchedule;
-  connected: boolean;
-  poster: boolean;
-}) {
+export function PostBountyForm(
+  props: {
+    limits: Limits;
+    pilot: Pilot;
+    fees: FeeSchedule;
+    connected: boolean;
+    poster: boolean;
+  } & Pick<FormViewProps, "busy" | "keyCheck" | "onCheckKey" | "onPost">,
+) {
   const [link, setLink] = useState("");
   const [rewardText, setRewardText] = useState("");
   const [advanced, setAdvanced] = useState<Advanced>(ADVANCED_DEFAULTS);

@@ -1,10 +1,10 @@
 //! Proven's NEP-616 settlement vault.
 //!
-//! Address: derived from this code (a global contract, by hash) and four initial entries:
-//! `k` the primary ed25519 public key and `b` the backup key (each: curve byte 0, then 32 bytes),
-//! `n` the next withdrawal number (u64 LE, 0) and `f` the storage fund (u128 LE, 0). The two keys,
-//! not any account name, are the recipient: a signature by either key, and nothing else, moves
-//! the money.
+//! Address: derived from this code (a global contract, by hash) and three initial entries:
+//! `k` the withdrawal ed25519 public key (curve byte 0, then 32 bytes), `n` the next withdrawal
+//! number (u64 LE, 0) and `f` the storage fund (u128 LE, 0). The key, not any account name, is
+//! the recipient: a signature by it, and nothing else, moves the money. There is no second key,
+//! no automatic forward to a wallet and no sweep: a lost key cannot be replaced.
 //!
 //! Money in the vault is the recipient's, except the storage fund `f`, which always equals the
 //! vault's storage in bytes times 10^19 yoctoNEAR once anything is written. Every write that grows
@@ -16,9 +16,9 @@
 //! - `seal(bounty u64, kind u8, attempt u32)` (borsh), payable fee: with no deposit, seals every
 //!   attempt up to `attempt`, so a later deposit for them fails; returns the 25-byte record.
 //! - `withdraw({"to","amount","n","deadline","signature"})` (JSON): sends `amount` to `to` if the
-//!   primary or the backup key signed exactly that (NEP-413, `logic::withdraw_message`) for this
-//!   chain, vault, number and a deadline at most 15 minutes ahead. Anyone may submit it.
-//! - views: `info` (106 bytes) and `slot(issuer, bounty, kind)` (borsh in, 25 bytes out).
+//!   key signed exactly that (NEP-413, `logic::withdraw_message`) for this chain, vault, number
+//!   and a deadline at most 15 minutes ahead. Anyone may submit it.
+//! - views: `info` (73 bytes) and `slot(issuer, bounty, kind)` (borsh in, 25 bytes out).
 //!
 //! The vault has no access key and never deploys code, adds a key, deletes itself or pays anyone
 //! except an accepted withdrawal or a fee refund.
@@ -278,8 +278,7 @@ mod contract {
             logic::is_account_id(w.to) && w.to != vault,
             logic::E_DESTINATION,
         );
-        let primary = read_key(b"k");
-        let backup = read_key(b"b");
+        let key = read_key(b"k");
         require(w.n == read_u64(b"n"), logic::E_NUMBER);
         ok(logic::check_deadline(
             unsafe { sys::block_timestamp() },
@@ -309,13 +308,9 @@ mod contract {
         let mut hash = [0u8; 32];
         unsafe { sys::sha256(payload.len() as u64, payload.as_ptr() as u64, REG) };
         take(&mut hash);
-        let signer: &[u8] = if verifies(&w.signature, &hash, &ok(logic::ed25519_key(&primary))) {
-            b"primary"
-        } else if verifies(&w.signature, &hash, &ok(logic::ed25519_key(&backup))) {
-            b"backup"
-        } else {
-            fail(logic::E_SIGNATURE)
-        };
+        if !verifies(&w.signature, &hash, &ok(logic::ed25519_key(&key))) {
+            fail(logic::E_SIGNATURE);
+        }
 
         let available = balance_of(sys::account_balance).saturating_sub(read_u128(b"f"));
         require(w.amount > 0 && w.amount <= available, logic::E_BALANCE);
@@ -327,8 +322,7 @@ mod contract {
         ok(nw.put_dec(u128::from(w.n)));
         let n_len = nw.len();
         log(&[
-            b"vault_withdraw key=",
-            signer,
+            b"vault_withdraw key=withdrawal",
             b" n=",
             head(&nb, n_len),
             b" to=",
@@ -338,11 +332,10 @@ mod contract {
 
     #[no_mangle]
     pub extern "C" fn info() {
-        let primary = read_key(b"k");
-        let backup = read_key(b"b");
+        let key = read_key(b"k");
         let fund = read_u128(b"f");
         let available = balance_of(sys::account_balance).saturating_sub(fund);
-        let out = logic::encode_info(&primary, &backup, read_u64(b"n"), fund, available);
+        let out = logic::encode_info(&key, read_u64(b"n"), fund, available);
         unsafe { sys::value_return(out.len() as u64, out.as_ptr() as u64) };
     }
 

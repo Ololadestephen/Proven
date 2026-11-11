@@ -1,8 +1,9 @@
 // Read-only routes for the PR merge bounty page: the bounty contract's configuration and bounties,
-// a maintainer's posting permission, a wallet's claim challenge, a vault's balance and deposit
-// records, whether an account exists, the latest block time, and a withdrawal's classified
-// outcome. Testnet only for the pilot; the contract is named by PROVEN_PR_BOUNTY_CONTRACT. Nothing
-// here signs or sends a transaction, and with no contract configured nothing is read at all.
+// a maintainer's posting permission, a wallet's GitHub link and link challenge, the withdrawal-key
+// messages the contract itself builds, a vault's balance and deposit records, whether an account
+// exists, the latest block time, and a withdrawal's classified outcome. Testnet only for the
+// pilot; the contract is named by PROVEN_PR_BOUNTY_CONTRACT. Nothing here signs or sends a
+// transaction, and with no contract configured nothing is read at all.
 import { rpc, rpcAnswer } from "./read.ts";
 import { ReadError } from "./model.ts";
 import {
@@ -22,6 +23,9 @@ const DECIMAL = /^[0-9]{1,20}$/;
 const VAULT = /^0s[0-9a-f]{40}$/;
 const KEY = /^ed25519:[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const NONCE = /^[0-9a-f]{64}$/;
+const REPO = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
+const BASE_REF = /^[^\u0000-\u001f\u007f]{1,255}$/u;
+const TERMS_PART = /^[A-Za-z0-9_-]{1,2048}$/;
 const decoded = (part: string) => {
   try {
     return decodeURIComponent(part);
@@ -128,8 +132,7 @@ async function vaultRoute(vault: string, transport: typeof fetch) {
     vault,
     exists: true,
     info: {
-      primary: keyText(info.primary),
-      backup: keyText(info.backup),
+      key: keyText(info.key),
       n: info.n.toString(),
       fund: info.fund.toString(),
       available: info.available.toString(),
@@ -236,10 +239,110 @@ async function withdrawalRoute(
 }
 
 /**
- * GET /api/market/bounties, …/poster/<account>,
- * …/challenge/<bounty>/<wallet>/<expires_at>/<primary>/<backup>, …/nonce/<maintainer>/<nonce>,
- * …/vault/<vault>, …/slot/<vault>/<bounty>/<kind>, …/account/<account>, …/block and
- * …/withdrawal/<tx_hash>/<sender>/<vault>/<to>/<amount>/<n>.
+ * The views that build a posting's digest or message take the whole terms. A path cannot carry
+ * them (the server refuses query strings), so they travel as one base64url JSON part:
+ * `{terms, key, maintainer, nonce[, expires_at]}`. Every field is checked before any read.
+ */
+function postingRequest(part: string, withExpiry: boolean) {
+  if (!TERMS_PART.test(part))
+    throw new ReadError("Send the terms as base64url JSON.");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+  } catch {
+    throw new ReadError("Send the terms as base64url JSON.");
+  }
+  const bad = () => new ReadError("The posting terms are not valid.");
+  const text = (o: Record<string, unknown>, k: string) => {
+    const v = o[k];
+    if (typeof v !== "string") throw bad();
+    return v;
+  };
+  if (typeof parsed !== "object" || parsed === null) throw bad();
+  const r = parsed as Record<string, unknown>;
+  const t = r.terms;
+  if (typeof t !== "object" || t === null) throw bad();
+  const terms = t as Record<string, unknown>;
+  const decimal = (o: Record<string, unknown>, k: string, max = 20) => {
+    const v = text(o, k);
+    if (!new RegExp(`^[0-9]{1,${max}}$`).test(v)) throw bad();
+    return v;
+  };
+  const repo = text(terms, "repo");
+  const baseRef = text(terms, "base_ref");
+  const issue = terms.issue;
+  const key = text(r, "key");
+  const maintainer = text(r, "maintainer");
+  const nonce = text(r, "nonce");
+  if (
+    !REPO.test(repo) ||
+    !BASE_REF.test(baseRef) ||
+    typeof issue !== "number" ||
+    !Number.isSafeInteger(issue) ||
+    issue < 1 ||
+    !KEY.test(key) ||
+    !ACCOUNT.test(maintainer) ||
+    !NONCE.test(nonce)
+  )
+    throw bad();
+  const request: Record<string, unknown> = {
+    terms: {
+      reward: decimal(terms, "reward", 40),
+      repo,
+      repo_id: decimal(terms, "repo_id"),
+      issue,
+      base_ref: baseRef,
+      claim_by: decimal(terms, "claim_by"),
+      claim_secs: decimal(terms, "claim_secs"),
+      merge_deadline: decimal(terms, "merge_deadline"),
+      grace_secs: decimal(terms, "grace_secs"),
+    },
+    key,
+    maintainer,
+    nonce,
+  };
+  if (withExpiry) request.expires_at = decimal(r, "expires_at");
+  return request;
+}
+const BOUNTY_PAGE = 50;
+const MAX_BOUNTY_PAGES = 20;
+/** The id of the bounty this maintainer posted with this nonce, or null when there is none. */
+async function postedByNonce(
+  contract: string,
+  maintainer: string,
+  nonce: string,
+  transport: typeof fetch,
+): Promise<number | null> {
+  for (let page = 0; page < MAX_BOUNTY_PAGES; page++) {
+    const rows = await view(
+      contract,
+      "get_bounties",
+      { from_id: page * BOUNTY_PAGE, limit: BOUNTY_PAGE },
+      transport,
+    );
+    if (!Array.isArray(rows))
+      throw new ReadError("The bounty list is unreadable.");
+    for (const row of rows) {
+      const [id, bounty] = Array.isArray(row) ? row : [];
+      if (
+        typeof id === "number" &&
+        bounty?.buyer === maintainer &&
+        bounty?.posting_nonce === nonce
+      )
+        return id;
+    }
+    if (rows.length < BOUNTY_PAGE) return null;
+  }
+  throw new ReadError("There are too many bounties to search from here.");
+}
+/**
+ * GET /api/market/bounties, …/bounty/<id>, …/poster/<account>, …/link/<wallet>,
+ * …/link-challenge/<wallet>/<expires_at>, …/github-owner/<github_id>,
+ * …/claim-message/<bounty>/<wallet>/<github_id>/<key>/<expires_at>,
+ * …/posting-message/<terms> and …/posting-digest/<terms> (terms as base64url JSON),
+ * …/vault-of/<key>, …/barred/<bounty>/<wallet>, …/nonce/<maintainer>/<nonce>,
+ * …/posted/<maintainer>/<nonce>, …/vault/<vault>, …/slot/<vault>/<bounty>/<kind>,
+ * …/account/<account>, …/block and …/withdrawal/<tx_hash>/<sender>/<vault>/<to>/<amount>/<n>.
  */
 export async function bountiesRoute(
   path: string,
@@ -263,39 +366,130 @@ export async function bountiesRoute(
       poster: await view(contract, "is_poster", { account }, transport),
     };
   }
-  if (parts[0] === "challenge" && parts.length === 6) {
-    const [
-      ,
-      bounty = "",
-      wallet = "",
-      expires = "",
-      primary = "",
-      backup = "",
-    ] = parts.map(decoded);
-    if (
-      !DECIMAL.test(bounty) ||
-      !ACCOUNT.test(wallet) ||
-      !DECIMAL.test(expires) ||
-      !KEY.test(primary) ||
-      !KEY.test(backup)
-    )
-      throw new ReadError(
-        "Name the bounty, the wallet, expires_at and both public keys.",
-      );
+  if (parts[0] === "bounty" && parts.length === 2) {
+    const id = parts[1] ?? "";
+    if (!DECIMAL.test(id)) throw new ReadError("Name a bounty number.");
+    return {
+      bounty: await view(
+        contract,
+        "get_bounty",
+        { bounty_id: Number(id) },
+        transport,
+      ),
+    };
+  }
+  if (parts[0] === "link" && parts.length === 2) {
+    const wallet = decoded(parts[1] ?? "");
+    if (!ACCOUNT.test(wallet)) throw new ReadError("Name a NEAR account.");
+    return {
+      wallet,
+      link: await view(contract, "get_link", { wallet }, transport),
+    };
+  }
+  if (parts[0] === "link-number" && parts.length === 2) {
+    const wallet = decoded(parts[1] ?? "");
+    if (!ACCOUNT.test(wallet)) throw new ReadError("Name a NEAR account.");
+    return {
+      wallet,
+      number: await view(contract, "get_link_number", { wallet }, transport),
+    };
+  }
+  if (parts[0] === "link-challenge" && parts.length === 3) {
+    const wallet = decoded(parts[1] ?? "");
+    const expires = decoded(parts[2] ?? "");
+    if (!ACCOUNT.test(wallet) || !DECIMAL.test(expires))
+      throw new ReadError("Name the wallet and expires_at.");
     return {
       challenge: await view(
         contract,
-        "claim_challenge",
+        "link_challenge",
+        { wallet, expires_at: expires },
+        transport,
+      ),
+    };
+  }
+  if (parts[0] === "github-owner" && parts.length === 2) {
+    const id = parts[1] ?? "";
+    if (!DECIMAL.test(id)) throw new ReadError("Name a GitHub id.");
+    return {
+      github_id: id,
+      wallet: await view(
+        contract,
+        "github_owner_of",
+        { github_id: id },
+        transport,
+      ),
+    };
+  }
+  if (parts[0] === "claim-message" && parts.length === 6) {
+    const [, bounty = "", wallet = "", githubId = "", key = "", expires = ""] =
+      parts.map(decoded);
+    if (
+      !DECIMAL.test(bounty) ||
+      !ACCOUNT.test(wallet) ||
+      !DECIMAL.test(githubId) ||
+      !KEY.test(key) ||
+      !DECIMAL.test(expires)
+    )
+      throw new ReadError(
+        "Name the bounty, the wallet, the GitHub id, the withdrawal key and expires_at.",
+      );
+    return {
+      message: await view(
+        contract,
+        "claim_key_message",
         {
           bounty_id: Number(bounty),
           wallet,
+          github_id: githubId,
+          key,
           expires_at: expires,
-          primary,
-          backup,
         },
         transport,
       ),
     };
+  }
+  if (
+    (parts[0] === "posting-message" || parts[0] === "posting-digest") &&
+    parts.length === 2
+  ) {
+    const request = postingRequest(
+      parts[1] ?? "",
+      parts[0] === "posting-message",
+    );
+    const message = parts[0] === "posting-message";
+    return {
+      [message ? "message" : "digest"]: await view(
+        contract,
+        message ? "posting_key_message" : "posting_terms_digest",
+        request,
+        transport,
+      ),
+    };
+  }
+  if (parts[0] === "vault-of" && parts.length === 2) {
+    const key = decoded(parts[1] ?? "");
+    if (!KEY.test(key)) throw new ReadError("Name an ed25519 public key.");
+    return { key, vault: await view(contract, "vault_of", { key }, transport) };
+  }
+  if (parts[0] === "barred" && parts.length === 3) {
+    const [, bounty = "", wallet = ""] = parts.map(decoded);
+    if (!DECIMAL.test(bounty) || !ACCOUNT.test(wallet))
+      throw new ReadError("Name the bounty and the wallet.");
+    return {
+      barred: await view(
+        contract,
+        "is_barred",
+        { bounty_id: Number(bounty), wallet },
+        transport,
+      ),
+    };
+  }
+  if (parts[0] === "posted" && parts.length === 3) {
+    const [, maintainer = "", nonce = ""] = parts;
+    if (!ACCOUNT.test(maintainer) || !NONCE.test(nonce))
+      throw new ReadError("Name the maintainer and a 64-hex-digit nonce.");
+    return { id: await postedByNonce(contract, maintainer, nonce, transport) };
   }
   if (parts[0] === "nonce" && parts.length === 3) {
     const [, maintainer = "", nonce = ""] = parts;

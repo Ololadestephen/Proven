@@ -1,23 +1,18 @@
 {
   "buyer": "maint.test.near",
-  "reward": "50000000000000000000000",
-  "budget": "30000000000000000000000",
+  "reward": "80000000000000000000000",
   "sponsored_runs": 0,
   "repo": "proven-test/bounty-pilot",
   "repo_id": "800000001",
   "issue": 9501,
   "base_ref": "main",
-  "contributor_github_id": "900000001",
   "posted_at": "1794309420039349000",
   "claim_by": "1794310019",
-  "bind_by": "1794310319",
+  "claim_secs": "3600",
   "merge_deadline": "1794313019",
   "grace_secs": "600",
   "status": "Cancelled",
-  "maintainer_keys": {
-    "primary": "ed25519:7v54NWdBtkjuAFJrLGsS2SXnuk8nKam81mZJeeYxVFi9",
-    "backup": "ed25519:mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v"
-  },
+  "maintainer_key": "ed25519:7v54NWdBtkjuAFJrLGsS2SXnuk8nKam81mZJeeYxVFi9",
   "maintainer_vault": "0scb99d12db0bdd9f7557015e1fc1972e8316b67ae",
   "posting_nonce": "0000000000000000000000000000000000000000000000000000000000000001",
   "claim": null,
@@ -25,14 +20,11 @@
   "merge": null,
   "live": null,
   "last_check": null,
+  "definite_look": null,
   "payout": null,
-  "budget_return": null,
   "refund": {
     "kind": "Refund",
-    "keys": {
-      "primary": "ed25519:7v54NWdBtkjuAFJrLGsS2SXnuk8nKam81mZJeeYxVFi9",
-      "backup": "ed25519:mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v"
-    },
+    "key": "ed25519:7v54NWdBtkjuAFJrLGsS2SXnuk8nKam81mZJeeYxVFi9",
     "vault": "0scb99d12db0bdd9f7557015e1fc1972e8316b67ae",
     "principal": "80000000000000000000000",
     "state": "Done",

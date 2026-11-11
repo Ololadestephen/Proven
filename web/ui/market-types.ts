@@ -52,6 +52,8 @@ export interface Wallet {
     recipient: string,
     nonce: Uint8Array,
   ): Promise<{ public_key: string; signature_base64: string }>;
+  /** The key that signs this wallet's transactions, if the wallet reports it. */
+  transactionKey?(): Promise<string | null>;
   signOut(): Promise<void>;
 }
 

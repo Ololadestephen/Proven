@@ -40,6 +40,7 @@ function App() {
     run,
     refresh,
     releasePending,
+    bounty,
   } = state;
   return (
     <MarketLayout
@@ -147,6 +148,8 @@ function App() {
           run={run}
           clock={clock}
           busy={!!busy || !!pending || boardUnavailable}
+          bounty={bounty}
+          bountyBusy={!!busy}
         />
       ) : null}
     </MarketLayout>

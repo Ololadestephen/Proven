@@ -1,13 +1,18 @@
 // What the page says about settlements and vaults, as pure functions over the contract's and
-// the vault's views. A settlement is due, in flight or in the vault from the contract's view; it
-// is withdrawn only when this browser holds a delivered withdrawal receipt from its vault and that
-// vault holds no other settlement. A shared vault (one key pair, several settlements) shows its
-// withdrawals only for the vault as a whole (OD-11). A failed read is "unavailable", never zero.
+// the vault's views. Two receipts are kept apart. The VAULT CREDIT is the contract's view: the
+// settlement is Done because the vault's own record shows the deposit. The WALLET WITHDRAWAL is a
+// finalized `withdraw` transaction whose transfer succeeded, which only this browser's history
+// (or a transaction hash) can show and which the contract never learns. One never implies the
+// other. A vault holds the money of one withdrawal key, which may back several settlements, so a
+// withdrawal is attributed to a settlement only when it is alone in its vault. A failed read is
+// "unavailable", never zero.
 
-export type SettlementKind = "Payout" | "BudgetReturn" | "Refund";
+export type SettlementKind = "Payout" | "Refund";
 
 export interface SettlementView {
   kind: SettlementKind;
+  /** The withdrawal key, `ed25519:…`. */
+  key: string;
   vault: string;
   principal: string;
   state: "Due" | "InFlight" | "Done";
@@ -69,13 +74,12 @@ export const STATUS_TEXT: Record<SettlementStatus, string> = {
     "in flight to the vault, still reserved until its result is recorded",
   needs_recording:
     "sent; its result is recorded and needs finishing (anyone, no cost)",
-  in_vault: "in the vault, withdrawable with either key",
+  in_vault: "in the vault, withdrawable with the withdrawal key",
   withdrawn: "withdrawn from the vault (receipt held by this browser)",
 };
 
 const kindText: Record<SettlementKind, string> = {
   Payout: "payout",
-  BudgetReturn: "budget return",
   Refund: "refund",
 };
 export const kindLabel = (k: SettlementKind) => kindText[k];
@@ -98,8 +102,7 @@ export function reconcileWindow(
 export interface VaultRead {
   exists: boolean;
   info: {
-    primary: string;
-    backup: string;
+    key: string;
     n: string;
     fund: string;
     available: string;
@@ -145,4 +148,101 @@ export function saveHistory(
   } catch {
     /* The vault's own views still show what it holds. */
   }
+}
+
+export type VaultCredit = "none" | "sending" | "unknown" | "in vault";
+export type WalletWithdrawal =
+  | "not withdrawn"
+  | "withdrawing"
+  | "withdrawn"
+  | "returned to vault"
+  | "refused";
+/** A withdrawal this browser recorded for the vault, as far as the display needs it. */
+export type WithdrawalRecord = Pick<StoredWithdrawal, "outcome"> &
+  Partial<Pick<StoredWithdrawal, "to" | "amount">>;
+export interface SettlementDisplay {
+  vaultCredit: VaultCredit;
+  vaultCreditText: string;
+  wallet: WalletWithdrawal;
+  walletText: string;
+}
+const CREDIT_TEXT: Record<VaultCredit, string> = {
+  none: "No payout or refund exists for this bounty yet.",
+  sending:
+    "Not confirmed in the vault yet. The amount stays reserved in the contract until the vault's own record shows it.",
+  unknown:
+    "Sent to the vault, but no result is recorded. It stays reserved in the contract, and the vault's own record decides it when someone asks (reconcile).",
+  "in vault":
+    "In the vault. The vault's own record shows the deposit, so the contract's part is finished. This is not a withdrawal to a wallet.",
+};
+const accountText = (w: WithdrawalRecord | null) =>
+  w?.to ? ` to ${w.to}` : "";
+const WALLET_TEXT: Record<
+  WalletWithdrawal,
+  (w: WithdrawalRecord | null) => string
+> = {
+  "not withdrawn": () =>
+    "Not withdrawn to a wallet. Nothing leaves the vault until the withdrawal key signs a withdrawal.",
+  withdrawing: (w) =>
+    `A withdrawal${accountText(w)} was submitted and is not final yet. Check its result before signing another.`,
+  withdrawn: (w) =>
+    `Withdrawn${accountText(w)}: a finalized withdrawal delivered the amount (receipt held by this browser). The contract does not track this.`,
+  "returned to vault": (w) =>
+    `The transfer${accountText(w)} failed and the amount came back to the vault. Withdraw again to another account.`,
+  refused: () =>
+    "The vault refused the withdrawal and nothing moved. Check the details and sign a new withdrawal.",
+};
+const WALLET_OF: Record<StoredWithdrawal["outcome"], WalletWithdrawal> = {
+  pending: "withdrawing",
+  delivered: "withdrawn",
+  returned: "returned to vault",
+  refused: "refused",
+};
+/**
+ * The vault credit and the wallet withdrawal of one settlement, kept apart.
+ * - `settlement`: the contract's view; `null` is a bounty with no such settlement, `undefined` a
+ *   read that failed or has not happened.
+ * - `withdrawal`: the latest withdrawal this browser recorded for the vault, or `null` for none.
+ * The credit depends only on the settlement, the wallet only on the withdrawal: a Done settlement
+ * never implies a withdrawal, and a withdrawal never marks anything done in the contract.
+ * `now` (with the party reconcile delay) turns an old in-flight attempt with no recorded result
+ * from "sending" into "unknown".
+ */
+export function settlementDisplay(
+  settlement: SettlementView | null | undefined,
+  withdrawal: WithdrawalRecord | null,
+  now?: { nowSecs: number; partyDelaySecs: number },
+): SettlementDisplay {
+  let vaultCredit: VaultCredit;
+  if (settlement === null) vaultCredit = "none";
+  else if (
+    !settlement ||
+    !["Due", "InFlight", "Done"].includes(settlement.state)
+  )
+    vaultCredit = "unknown";
+  else if (settlement.state === "Done") vaultCredit = "in vault";
+  else if (settlement.state === "Due") vaultCredit = "sending";
+  else {
+    const sentSecs = Number(BigInt(settlement.sent_at) / 1_000_000_000n);
+    const old =
+      !!now &&
+      settlement.outcome === "Unknown" &&
+      sentSecs + now.partyDelaySecs <= now.nowSecs;
+    vaultCredit = old ? "unknown" : "sending";
+  }
+  const wallet = withdrawal ? WALLET_OF[withdrawal.outcome] : "not withdrawn";
+  return {
+    vaultCredit,
+    vaultCreditText: CREDIT_TEXT[vaultCredit],
+    wallet,
+    walletText: WALLET_TEXT[wallet](withdrawal),
+  };
+}
+/** The latest withdrawal recorded for a vault (the history is in the order it was recorded). */
+export function latestWithdrawal(
+  vault: string,
+  history: StoredWithdrawal[],
+): StoredWithdrawal | null {
+  const mine = history.filter((w) => w.vault === vault);
+  return mine.length ? (mine[mine.length - 1] as StoredWithdrawal) : null;
 }

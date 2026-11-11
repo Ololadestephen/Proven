@@ -109,7 +109,7 @@
         "outcome": {
           "executor_id": "0scb99d12db0bdd9f7557015e1fc1972e8316b67ae",
           "gas_burnt": 1859790096138,
-          "logs": ["vault_withdraw key=primary n=1 to=payee.test.near"],
+          "logs": ["vault_withdraw key=withdrawal n=1 to=payee.test.near"],
           "metadata": {
             "contracts": [
               {
@@ -399,5 +399,5 @@
       "proof": []
     }
   },
-  "info_after_hex": "0066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a000b513ad9b4924015ca0902ed079044d3ac5dbec2306f06948c10da8eb6e39f2d0200000000000000000048f5743f0c95020100000000000000000000000000000000000000000000"
+  "info_after_hex": "0066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a0200000000000000000048f5743f0c95020100000000000000000000000000000000000000000000"
 }

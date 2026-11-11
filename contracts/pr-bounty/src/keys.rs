@@ -1,7 +1,10 @@
-//! Recipient key pairs, the messages their NEP-413 key proofs sign, the posting terms digest, the
-//! claim challenge (v3) and the vault address. The exact formats are in the design
-//! (`.kiro/specs/pr-bounty-vault-settlement/design.md`, "Message formats"); the web page builds
-//! the same bytes and is checked against vectors generated from this code.
+//! The withdrawal key, the messages its NEP-413 key proofs sign, the posting terms digest, the
+//! GitHub link challenge and the vault address. One key receives each party's money: the key a
+//! wallet signs a proof with at posting (maintainer's refund) or at claiming (contributor's
+//! payout). The key may differ from the key that signs the wallet's transactions; what matters is
+//! that its holder proved control of it for this exact account and these exact terms before any
+//! money was locked or any payout key was accepted. The web page builds the same bytes and is
+//! checked against vectors generated from this code.
 
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::state_init::{StateInit, StateInitV1};
@@ -9,17 +12,9 @@ use near_sdk::{env, near, require, AccountId, CryptoHash, GlobalContractId, Publ
 
 /// NEP-413's prefix tag, 2^31 + 413.
 pub const NEP413_TAG: u32 = 2_147_484_061;
-/// The longest a key proof may stay valid (OD-8).
+/// The longest a key proof or a link challenge may stay valid.
 pub const KEY_PROOF_TTL_SECS: u64 = 60 * 60;
 const NANOS: u64 = 1_000_000_000;
-
-/// One recipient: an ordered pair of distinct ed25519 keys. Not an account name.
-#[near(serializers = [borsh, json])]
-#[derive(Clone, Debug, PartialEq)]
-pub struct KeyPair {
-    pub primary: PublicKey,
-    pub backup: PublicKey,
-}
 
 /// What a bounty's posting fixes; covered by the posting terms digest.
 #[near(serializers = [borsh, json])]
@@ -30,14 +25,15 @@ pub struct PostTerms {
     pub repo_id: U64,
     pub issue: u64,
     pub base_ref: String,
-    pub contributor_github_id: U64,
+    /// The bounty accepts claims until this time (Unix seconds).
     pub claim_by: U64,
-    pub bind_by: U64,
+    /// How long one claim lasts before anyone can end it.
+    pub claim_secs: U64,
     pub merge_deadline: U64,
     pub grace_secs: U64,
 }
 
-/// The maintainer's two key proofs for one posting.
+/// The maintainer's withdrawal-key proof for one posting.
 #[near(serializers = [json])]
 #[derive(Clone, Debug)]
 pub struct PostingProof {
@@ -45,23 +41,15 @@ pub struct PostingProof {
     pub nonce: String,
     /// Unix seconds, at most one hour ahead.
     pub expires_at: U64,
-    pub primary_signature: Base64VecU8,
-    pub backup_signature: Base64VecU8,
+    pub signature: Base64VecU8,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Signing {
-    Primary,
-    Backup,
-}
-
-impl Signing {
-    pub fn word(self) -> &'static str {
-        match self {
-            Signing::Primary => "primary",
-            Signing::Backup => "backup",
-        }
-    }
+/// The contributor's withdrawal-key proof for one claim.
+#[near(serializers = [json])]
+#[derive(Clone, Debug)]
+pub struct ClaimProof {
+    pub expires_at: U64,
+    pub signature: Base64VecU8,
 }
 
 /// The 32 key bytes of an ed25519 key; refuses any other curve or length.
@@ -72,12 +60,6 @@ pub fn ed25519_bytes(key: &PublicKey) -> [u8; 32] {
         "keys must be ed25519 public keys"
     );
     b[1..].try_into().expect("32 bytes")
-}
-
-/// Checks a key pair's shape: both ed25519, and different.
-pub fn check_pair(keys: &KeyPair) {
-    let (p, b) = (ed25519_bytes(&keys.primary), ed25519_bytes(&keys.backup));
-    require!(p != b, "the backup key must differ from the primary key");
 }
 
 pub fn key_text(key: &PublicKey) -> String {
@@ -128,17 +110,17 @@ pub fn key_proof_hash(message: &str, contract: &str) -> [u8; 32] {
     env::sha256_array(nep413_payload(message, &nonce, contract))
 }
 
-/// The canonical bytes of a posting's terms (OD-3).
+/// The canonical bytes of a posting's terms.
 pub fn terms_bytes(
     network: &str,
     contract: &str,
     maintainer: &str,
     nonce: &[u8; 32],
     terms: &PostTerms,
-    keys: &KeyPair,
+    key: &PublicKey,
 ) -> Vec<u8> {
     let mut out = Vec::new();
-    borsh_str(&mut out, "proven-pr-bounty-terms:v1");
+    borsh_str(&mut out, "proven-pr-bounty-terms:v2");
     borsh_str(&mut out, network);
     borsh_str(&mut out, contract);
     borsh_str(&mut out, maintainer);
@@ -148,13 +130,11 @@ pub fn terms_bytes(
     out.extend(terms.repo_id.0.to_le_bytes());
     out.extend(terms.issue.to_le_bytes());
     borsh_str(&mut out, &terms.base_ref);
-    out.extend(terms.contributor_github_id.0.to_le_bytes());
     out.extend(terms.claim_by.0.to_le_bytes());
-    out.extend(terms.bind_by.0.to_le_bytes());
+    out.extend(terms.claim_secs.0.to_le_bytes());
     out.extend(terms.merge_deadline.0.to_le_bytes());
     out.extend(terms.grace_secs.0.to_le_bytes());
-    out.extend(ed25519_bytes(&keys.primary));
-    out.extend(ed25519_bytes(&keys.backup));
+    out.extend(ed25519_bytes(key));
     out
 }
 
@@ -164,30 +144,28 @@ pub fn terms_digest(
     maintainer: &str,
     nonce: &[u8; 32],
     terms: &PostTerms,
-    keys: &KeyPair,
+    key: &PublicKey,
 ) -> String {
     hex(&env::sha256_array(terms_bytes(
-        network, contract, maintainer, nonce, terms, keys,
+        network, contract, maintainer, nonce, terms, key,
     )))
 }
 
-const PROOF_TAIL: &str = "Either key alone can withdraw everything in the vault.";
+const PROOF_TAIL: &str = "This key alone can withdraw everything the vault receives. Nobody can replace it, and nobody can recover the money if it is lost.";
 
-#[allow(clippy::too_many_arguments)]
 pub fn posting_message(
     network: &str,
     contract: &str,
     maintainer: &str,
     nonce: &[u8; 32],
     terms: &PostTerms,
-    keys: &KeyPair,
+    key: &PublicKey,
     expires_at: u64,
-    signing: Signing,
 ) -> String {
-    let digest = terms_digest(network, contract, maintainer, nonce, terms, keys);
+    let digest = terms_digest(network, contract, maintainer, nonce, terms, key);
     [
-        "Proven PR bounty key proof v1".to_string(),
-        "role: maintainer".to_string(),
+        "Proven PR bounty withdrawal-key proof v2".to_string(),
+        "role: maintainer (refund)".to_string(),
         format!("network: {network}"),
         format!("contract: {contract}"),
         format!("actor: {maintainer}"),
@@ -195,44 +173,39 @@ pub fn posting_message(
         format!("terms: {digest}"),
         format!("reward_yocto: {}", terms.reward.0),
         format!("issue: {}#{}", terms.repo, terms.issue),
-        format!("signing: {}", signing.word()),
-        format!("primary: {}", key_text(&keys.primary)),
-        format!("backup: {}", key_text(&keys.backup)),
+        format!("withdrawal_key: {}", key_text(key)),
         format!("expires_at: {expires_at}"),
         PROOF_TAIL.to_string(),
     ]
     .join("\n")
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn claim_message(
     network: &str,
     contract: &str,
     wallet: &str,
     bounty: u64,
     github_id: u64,
-    keys: &KeyPair,
+    key: &PublicKey,
     expires_at: u64,
-    signing: Signing,
 ) -> String {
     [
-        "Proven PR bounty key proof v1".to_string(),
-        "role: contributor".to_string(),
+        "Proven PR bounty withdrawal-key proof v2".to_string(),
+        "role: contributor (payout)".to_string(),
         format!("network: {network}"),
         format!("contract: {contract}"),
         format!("actor: {wallet}"),
         format!("bounty: {bounty}"),
         format!("github_id: {github_id}"),
-        format!("signing: {}", signing.word()),
-        format!("primary: {}", key_text(&keys.primary)),
-        format!("backup: {}", key_text(&keys.backup)),
+        format!("withdrawal_key: {}", key_text(key)),
         format!("expires_at: {expires_at}"),
         PROOF_TAIL.to_string(),
     ]
     .join("\n")
 }
 
-/// Checks a key proof's expiry when the call starts: in the future, at most one hour ahead.
+/// Checks a proof's or challenge's expiry when the call starts: in the future, at most one hour
+/// ahead.
 pub fn check_expiry(expires_at: u64) {
     let now = env::block_timestamp();
     let at = expires_at.saturating_mul(NANOS);
@@ -249,70 +222,29 @@ fn signature(sig: &Base64VecU8) -> [u8; 64] {
         .unwrap_or_else(|_| env::panic_str("signatures must be 64 bytes"))
 }
 
-/// Verifies both key proofs: the primary key over its `signing: primary` text, the backup key
-/// over its `signing: backup` text. `message` builds the text for a given signing key.
-pub fn verify_pair(
-    keys: &KeyPair,
-    primary_signature: &Base64VecU8,
-    backup_signature: &Base64VecU8,
+/// Verifies the withdrawal key's proof over `message`. Panics before any state change.
+pub fn verify_key(key: &PublicKey, sig: &Base64VecU8, contract: &str, message: &str) {
+    let ok = env::ed25519_verify(
+        &signature(sig),
+        key_proof_hash(message, contract),
+        &ed25519_bytes(key),
+    );
+    require!(ok, "the withdrawal key's proof does not match");
+}
+
+/// The challenge that goes, alone, in the link gist: `proven-link:` + hex SHA-256 of the network,
+/// contract, wallet, the wallet's link number and the expiry. It names one wallet and one use.
+pub fn link_challenge(
+    network: &str,
     contract: &str,
-    message: impl Fn(Signing) -> String,
-) {
-    check_pair(keys);
-    let (p, b) = (signature(primary_signature), signature(backup_signature));
-    let ok_p = env::ed25519_verify(
-        &p,
-        key_proof_hash(&message(Signing::Primary), contract),
-        &ed25519_bytes(&keys.primary),
-    );
-    require!(ok_p, "the primary key's proof does not match");
-    let ok_b = env::ed25519_verify(
-        &b,
-        key_proof_hash(&message(Signing::Backup), contract),
-        &ed25519_bytes(&keys.backup),
-    );
-    require!(ok_b, "the backup key's proof does not match");
-}
-
-/// SHA-256 of the ordered key pair, in the claim challenge.
-pub fn key_pair_digest(keys: &KeyPair) -> String {
-    let mut b = Vec::new();
-    borsh_str(&mut b, "proven-key-pair:v1");
-    b.extend(ed25519_bytes(&keys.primary));
-    b.extend(ed25519_bytes(&keys.backup));
-    hex(&env::sha256_array(b))
-}
-
-/// Everything a claim challenge binds besides the key pair.
-pub struct ClaimBinding<'a> {
-    pub network: &'a str,
-    pub contract: &'a str,
-    pub bounty: u64,
-    pub repo: &'a str,
-    pub repo_id: u64,
-    pub issue: u64,
-    pub wallet: &'a str,
-    pub github_id: u64,
-    pub expires_at: u64,
-}
-
-/// Challenge v3: `proven-claim:` + hex SHA-256 of everything the claim binds, including the
-/// ordered key pair's digest. Same shape as before, so the verifier is unchanged.
-pub fn challenge(c: &ClaimBinding, keys: &KeyPair) -> String {
+    wallet: &str,
+    link_number: u64,
+    expires_at: u64,
+) -> String {
     let text = format!(
-        "proven-pr-bounty-claim:v3|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        c.network,
-        c.contract,
-        c.bounty,
-        c.repo,
-        c.repo_id,
-        c.issue,
-        c.wallet,
-        c.github_id,
-        c.expires_at,
-        key_pair_digest(keys),
+        "proven-pr-bounty-link:v1|{network}|{contract}|{wallet}|{link_number}|{expires_at}"
     );
-    format!("proven-claim:{}", hex(&env::sha256_array(text.as_bytes())))
+    format!("proven-link:{}", hex(&env::sha256_array(text.as_bytes())))
 }
 
 /// The key that consumes a posting nonce for one maintainer.
@@ -324,21 +256,30 @@ pub fn nonce_key(maintainer: &AccountId, nonce: &[u8; 32]) -> [u8; 32] {
     env::sha256_array(b)
 }
 
-/// The vault's initial state entries for a key pair: `b`, `f`, `k`, `n`.
-pub fn vault_entries(keys: &KeyPair) -> [(Vec<u8>, Vec<u8>); 4] {
+/// The key that bars one wallet from claiming one bounty again.
+pub fn bar_key(bounty: u64, wallet: &AccountId) -> [u8; 32] {
+    let mut b = Vec::new();
+    borsh_str(&mut b, "proven-claim-bar:v1");
+    b.extend(bounty.to_le_bytes());
+    borsh_str(&mut b, wallet.as_str());
+    env::sha256_array(b)
+}
+
+/// The vault's initial state entries for a key: `f`, `k`, `n`.
+pub fn vault_entries(key: &PublicKey) -> [(Vec<u8>, Vec<u8>); 3] {
     [
-        (b"b".to_vec(), keys.backup.as_bytes().to_vec()),
         (b"f".to_vec(), 0u128.to_le_bytes().to_vec()),
-        (b"k".to_vec(), keys.primary.as_bytes().to_vec()),
+        (b"k".to_vec(), key.as_bytes().to_vec()),
         (b"n".to_vec(), 0u64.to_le_bytes().to_vec()),
     ]
 }
 
-/// The vault address of a key pair (NEP-616, code by hash).
-pub fn vault_of(code: CryptoHash, keys: &KeyPair) -> AccountId {
+/// The vault address of a withdrawal key (NEP-616, code by hash).
+pub fn vault_of(code: CryptoHash, key: &PublicKey) -> AccountId {
+    ed25519_bytes(key);
     StateInit::V1(StateInitV1 {
         code: GlobalContractId::CodeHash(code),
-        data: vault_entries(keys).into_iter().collect(),
+        data: vault_entries(key).into_iter().collect(),
     })
     .derive_account_id()
 }

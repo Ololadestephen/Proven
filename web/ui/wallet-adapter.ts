@@ -10,6 +10,7 @@ import type { Wallet } from "./market-types.ts";
 import { IS_MAINNET, NETWORK } from "./network.ts";
 import { b64, randomNonce, RELAY_RECIPIENT } from "./market-client.ts";
 import { decodeCallResult, postingReceipt } from "./posting.ts";
+import { ed25519Key, keyText } from "./bounty-keys.ts";
 
 export function connectorOptions(cspNonce: string): NearConnectorOptions {
   return {
@@ -118,6 +119,15 @@ export function adaptWallet(
       };
     },
     signNep413,
+    async transactionKey() {
+      const accounts = await chosen.getAccounts({ network: NETWORK });
+      const key = accounts.find((a) => a.accountId === accountId)?.publicKey;
+      try {
+        return key ? keyText(ed25519Key(key)) : null;
+      } catch {
+        return null;
+      }
+    },
   };
   async function signNep413(
     message: string,

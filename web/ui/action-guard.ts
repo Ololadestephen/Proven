@@ -1,13 +1,24 @@
 import type { Market, Call } from "./market-types.ts";
+import {
+  bountyReconciled,
+  isBountyMethod,
+  parseBountySnapshot,
+  type BountyIntent,
+  type BountySnapshot,
+} from "./bounty-reconcile.ts";
 export interface PendingAction {
   account: string;
   bidId?: number;
+  /** For a PR bounty call: the bounty it acts on, when it acts on one. */
+  bountyId?: number | null;
   before: string;
   label: string;
   createdAt: number;
   call?: { receiver: string; method: string; args: Record<string, unknown> };
 }
 export const PENDING_KEY = "proven-testnet-pending-action-v1";
+/** The PR bounty page keeps its own journal, so a bounty call never waits on the job board. */
+export const BOUNTY_PENDING_KEY = "proven-testnet-pending-bounty-action-v1";
 export function actionSnapshot(
   market: Market,
   account: string,
@@ -77,6 +88,30 @@ export function reconciled(pending: PendingAction, market: Market): boolean {
   if (method === "release")
     return job?.state === "Released" || job?.state === "Releasing";
   return false;
+}
+/** The journaled call as a bounty intent, or null when it is not a complete bounty call. */
+export function bountyIntentOf(pending: PendingAction): BountyIntent | null {
+  const call = pending.call;
+  if (!call || !isBountyMethod(call.method)) return null;
+  return {
+    account: pending.account,
+    receiver: call.receiver,
+    method: call.method,
+    args: call.args,
+    bountyId: pending.bountyId ?? null,
+  };
+}
+/**
+ * Whether a journaled bounty call took effect, from the snapshot taken before it and a fresh one.
+ * A journal this code cannot read is never treated as applied.
+ */
+export function bountyActionReconciled(
+  pending: PendingAction,
+  now: BountySnapshot,
+): boolean {
+  const intent = bountyIntentOf(pending);
+  const before = parseBountySnapshot(pending.before);
+  return !!intent && !!before && bountyReconciled(intent, before, now);
 }
 export class ActionGate {
   active = false;

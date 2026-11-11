@@ -1,8 +1,9 @@
-// The bytes a PR bounty key proof covers, built in the browser exactly as the bounty contract
-// builds them (contracts/pr-bounty/src/keys.rs): ed25519 key parsing, the posting terms digest,
-// the key pair digest, both key-proof messages, the claim challenge (v3), the NEP-413 payload
-// and hash, a local ed25519 check of a returned signature, and the NEP-616 vault address.
-// Checked against web/test-fixtures/pr-bounty-vectors.json, which the contract's code generates.
+// The bytes a PR bounty withdrawal-key proof covers, built in the browser exactly as the bounty
+// contract builds them (contracts/pr-bounty/src/keys.rs): ed25519 key parsing, the posting terms
+// digest, the two withdrawal-key proof messages (posting and claim), the GitHub link challenge,
+// the NEP-413 payload and hash, a local ed25519 check of a returned signature, and the NEP-616
+// vault address. One key receives each party's money. Checked against
+// web/test-fixtures/pr-bounty-vectors.json, which the contract's code generates.
 import { sha256 } from "@noble/hashes/sha2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -71,25 +72,17 @@ export function ed25519Key(text: string): Uint8Array {
 
 export const keyText = (bytes: Uint8Array) => `ed25519:${base58(bytes)}`;
 
-export interface KeyPair {
-  primary: string;
-  backup: string;
-}
-
 export interface PostTerms {
   reward: string;
   repo: string;
   repo_id: string;
   issue: number;
   base_ref: string;
-  contributor_github_id: string;
   claim_by: string;
-  bind_by: string;
+  claim_secs: string;
   merge_deadline: string;
   grace_secs: string;
 }
-
-export type Signing = "primary" | "backup";
 
 class Bytes {
   parts: number[] = [];
@@ -156,10 +149,11 @@ export function termsBytes(
   maintainer: string,
   nonce: Uint8Array,
   terms: PostTerms,
-  keys: KeyPair,
+  key: string,
 ): Uint8Array {
+  if (nonce.length !== 32) throw new Error("A posting nonce has 32 bytes.");
   return new Bytes()
-    .str("proven-pr-bounty-terms:v1")
+    .str("proven-pr-bounty-terms:v2")
     .str(network)
     .str(contract)
     .str(maintainer)
@@ -169,13 +163,11 @@ export function termsBytes(
     .u64(terms.repo_id)
     .u64(terms.issue)
     .str(terms.base_ref)
-    .u64(terms.contributor_github_id)
     .u64(terms.claim_by)
-    .u64(terms.bind_by)
+    .u64(terms.claim_secs)
     .u64(terms.merge_deadline)
     .u64(terms.grace_secs)
-    .raw(ed25519Key(keys.primary))
-    .raw(ed25519Key(keys.backup))
+    .raw(ed25519Key(key))
     .done();
 }
 
@@ -185,105 +177,83 @@ export const termsDigest = (
   maintainer: string,
   nonce: Uint8Array,
   terms: PostTerms,
-  keys: KeyPair,
-) => hex(sha256(termsBytes(network, contract, maintainer, nonce, terms, keys)));
+  key: string,
+) => hex(sha256(termsBytes(network, contract, maintainer, nonce, terms, key)));
 
-const PROOF_TAIL = "Either key alone can withdraw everything in the vault.";
+/** The last line of both proof messages, which the wallet shows the person signing. */
+export const PROOF_TAIL =
+  "This key alone can withdraw everything the vault receives. Nobody can replace it, and nobody can recover the money if it is lost.";
 
+/** The text the maintainer's withdrawal key signs to post a funded bounty. */
 export function postingMessage(
   network: string,
   contract: string,
   maintainer: string,
   nonce: Uint8Array,
   terms: PostTerms,
-  keys: KeyPair,
+  key: string,
   expiresAt: number | string,
-  signing: Signing,
 ): string {
   return [
-    "Proven PR bounty key proof v1",
-    "role: maintainer",
+    "Proven PR bounty withdrawal-key proof v2",
+    "role: maintainer (refund)",
     `network: ${network}`,
     `contract: ${contract}`,
     `actor: ${maintainer}`,
     `nonce: ${hex(nonce)}`,
-    `terms: ${termsDigest(network, contract, maintainer, nonce, terms, keys)}`,
+    `terms: ${termsDigest(network, contract, maintainer, nonce, terms, key)}`,
     `reward_yocto: ${BigInt(terms.reward)}`,
     `issue: ${terms.repo}#${terms.issue}`,
-    `signing: ${signing}`,
-    `primary: ${keys.primary}`,
-    `backup: ${keys.backup}`,
+    `withdrawal_key: ${keyText(ed25519Key(key))}`,
     `expires_at: ${expiresAt}`,
     PROOF_TAIL,
   ].join("\n");
 }
 
+/** The text the contributor's withdrawal key signs to claim a bounty. */
 export function claimMessage(
   network: string,
   contract: string,
   wallet: string,
   bounty: number,
   githubId: string,
-  keys: KeyPair,
+  key: string,
   expiresAt: number | string,
-  signing: Signing,
 ): string {
   return [
-    "Proven PR bounty key proof v1",
-    "role: contributor",
+    "Proven PR bounty withdrawal-key proof v2",
+    "role: contributor (payout)",
     `network: ${network}`,
     `contract: ${contract}`,
     `actor: ${wallet}`,
     `bounty: ${bounty}`,
     `github_id: ${BigInt(githubId)}`,
-    `signing: ${signing}`,
-    `primary: ${keys.primary}`,
-    `backup: ${keys.backup}`,
+    `withdrawal_key: ${keyText(ed25519Key(key))}`,
     `expires_at: ${expiresAt}`,
     PROOF_TAIL,
   ].join("\n");
 }
 
-export function keyPairDigest(keys: KeyPair): string {
-  return hex(
-    sha256(
-      new Bytes()
-        .str("proven-key-pair:v1")
-        .raw(ed25519Key(keys.primary))
-        .raw(ed25519Key(keys.backup))
-        .done(),
-    ),
-  );
-}
-
-export interface ClaimBinding {
-  network: string;
-  contract: string;
-  bounty: number;
-  repo: string;
-  repo_id: string;
-  issue: number;
-  wallet: string;
-  github_id: string;
-  expires_at: number | string;
-}
-
-/** Challenge v3: the text the contributor's gist holds. */
-export function challenge(c: ClaimBinding, keys: KeyPair): string {
+/**
+ * The challenge that goes, alone, in a wallet's link gist: `proven-link:` and the hex SHA-256 of
+ * the network, contract, wallet, the wallet's link number and the expiry.
+ */
+export function linkChallenge(
+  network: string,
+  contract: string,
+  wallet: string,
+  linkNumber: number | string,
+  expiresAt: number | string,
+): string {
   const text = [
-    "proven-pr-bounty-claim:v3",
-    c.network,
-    c.contract,
-    c.bounty,
-    c.repo,
-    BigInt(c.repo_id),
-    c.issue,
-    c.wallet,
-    BigInt(c.github_id),
-    c.expires_at,
-    keyPairDigest(keys),
+    "proven-pr-bounty-link:v1",
+    network,
+    contract,
+    wallet,
+    BigInt(linkNumber),
+    BigInt(expiresAt),
   ].join("|");
-  return `proven-claim:${hex(sha256(encoder.encode(text)))}`;
+  return `proven-link:${hex(sha256(encoder.encode(text)))}`;
 }
 
 /** Checks an ed25519 signature over a NEP-413 hash. Never throws. */
@@ -317,16 +287,13 @@ export function base64(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes));
 }
 
-/** NEP-616: the vault account of a key pair, its code pinned by hash. */
-export function vaultAddress(codeHash: Uint8Array, keys: KeyPair): string {
+/** NEP-616: the vault account of a withdrawal key, its code pinned by hash. */
+export function vaultAddress(codeHash: Uint8Array, key: string): string {
   if (codeHash.length !== 32) throw new Error("A code hash has 32 bytes.");
-  const key = (text: string) => Uint8Array.from([0, ...ed25519Key(text)]);
-  const zero = (n: number) => new Uint8Array(n);
   const entries: [string, Uint8Array][] = [
-    ["b", key(keys.backup)],
-    ["f", zero(16)],
-    ["k", key(keys.primary)],
-    ["n", zero(8)],
+    ["f", new Uint8Array(16)],
+    ["k", Uint8Array.from([0, ...ed25519Key(key)])],
+    ["n", new Uint8Array(8)],
   ];
   const b = new Bytes()
     .raw(Uint8Array.of(0, 0))

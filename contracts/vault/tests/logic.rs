@@ -189,9 +189,8 @@ fn decimal_printing_and_division_match_native() {
 }
 
 #[test]
-fn the_withdrawal_payload_is_nep413_and_verifies_with_either_key() {
-    let primary = SigningKey::from_bytes(&[1; 32]);
-    let backup = SigningKey::from_bytes(&[2; 32]);
+fn the_withdrawal_payload_is_nep413_and_verifies_with_the_key() {
+    let key = SigningKey::from_bytes(&[1; 32]);
     let vault = b"0sabcdef0123456789abcdef0123456789abcdef01";
     let mut mb = [0u8; MAX_MESSAGE];
     let msg = withdraw_message(
@@ -229,25 +228,24 @@ fn the_withdrawal_payload_is_nep413_and_verifies_with_either_key() {
     expect.push(0);
     assert_eq!(payload, expect);
     let hash: [u8; 32] = Sha256::digest(&payload).into();
-    for key in [&primary, &backup] {
-        let sig = key.sign(&hash);
-        assert!(key.verifying_key().verify(&hash, &sig).is_ok());
-    }
+    let sig = key.sign(&hash);
+    assert!(key.verifying_key().verify(&hash, &sig).is_ok());
+    // A different key's signature over the same hash does not verify.
+    let other = SigningKey::from_bytes(&[2; 32]);
+    assert!(key.verifying_key().verify(&hash, &other.sign(&hash)).is_err());
 }
 
 #[test]
 fn info_and_keys_encode_at_fixed_offsets() {
     let mut p = [0u8; 33];
     p[1..].copy_from_slice(&[7; 32]);
-    let mut b = [0u8; 33];
-    b[1..].copy_from_slice(&[8; 32]);
-    let out = encode_info(&p, &b, 4, 5, 6);
+    let out = encode_info(&p, 4, 5, 6);
     assert_eq!(out.len(), INFO_LEN);
+    assert_eq!(INFO_LEN, 73);
     assert_eq!(&out[0..33], &p);
-    assert_eq!(&out[33..66], &b);
-    assert_eq!(le_u64(&out[66..74]), 4);
-    assert_eq!(le_u128(&out[74..90]), 5);
-    assert_eq!(le_u128(&out[90..106]), 6);
+    assert_eq!(le_u64(&out[33..41]), 4);
+    assert_eq!(le_u128(&out[41..57]), 5);
+    assert_eq!(le_u128(&out[57..73]), 6);
     assert_eq!(ed25519_key(&p), Ok([7; 32]));
     let mut not_ed = p;
     not_ed[0] = 1;

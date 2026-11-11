@@ -20,6 +20,8 @@ pub struct MockOutlayerReply {
     change_mode: String,
     change_hops: u32,
     held: Vec<(AccountId, NearToken)>,
+    /// How many blocks the reply is held back (self-calls); 0 answers at once.
+    reply_hops: u32,
 }
 #[near]
 impl MockOutlayerReply {
@@ -32,9 +34,12 @@ impl MockOutlayerReply {
             change_mode: "immediate".to_string(),
             change_hops: 0,
             held: Vec::new(),
+            reply_hops: 0,
         }
     }
-    /// `mode` is `reply` (return `reply` as the run's output), `null` or `panic`.
+    /// `mode` is `reply` (return `reply` as the run's output), `reply_echo` (the same, with the
+    /// request's `bounty` and `seq` copied into the reply, so a test need not know the contract's
+    /// sequence number), `null` or `panic`.
     pub fn set_reply(&mut self, mode: String, reply: Option<String>) {
         self.mode = mode;
         self.reply = reply.unwrap_or_default();
@@ -43,6 +48,19 @@ impl MockOutlayerReply {
     pub fn set_change(&mut self, mode: String, hops: Option<u32>) {
         self.change_mode = mode;
         self.change_hops = hops.unwrap_or(0);
+    }
+    /// Holds the reply back for `hops` blocks, so the contract's check stays live meanwhile.
+    pub fn set_reply_delay(&mut self, hops: u32) {
+        self.reply_hops = hops;
+    }
+    /// One step of a delayed reply; the last step returns the body.
+    #[private]
+    pub fn hop_reply(&mut self, left: u32, body: String) {
+        if left == 0 {
+            env::value_return(body.as_bytes());
+        } else {
+            Self::hop_promise(left - 1, &body).as_return();
+        }
     }
     /// Sends every held change now.
     pub fn release_change(&mut self) -> u32 {
@@ -107,9 +125,35 @@ impl MockOutlayerReply {
             "delayed" => self.pay_later(payer, change, self.change_hops),
             _ => Promise::new(payer).transfer(change).detach(),
         }
-        match self.mode.as_str() {
-            "reply" => env::value_return(self.reply.as_bytes()),
-            _ => env::value_return(b"null"),
+        let body = match self.mode.as_str() {
+            "reply" => self.reply.clone(),
+            "reply_echo" => self.echo(input_data.as_deref()),
+            _ => "null".to_string(),
+        };
+        if self.reply_hops > 0 {
+            Self::hop_promise(self.reply_hops, &body).as_return();
+        } else {
+            env::value_return(body.as_bytes());
         }
+    }
+}
+impl MockOutlayerReply {
+    fn hop_promise(left: u32, body: &str) -> Promise {
+        Promise::new(env::current_account_id()).function_call(
+            "hop_reply".to_string(),
+            json!({"left": left, "body": body}).to_string().into_bytes(),
+            NearToken::from_yoctonear(0),
+            HOP_GAS.saturating_mul(u64::from(left) + 1),
+        )
+    }
+    /// The set reply with `bounty` and `seq` taken from the request's input.
+    fn echo(&self, input: Option<&str>) -> String {
+        let mut reply: Value = near_sdk::serde_json::from_str(&self.reply).expect("a JSON reply");
+        let input: Value = input
+            .and_then(|i| near_sdk::serde_json::from_str(i).ok())
+            .unwrap_or(Value::Null);
+        reply["bounty"] = input["bounty"].clone();
+        reply["seq"] = input["seq"].clone();
+        reply.to_string()
     }
 }

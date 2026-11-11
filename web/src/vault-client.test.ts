@@ -1,6 +1,7 @@
-// Withdrawal outcomes from EXPERIMENTAL_tx_status answers recorded in the sandbox
-// (contracts/pr-bounty/tests/flow.rs with RECORD_WEB_FIXTURES=1), vault view codecs, and the
-// checks made before any signature is requested. No network and no wallet.
+// Withdrawal outcomes from EXPERIMENTAL_tx_status answers recorded in the sandbox (the pilot's
+// two-key vault; their `vault_withdraw` log lines and the 73-byte `info` were reshaped by hand to
+// the one-key vault's), vault view codecs, and the checks made before any signature is requested.
+// No network and no wallet.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -16,10 +17,12 @@ import {
   decodeRecord,
   encodeInfo,
   encodeRecord,
+  INFO_LEN,
   mayAuthorizeAgain,
   sendWithdrawal,
   slotArgs,
   withdrawArgs,
+  withdrawLog,
   type Withdrawal,
 } from "../ui/vault-client.ts";
 
@@ -206,6 +209,36 @@ test("delivered needs final evidence matching the signed vault, destination and 
       },
     ],
     [
+      "no withdrawal log",
+      (tx) => {
+        outcomeOf(
+          tx,
+          tx.transaction_outcome.outcome.receipt_ids[0],
+        ).outcome.logs = [];
+        return tx;
+      },
+    ],
+    [
+      "the pilot's two-key log line",
+      (tx) => {
+        outcomeOf(
+          tx,
+          tx.transaction_outcome.outcome.receipt_ids[0],
+        ).outcome.logs = [`vault_withdraw key=primary n=${r.n} to=${r.to}`];
+        return tx;
+      },
+    ],
+    [
+      "a log for another number",
+      (tx) => {
+        outcomeOf(
+          tx,
+          tx.transaction_outcome.outcome.receipt_ids[0],
+        ).outcome.logs = [withdrawLog(BigInt(r.n) + 1n, r.to)];
+        return tx;
+      },
+    ],
+    [
       "call outcome on another account",
       (tx) => {
         outcomeOf(
@@ -374,15 +407,33 @@ test("an authorization past its deadline is refused before submission, and so ar
   );
 });
 
+test("the withdrawal log is the vault's one line for this number and destination", () => {
+  const r = recorded("withdrawal-delivered");
+  assert.equal(
+    withdrawLog(BigInt(r.n), r.to),
+    `vault_withdraw key=withdrawal n=${r.n} to=${r.to}`,
+  );
+  const logs = outcomeOf(
+    clone(r),
+    clone(r).transaction_outcome.outcome.receipt_ids[0],
+  ).outcome.logs;
+  assert.deepEqual(logs, [withdrawLog(BigInt(r.n), r.to)]);
+});
 test("vault views decode and encode back to the same bytes", () => {
   const r = recorded("withdrawal-delivered");
   const bytes = fromHex(r.info_after_hex as string);
+  assert.equal(bytes.length, 73);
+  assert.equal(INFO_LEN, 73);
   const info = decodeInfo(bytes);
   assert.equal(info.available, 0n);
   assert.equal(info.n, 2n);
   assert.ok(info.fund > 0n);
+  assert.equal(info.key.length, 33);
+  assert.equal(info.key[0], 0, "ed25519");
   assert.equal(hex(encodeInfo(info)), r.info_after_hex);
   assert.throws(() => decodeInfo(bytes.slice(1)));
+  assert.throws(() => decodeInfo(new Uint8Array(106)), "the pilot's 106 bytes");
+  assert.throws(() => encodeInfo({ ...info, key: new Uint8Array(32) }));
   for (const record of [
     {
       deposited: true,
@@ -409,7 +460,12 @@ test("vault views decode and encode back to the same bytes", () => {
   assert.throws(() => decodeRecord(bad));
   assert.equal(
     hex(slotArgs("bounty.test.near", 7, "Refund")),
-    `10000000${hex(new TextEncoder().encode("bounty.test.near"))}070000000000000002`,
+    `10000000${hex(new TextEncoder().encode("bounty.test.near"))}070000000000000001`,
+  );
+  assert.equal(
+    hex(slotArgs("bounty.test.near", 7, "Payout")).slice(-2),
+    "00",
+    "payout is kind 0",
   );
 });
 

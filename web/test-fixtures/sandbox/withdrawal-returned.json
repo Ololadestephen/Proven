@@ -132,7 +132,7 @@
         "outcome": {
           "executor_id": "0scb99d12db0bdd9f7557015e1fc1972e8316b67ae",
           "gas_burnt": 1859780223066,
-          "logs": ["vault_withdraw key=primary n=0 to=ghost.test.near"],
+          "logs": ["vault_withdraw key=withdrawal n=0 to=ghost.test.near"],
           "metadata": {
             "contracts": [
               {

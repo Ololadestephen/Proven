@@ -1,19 +1,20 @@
-// Withdrawals from a key-bound vault (contracts/vault): the signed message and its NEP-413 nonce,
-// the JSON `withdraw` arguments, the `info` and `slot` views, destination and amount checks, the
-// deadline, and the classification of a withdrawal transaction's final outcome. Pure functions:
-// nothing here signs, sends or reads the chain.
+// Withdrawals from a vault bound to one withdrawal key (contracts/vault): the signed message and
+// its NEP-413 nonce, the JSON `withdraw` arguments, the `info` and `slot` views, destination and
+// amount checks, the deadline, and the classification of a withdrawal transaction's final
+// outcome. Pure functions: nothing here signs, sends or reads the chain.
 import { hex, nep413Hash } from "./bounty-keys.ts";
 import { transactionHashOf } from "./action-guard.ts";
 
 /** The vault refuses a deadline more than 15 minutes ahead (OD-7); the page asks for 10. */
 export const MAX_DEADLINE_AHEAD_SECS = 15 * 60;
 export const DEADLINE_AHEAD_SECS = 10 * 60;
-export const INFO_LEN = 106;
+/** The `info` view: key (33) | n (8) | fund (16) | available (16). */
+export const INFO_LEN = 73;
 export const RECORD_LEN = 25;
+/** The vault's record kind bytes, as the contract's `SettlementKind::byte`. */
 export const SETTLEMENT_KIND = {
   Payout: 0,
-  BudgetReturn: 1,
-  Refund: 2,
+  Refund: 1,
 } as const;
 export type SettlementKindName = keyof typeof SETTLEMENT_KIND;
 
@@ -47,7 +48,7 @@ export function withdrawNonce(n: bigint): Uint8Array {
   return nonce;
 }
 
-/** The hash either vault key signs for this withdrawal; its NEP-413 recipient is the vault. */
+/** The hash the vault's key signs for this withdrawal; its NEP-413 recipient is the vault. */
 export const withdrawHash = (w: Withdrawal) =>
   nep413Hash(withdrawMessage(w), withdrawNonce(w.n), w.vault);
 
@@ -73,8 +74,9 @@ export function cliCommand(
 }
 
 export interface VaultInfo {
-  primary: Uint8Array;
-  backup: Uint8Array;
+  /** The withdrawal key, 33 bytes: the curve byte (0 for ed25519), then the key. */
+  key: Uint8Array;
+  /** The number the next withdrawal must carry. */
   n: bigint;
   fund: bigint;
   available: bigint;
@@ -98,21 +100,20 @@ const toLe = (v: bigint, len: number) => {
 export function decodeInfo(bytes: Uint8Array): VaultInfo {
   if (bytes.length !== INFO_LEN) throw new Error("Unreadable vault view.");
   return {
-    primary: bytes.slice(0, 33),
-    backup: bytes.slice(33, 66),
-    n: le(bytes.slice(66, 74)),
-    fund: le(bytes.slice(74, 90)),
-    available: le(bytes.slice(90, 106)),
+    key: bytes.slice(0, 33),
+    n: le(bytes.slice(33, 41)),
+    fund: le(bytes.slice(41, 57)),
+    available: le(bytes.slice(57, 73)),
   };
 }
 
 export function encodeInfo(i: VaultInfo): Uint8Array {
+  if (i.key.length !== 33) throw new Error("A vault key has 33 bytes.");
   const out = new Uint8Array(INFO_LEN);
-  out.set(i.primary, 0);
-  out.set(i.backup, 33);
-  out.set(toLe(i.n, 8), 66);
-  out.set(toLe(i.fund, 16), 74);
-  out.set(toLe(i.available, 16), 90);
+  out.set(i.key, 0);
+  out.set(toLe(i.n, 8), 33);
+  out.set(toLe(i.fund, 16), 41);
+  out.set(toLe(i.available, 16), 57);
   return out;
 }
 
@@ -192,6 +193,9 @@ export function checkWithdrawal(
   return null;
 }
 
+/** The one log line the vault writes when it accepts a withdrawal. */
+export const withdrawLog = (n: bigint, to: string) =>
+  `vault_withdraw key=withdrawal n=${n} to=${to}`;
 export type WithdrawalOutcome =
   | { kind: "delivered"; to: string; amount: bigint; n: bigint }
   | { kind: "returned"; amount: bigint; n: bigint; next: bigint }
@@ -220,7 +224,12 @@ interface Receipt {
 }
 interface ReceiptOutcome {
   id?: unknown;
-  outcome?: { status?: unknown; receipt_ids?: unknown; executor_id?: unknown };
+  outcome?: {
+    status?: unknown;
+    receipt_ids?: unknown;
+    executor_id?: unknown;
+    logs?: unknown;
+  };
 }
 interface TxStatus {
   final_execution_status?: unknown;
@@ -291,7 +300,8 @@ function withdrawCall(
  * Classifies a withdrawal from a finalized `EXPERIMENTAL_tx_status` answer. The transaction must
  * be exactly one `withdraw` call to the expected vault with the expected destination, amount and
  * number. Then:
- * - delivered: the call succeeded and the one transfer receipt it created, from the vault to the
+ * - delivered: the call succeeded, logged `vault_withdraw key=withdrawal n=<n> to=<to>`, and the
+ *   one transfer receipt it created, from the vault to the
  *   destination for exactly the signed amount, succeeded;
  * - returned: that transfer failed and the refund it created, from the system to the vault for
  *   exactly that amount, succeeded (the number is used; the next one is n + 1);
@@ -337,6 +347,12 @@ export function classifyWithdrawal(
     return { kind: "refused", reason, n: expected.n };
   }
   if (!("SuccessValue" in callStatus)) return pending("call not finished");
+  const logs = call.outcome?.logs;
+  if (
+    !Array.isArray(logs) ||
+    !logs.includes(withdrawLog(expected.n, expected.to))
+  )
+    return pending("no withdrawal log");
   const byId = (id: string) => receipts.find((r) => r.receipt_id === id);
   const outcomeOf = (id: string) => outcomes.find((o) => o.id === id);
   // The transfer must be a direct child of the call.

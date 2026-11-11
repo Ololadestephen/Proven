@@ -67,7 +67,8 @@ test("the link and the reward alone give a complete review", () => {
   assert.deepEqual(r.deadlines, {
     claim_by: NOW + 7 * 86400,
     merge_deadline: NOW + 14 * 86400,
-    checks_until: NOW + 14 * 86400 + 24 * 3600,
+    grace_ends: NOW + 14 * 86400 + 24 * 3600,
+    checks_until: NOW + 28 * 86400 + 24 * 3600,
     hard_refund_at: NOW + 28 * 86400 + 24 * 3600,
     claim_secs: 48 * 3600,
     grace_secs: 24 * 3600,
@@ -77,15 +78,15 @@ test("the link and the reward alone give a complete review", () => {
 test("the total is exact: reward plus the record deposit, with no rounding", () => {
   const r = ok(review({ rewardText: "0.1" }));
   assert.equal(r.reward, 100n * MILLI);
-  assert.equal(r.locked, 129n * MILLI);
-  assert.equal(r.kept, 29n * MILLI);
+  assert.equal(r.locked, 130n * MILLI);
+  assert.equal(r.kept, 30n * MILLI);
   assert.equal(r.returned_on_refund, 100n * MILLI);
   // A reserve that is locked with the reward comes back with it.
   const reserve: FeeSchedule = { ...PREVIEW_FEES, check_reserve: 30n * MILLI };
   const withReserve = ok(review({ fees: reserve }));
-  assert.equal(withReserve.locked, 159n * MILLI);
+  assert.equal(withReserve.locked, 160n * MILLI);
   assert.equal(withReserve.returned_on_refund, 130n * MILLI);
-  assert.equal(withReserve.kept, 29n * MILLI);
+  assert.equal(withReserve.kept, 30n * MILLI);
   // Twenty-four decimals survive.
   const fine = ok(review({ rewardText: "0.000000000000000000000001" }));
   assert.equal(fine.reward, 1n);
