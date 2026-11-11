@@ -108,11 +108,10 @@ export function RefundNotice({
   config: Config;
 }) {
   return (
-    <p className="bounty-refund-notice">
-      Merge checks are accepted until{" "}
-      {utc(hardRefundAt(bounty, config.refund_cap_secs))}. If no check can read
-      GitHub before then, a pull request merged on time is refunded to the
-      maintainer and the contributor is not paid. The refund is final.
+    <p className="bounty-refund-notice post-hint">
+      If no check reads GitHub before{" "}
+      {utc(hardRefundAt(bounty, config.refund_cap_secs))}, an on-time merge is
+      refunded to the maintainer, not paid. Final.
     </p>
   );
 }
@@ -160,43 +159,18 @@ export function ClaimView(props: {
   const blocked = !props.connected
     ? "Connect a wallet to claim."
     : props.barred === true
-      ? "This wallet's earlier claim on this bounty ended, so it cannot claim it again."
+      ? "This wallet already claimed this bounty once."
       : props.githubId === null
-        ? "Connect GitHub to this wallet first (see Your GitHub link above). A claim needs it."
-        : !keyCheck
-          ? "Check your wallet's key first."
-          : "";
+        ? "Link GitHub first (below)."
+        : "";
   return (
     <div className="bounty-action">
-      <h4>Claim</h4>
       <RefundNotice bounty={bounty} config={config} />
-      <p>
-        A claim lasts {duration(Number(bounty.claim_secs))}, or until the merge
-        deadline if that comes first. The pull request must be merged before{" "}
-        {utc(bounty.merge_deadline)}. If you release the claim or it ends, this
-        wallet cannot claim this bounty again. Claiming sends no NEAR.
+      <p className="post-hint">
+        Lasts {duration(Number(bounty.claim_secs))}; free; one claim per wallet.
+        Your wallet signs a message first: the payout goes to a vault only that
+        key controls.
       </p>
-      <p>
-        The money for this claim goes to a vault controlled by one key, the key
-        your wallet signs messages with. Nobody can replace that key, and if it
-        is lost the money cannot be recovered.
-      </p>
-      <TxButton
-        approved={props.approved}
-        busy={props.busy}
-        disabled={!props.connected || props.barred === true}
-        onClick={props.onCheckKey}
-      >
-        Check which key my wallet signs messages with
-      </TxButton>
-      {keyCheck ? (
-        <>
-          <p role="status">{keyCheck.text}</p>
-          <p>
-            Payouts for this claim go to vault <code>{keyCheck.vault}</code>.
-          </p>
-        </>
-      ) : null}
       <TxButton
         variant="primary"
         approved={props.approved}
@@ -204,8 +178,13 @@ export function ClaimView(props: {
         disabled={blocked !== ""}
         onClick={props.onClaim}
       >
-        Claim this bounty
+        Claim
       </TxButton>
+      {keyCheck ? (
+        <p role="status" className="post-hint">
+          {keyCheck.text} Payout vault <code>{keyCheck.vault}</code>.
+        </p>
+      ) : null}
       <SigningNote approved={props.approved} />
       {blocked ? <p className="workspace-empty">{blocked}</p> : null}
     </div>
@@ -261,9 +240,22 @@ function ClaimSection({
           });
         })
       : undefined;
+  // One click: the wallet signs the key message, then the claim. The vault is shown as soon as
+  // the key is known.
   const claim = () =>
-    wallet && keyCheck && githubId
+    wallet && githubId
       ? ctx.run("Claiming", target, async () => {
+          const found = await discoverMessageKey({
+            approved,
+            contract,
+            wallet,
+          });
+          const key = {
+            text: found.keyCheck.text,
+            key: found.key,
+            vault: vaultAddress(fromBase58(config.vault_code_hash), found.key),
+          };
+          setKeyCheck(key);
           await claimFlow({
             approved,
             contract,
@@ -272,7 +264,7 @@ function ClaimSection({
             chain: ctx.chain,
             bountyId: id,
             githubId,
-            key: keyCheck.key,
+            key: key.key,
           });
           ctx.done();
         })
@@ -308,17 +300,9 @@ export function SubmitView(props: {
   const parsed = parsePullRequestInput(props.value, props.bounty.repo);
   return (
     <div className="bounty-action">
-      <h4>Submit your pull request</h4>
-      <p>
-        Open the pull request on GitHub from the GitHub account you connected,
-        against <code>{props.bounty.base_ref}</code> in {props.bounty.repo}.
-        Then enter its number or its link here. One check reads the pull request
-        and your link gist, and records the pull request, its author and your
-        payout key. Submitting attaches {near(RUN_DEPOSIT)} for that check; the
-        unused part comes back.
-      </p>
       <label>
-        Pull request number or link
+        Your pull request into <code>{props.bounty.base_ref}</code> (number or
+        link)
         <input
           value={props.value}
           spellCheck={false}
@@ -342,7 +326,7 @@ export function SubmitView(props: {
         disabled={!parsed.ok || !!props.linkProblem}
         onClick={() => parsed.ok && props.onSubmit(parsed.number)}
       >
-        Submit pull request ({near(RUN_DEPOSIT)}, unused part returned)
+        Submit ({near(RUN_DEPOSIT)}, unused part returned)
       </TxButton>
       <SigningNote approved={props.approved} />
     </div>
@@ -440,7 +424,7 @@ export function Actions({
         busy={busy}
         onClick={() => void send("Cancelling", cancelCall(contract, id))}
       >
-        Cancel and refund to your vault (maintainer, only before a claim)
+        Cancel bounty
       </TxButton>,
     );
   if (isClaimant && claimEndable(bounty, now))
@@ -453,7 +437,7 @@ export function Actions({
           void send("Releasing the claim", releaseClaimCall(contract, id))
         }
       >
-        Release the claim (this wallet cannot claim this bounty again)
+        Release claim
       </TxButton>,
     );
   if (isBuyer && claimEndable(bounty, now))
@@ -466,7 +450,7 @@ export function Actions({
           void send("Revoking the claim", revokeClaimCall(contract, id))
         }
       >
-        Revoke the claim (maintainer, no pull request is submitted)
+        Revoke claim
       </TxButton>,
     );
   if (wallet && claimExpirable(bounty, now))
@@ -479,7 +463,7 @@ export function Actions({
           void send("Ending the claim", expireClaimCall(contract, id))
         }
       >
-        Expire the claim (anyone, its time has passed)
+        Expire claim
       </TxButton>,
     );
   if (
@@ -487,34 +471,37 @@ export function Actions({
     bounty.status === "Bound" &&
     mergeCheckable(bounty, now, config.refund_cap_secs)
   ) {
+    const free =
+      me === bounty.binding?.wallet &&
+      sponsored > 0 &&
+      config.sponsor_float !== "0";
+    if (free)
+      add(
+        "sponsored",
+        <TxButton
+          variant="primary"
+          approved={approved}
+          busy={busy}
+          onClick={() =>
+            void send("Checking the merge", checkMergeCall(contract, id, true))
+          }
+        >
+          Check merge, free ({sponsored} left)
+        </TxButton>,
+      );
     add(
       "check",
       <TxButton
-        variant="primary"
+        variant={free ? undefined : "primary"}
         approved={approved}
         busy={busy}
         onClick={() =>
           void send("Checking the merge", checkMergeCall(contract, id, false))
         }
       >
-        Check the merge, paying {near(RUN_DEPOSIT)} myself (unused part
-        returned)
+        Check merge ({near(RUN_DEPOSIT)})
       </TxButton>,
     );
-    if (me === bounty.binding?.wallet && sponsored > 0)
-      add(
-        "sponsored",
-        <TxButton
-          approved={approved}
-          busy={busy}
-          disabled={config.sponsor_float === "0"}
-          onClick={() =>
-            void send("Checking the merge", checkMergeCall(contract, id, true))
-          }
-        >
-          Sponsored check ({sponsored} left, free to you)
-        </TxButton>,
-      );
   }
   if (wallet && refundDue(bounty, now, config.refund_cap_secs))
     add(
@@ -526,7 +513,7 @@ export function Actions({
           void send("Refunding the maintainer", settleCall(contract, id))
         }
       >
-        Refund the maintainer's vault (anyone, no cost)
+        Refund maintainer
       </TxButton>,
     );
   if (wallet && due)
@@ -537,7 +524,7 @@ export function Actions({
         busy={busy}
         onClick={() => void send("Sending", sendDueCall(contract, id))}
       >
-        Send the due settlement (anyone, same vault, same amount)
+        Send settlement
       </TxButton>,
     );
   if (wallet)
@@ -554,7 +541,7 @@ export function Actions({
             )
           }
         >
-          Record the {kindLabel(kind)}'s result (anyone, no cost, sends nothing)
+          Record {kindLabel(kind)} result
         </TxButton>,
       );
   if (wallet)
@@ -571,18 +558,14 @@ export function Actions({
             )
           }
         >
-          Ask the vault whether the {kindLabel(kind)} arrived (attach{" "}
-          {near(config.reconcile_deposit)}; what the vault does not keep comes
-          back)
+          Ask vault about {kindLabel(kind)} ({near(config.reconcile_deposit)})
         </TxButton>,
       );
   const warning = failedLookWarning(bounty, config.refund_cap_secs);
   return (
     <div className="bounty-actions">
       {!wallet ? (
-        <p className="workspace-empty">
-          Connect a wallet to act on this bounty.
-        </p>
+        <p className="workspace-empty">Connect a wallet to act.</p>
       ) : null}
       {open ? <ClaimSection id={id} bounty={bounty} ctx={ctx} /> : null}
       {canSubmit ? (
@@ -613,26 +596,19 @@ export function Actions({
           }
         />
       ) : null}
-      {bounty.status === "Bound" ? (
-        <p>
-          Check the merge: a merge into <code>{bounty.base_ref}</code> before{" "}
-          {utc(bounty.merge_deadline)} pays the vault{" "}
-          <code>{short(bounty.claim?.vault ?? "")}</code>. Checks are accepted
-          until {utc(checksUntil(bounty, config.refund_cap_secs))}, so a merge
-          before the deadline is still paid when it is read after the grace. An
-          open pull request stays pending, and a check that cannot read GitHub
-          changes nothing.
+      {bounty.status === "Bound" && (isBuyer || isClaimant) ? (
+        <p className="post-hint">
+          Checks run when someone asks; a merge before{" "}
+          {utc(bounty.merge_deadline)} is paid at the first check that reads it,
+          until {utc(checksUntil(bounty, config.refund_cap_secs))}.
         </p>
       ) : null}
       {warning ? <p role="alert">{warning}</p> : null}
-      {bounty.status === "Bound" && me === bounty.binding?.wallet ? (
-        <p>
-          <SponsorNote config={config} /> {sponsored} of{" "}
-          {config.sponsored_runs_per_bounty} sponsored checks are left for this
-          bounty.
-          {config.sponsor_float === "0"
-            ? " The sponsor float is empty now, so only checks you pay for run; refunds, recovery and withdrawals still work."
-            : ""}
+      {bounty.status === "Bound" &&
+      me === bounty.binding?.wallet &&
+      config.sponsor_float === "0" ? (
+        <p className="post-hint">
+          Free checks are paused (sponsor float empty).
         </p>
       ) : null}
       {buttons.length ? (
@@ -675,19 +651,32 @@ export function BountyCard({
   const repo = `https://github.com/${bounty.repo}`;
   const settlements = present(bounty);
   const me = ctx.wallet?.accountId;
+  // A party sees its own vault once this bounty has paid into it.
   const vaults = [
     ...new Set(
-      [
-        me === bounty.buyer ? bounty.maintainer_vault : null,
-        me && me === bounty.claim?.wallet ? bounty.claim.vault : null,
-      ].filter(Boolean),
+      settlements
+        .map(([, s]) => s.vault)
+        .filter(
+          (v) =>
+            (me === bounty.buyer && v === bounty.maintainer_vault) ||
+            (!!me && me === bounty.claim?.wallet && v === bounty.claim.vault),
+        ),
     ),
   ] as string[];
+  const isBuyer = !!me && me === bounty.buyer;
+  const isClaimant = !!me && me === bounty.claim?.wallet;
+  const party = isBuyer || isClaimant;
+  const ended = ["Paid", "Refunded", "Cancelled", "Ineligible"].includes(
+    bounty.status,
+  );
   return (
-    <article className="workspace-card bounty-card">
-      <div className="workspace-section-heading">
-        <h3>
-          Bounty {id} ·{" "}
+    <details
+      className="workspace-card bounty-card"
+      open={party && !ended ? true : undefined}
+    >
+      <summary className="bounty-summary">
+        <span className="bounty-title">
+          #{id} ·{" "}
           <a
             href={`${repo}/issues/${bounty.issue}`}
             target="_blank"
@@ -695,70 +684,74 @@ export function BountyCard({
           >
             {bounty.repo}#{bounty.issue}
           </a>
-        </h3>
+          {isBuyer ? " · yours" : isClaimant ? " · your claim" : ""}
+        </span>
+        <span className="bounty-reward">{near(bounty.reward)}</span>
         <span className="status-pill">{status.line}</span>
-      </div>
+      </summary>
       {status.detail ? <p className="bounty-status">{status.detail}</p> : null}
       <dl className="workspace-review bounty-facts">
-        <dt>Reward</dt>
-        <dd>{near(bounty.reward)}</dd>
         <dt>Branch</dt>
         <dd>
           <code>{bounty.base_ref}</code>
         </dd>
-        <dt>Maintainer</dt>
-        <dd>{short(bounty.buyer)}</dd>
-        <dt>Contributor</dt>
-        <dd>
-          {bounty.claim
-            ? `${short(bounty.claim.wallet)} (GitHub id ${bounty.claim.github_id})`
-            : "Unclaimed"}
-        </dd>
-        <dt>Claims until</dt>
-        <dd>
-          {utc(bounty.claim_by)}, each claim lasts{" "}
-          {duration(Number(bounty.claim_secs))}
-        </dd>
+        {bounty.status === "Open" ? (
+          <>
+            <dt>Claims until</dt>
+            <dd>{utc(bounty.claim_by)}</dd>
+          </>
+        ) : null}
         <dt>Merge before</dt>
         <dd>{utc(bounty.merge_deadline)}</dd>
-        <dt>Refund</dt>
-        <dd>
-          From {utc(graceEnds(bounty))} if a check at least a minute after the
-          deadline finds it not merged; otherwise from{" "}
-          {utc(hardRefundAt(bounty, config.refund_cap_secs))}
-        </dd>
-        <dt>Evidence</dt>
-        <dd className="bounty-evidence">
-          {bounty.binding ? (
-            <>
-              <a
-                href={`${repo}/pull/${bounty.binding.pr_number}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                PR #{bounty.binding.pr_number}
-              </a>
-              <Evidence id={bounty.binding.request_id} label="submission run" />
-            </>
-          ) : null}
-          {bounty.merge ? (
-            <>
-              <span>merged {utc(bounty.merge.merged_at)}</span>
-              <Evidence id={bounty.merge.request_id} label="merge run" />
-            </>
-          ) : null}
-          {bounty.last_check ? (
-            <span>
-              last check: {bounty.last_check.kind} →{" "}
-              <code>{bounty.last_check.outcome}</code>{" "}
-              <Evidence id={bounty.last_check.request_id} label="run" />
-            </span>
-          ) : null}
-          {!bounty.binding && !bounty.merge && !bounty.last_check ? (
-            <span>none yet</span>
-          ) : null}
-        </dd>
-        {settlements.length ? (
+        {isBuyer && bounty.claim ? (
+          <>
+            <dt>Contributor</dt>
+            <dd>
+              {short(bounty.claim.wallet)} (GitHub id {bounty.claim.github_id})
+            </dd>
+          </>
+        ) : null}
+        {isBuyer && !ended ? (
+          <>
+            <dt>Refund</dt>
+            <dd>
+              From {utc(graceEnds(bounty))} if not merged; otherwise from{" "}
+              {utc(hardRefundAt(bounty, config.refund_cap_secs))}
+            </dd>
+          </>
+        ) : null}
+        {bounty.binding || bounty.merge || bounty.last_check ? (
+          <>
+            <dt>Evidence</dt>
+            <dd className="bounty-evidence">
+              {bounty.binding ? (
+                <a
+                  href={`${repo}/pull/${bounty.binding.pr_number}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  PR #{bounty.binding.pr_number}
+                </a>
+              ) : null}
+              <Evidence
+                id={bounty.binding?.request_id}
+                label="submission run"
+              />
+              {bounty.merge ? (
+                <span>merged {utc(bounty.merge.merged_at)}</span>
+              ) : null}
+              <Evidence id={bounty.merge?.request_id} label="merge run" />
+              {bounty.last_check &&
+              !["bound", "paid"].includes(bounty.last_check.outcome) ? (
+                <span>
+                  last check <code>{bounty.last_check.outcome}</code>{" "}
+                  <Evidence id={bounty.last_check.request_id} label="run" />
+                </span>
+              ) : null}
+            </dd>
+          </>
+        ) : null}
+        {party && settlements.length ? (
           <>
             <dt>Settlement</dt>
             <dd>
@@ -792,6 +785,6 @@ export function BountyCard({
           shared={inVault.get(v) ?? 0}
         />
       ))}
-    </article>
+    </details>
   );
 }

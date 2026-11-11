@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./market-client.ts";
 import { parseNearAmount } from "./near-amount.ts";
 import { bountyChain } from "./bounty-chain.ts";
@@ -26,6 +26,14 @@ const PATH = "/api/market/bounties";
 /** What the page tells a person about their vault, in one place. */
 export const VAULT_RULES =
   "Money stays in the vault until you withdraw it; nothing is forwarded. Only this vault's key can withdraw, and a lost key loses the money.";
+
+/** A yoctoNEAR amount as an exact decimal NEAR string, for the amount field. */
+export function nearDecimal(yocto: string): string {
+  const v = BigInt(yocto);
+  const whole = v / 10n ** 24n;
+  const frac = (v % 10n ** 24n).toString().padStart(24, "0").replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : `${whole}`;
+}
 
 const storage = () => {
   try {
@@ -80,19 +88,18 @@ export function VaultView(props: VaultViewProps) {
   return (
     <div className="bounty-vault">
       <h4>
-        Your vault <code>{props.vault}</code>
+        {info ? `Your vault: ${numbers.available} to withdraw` : "Your vault"}
       </h4>
-      <p className="post-hint">{VAULT_RULES}</p>
       {credits.map((entry, i) => {
         const shown = settlementDisplay(entry.settlement, latest, clock);
         return (
-          <p key={`${entry.label}-${i}`} className="vault-credit">
+          <p key={`${entry.label}-${i}`} className="vault-credit post-hint">
             <strong>Credit</strong>
             {entry.label ? ` (${entry.label})` : ""}: {shown.vaultCreditText}
           </p>
         );
       })}
-      <p className="wallet-withdrawal">
+      <p className="wallet-withdrawal post-hint">
         <strong>Withdrawal</strong>: {wallet.walletText}
         {props.shared > 1 ? " Shown for the whole vault." : ""}
       </p>
@@ -100,8 +107,15 @@ export function VaultView(props: VaultViewProps) {
         <p className="post-hint">
           Not created yet: its first deposit creates it.
         </p>
-      ) : (
+      ) : null}
+      <details className="bounty-terms">
+        <summary>Vault details</summary>
+        <p className="post-hint">{VAULT_RULES}</p>
         <dl className="workspace-review">
+          <dt>Vault</dt>
+          <dd>
+            <code>{props.vault}</code>
+          </dd>
           <dt>Withdrawable</dt>
           <dd>{numbers.available}</dd>
           <dt>Storage fund (kept by the vault)</dt>
@@ -109,7 +123,7 @@ export function VaultView(props: VaultViewProps) {
           <dt>Next withdrawal number</dt>
           <dd>{numbers.n}</dd>
         </dl>
-      )}
+      </details>
       {history.length ? (
         <ul className="bounty-withdrawals">
           {history.map((h, i) => (
@@ -155,10 +169,6 @@ export function VaultView(props: VaultViewProps) {
               inputMode="decimal"
             />
           </label>
-          <p className="post-hint">
-            Your wallet signs a message with the vault key, then sends the
-            withdrawal. You pay the gas.
-          </p>
           <button
             type="button"
             className="button button-primary"
@@ -167,6 +177,9 @@ export function VaultView(props: VaultViewProps) {
           >
             Withdraw to {props.to || "an account"}
           </button>
+          <p className="post-hint">
+            Your wallet signs with the vault key, then sends it. You pay gas.
+          </p>
           {!props.approved ? (
             <p className="workspace-empty signing-off" role="note">
               {SIGNING_OFF}
@@ -220,6 +233,7 @@ export function VaultPanel({
   );
   const [to, setTo] = useState(wallet?.accountId ?? "");
   const [amount, setAmount] = useState("");
+  const prefilled = useRef(false);
   const [error, setError] = useState("");
   const [keyCheck, setKeyCheck] = useState("");
   const reads = useMemo(() => chain ?? bountyChain(api), [chain]);
@@ -229,7 +243,15 @@ export function VaultPanel({
   useEffect(() => {
     setReadFailed(false);
     api<VaultRead>(`${PATH}/vault/${vault}`)
-      .then(setRead)
+      .then((value) => {
+        setRead(value);
+        // Prefill the whole withdrawable amount once; the person can still edit it.
+        const available = value?.exists ? value.info?.available : undefined;
+        if (!prefilled.current && available && BigInt(available) > 0n) {
+          prefilled.current = true;
+          setAmount(nearDecimal(available));
+        }
+      })
       .catch(() => {
         setRead(null);
         setReadFailed(true);

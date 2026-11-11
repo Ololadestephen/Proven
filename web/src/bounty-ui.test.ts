@@ -257,6 +257,7 @@ test("a bound card says verifying while a merge check is live, and shows evidenc
 test("the settlement is shown apart from the status", () => {
   const html = cardOf(
     bounty({ status: "Paid", claim: claim(), binding, merge, payout }),
+    { wallet: wallet(MAINT) },
   );
   assert.equal(pill(html), "Paid");
   assert.match(html, /<dt>Settlement<\/dt>/);
@@ -298,38 +299,36 @@ test("Release for the claimant, Revoke for the maintainer, Expire for anyone aft
   const asClaimant = cardOf(during, { ...approved, wallet: wallet(CONTRIB) });
   const asMaintainer = cardOf(during, { ...approved, wallet: wallet(MAINT) });
   const asStranger = cardOf(during, { ...approved, wallet: wallet(STRANGER) });
-  assert.ok(open(asClaimant, /^Release the claim/));
-  assert.doesNotMatch(asClaimant, /Revoke the claim|Expire the claim/);
-  assert.ok(open(asMaintainer, /^Revoke the claim/));
-  assert.doesNotMatch(asMaintainer, /Release the claim|Expire the claim/);
-  assert.doesNotMatch(asStranger, /Release the claim|Revoke|Expire/);
+  assert.ok(open(asClaimant, /^Release claim/));
+  assert.doesNotMatch(asClaimant, /Revoke claim|Expire claim/);
+  assert.ok(open(asMaintainer, /^Revoke claim/));
+  assert.doesNotMatch(asMaintainer, /Release claim|Expire claim/);
+  assert.doesNotMatch(asStranger, /Release claim|Revoke|Expire/);
   // After the claim ends, anyone may expire it.
   const after = { ...approved, now: T0 + 50_001 };
   const expired = cardOf(during, { ...after, wallet: wallet(STRANGER) });
-  assert.ok(open(expired, /^Expire the claim/));
-  assert.doesNotMatch(expired, /Release the claim|Revoke/);
+  assert.ok(open(expired, /^Expire claim/));
+  assert.doesNotMatch(expired, /Release claim|Revoke/);
 });
 
 test("a maintainer can cancel only while no one holds a claim", () => {
   const w = { approved: true, wallet: wallet(MAINT) };
-  assert.ok(open(cardOf(bounty(), w), /^Cancel and refund to your vault/));
-  assert.doesNotMatch(cardOf(claimed(), w), /Cancel and refund/);
+  assert.ok(open(cardOf(bounty(), w), /^Cancel bounty$/));
+  assert.doesNotMatch(cardOf(claimed(), w), /Cancel bounty/);
   assert.doesNotMatch(
     cardOf(bounty(), { approved: true, wallet: wallet(STRANGER) }),
-    /Cancel and refund/,
+    /Cancel bounty/,
   );
 });
 
 test("a contributor sees check buttons on a submitted bounty, and only the bound wallet sees the sponsored one", () => {
   const b = bound();
   const asBound = cardOf(b, { approved: true, wallet: wallet(CONTRIB) });
-  assert.ok(
-    open(asBound, /^Check the merge, paying 0\.01 testnet NEAR myself/),
-  );
-  assert.ok(open(asBound, /^Sponsored check \(2 left, free to you\)/));
+  assert.ok(open(asBound, /^Check merge \(0\.01 testnet NEAR\)$/));
+  assert.ok(open(asBound, /^Check merge, free \(2 left\)$/));
   const asStranger = cardOf(b, { approved: true, wallet: wallet(STRANGER) });
-  assert.ok(open(asStranger, /^Check the merge, paying/));
-  assert.doesNotMatch(asStranger, /Sponsored check/);
+  assert.ok(open(asStranger, /^Check merge \(/));
+  assert.doesNotMatch(asStranger, /Check merge, free/);
   // After the grace the check buttons stay: an on-time merge can still be read and paid.
   assert.ok(
     open(
@@ -338,7 +337,7 @@ test("a contributor sees check buttons on a submitted bounty, and only the bound
         wallet: wallet(STRANGER),
         now: T0 + 500_000 + 24 * 3600 + 60,
       }),
-      /^Check the merge, paying/,
+      /^Check merge \(/,
     ),
   );
   // A live check or the hard cutoff turns the check buttons off altogether.
@@ -347,7 +346,7 @@ test("a contributor sees check buttons on a submitted bounty, and only the bound
       approved: true,
       wallet: wallet(CONTRIB),
     }),
-    /Check the merge, paying/,
+    /Check merge \(/,
   );
   assert.doesNotMatch(
     cardOf(b, {
@@ -355,23 +354,20 @@ test("a contributor sees check buttons on a submitted bounty, and only the bound
       wallet: wallet(CONTRIB),
       now: hardRefundAt(b, config.refund_cap_secs),
     }),
-    /Check the merge, paying/,
+    /Check merge \(/,
   );
 });
 
 test("the refund button appears when the contract would accept it", () => {
   const w = { approved: true, wallet: wallet(STRANGER) };
-  assert.doesNotMatch(cardOf(bounty(), w), /Refund the maintainer/);
+  assert.doesNotMatch(cardOf(bounty(), w), /Refund maintainer/);
   assert.ok(
-    open(
-      cardOf(bounty(), { ...w, now: T0 + 100_001 }),
-      /^Refund the maintainer's vault/,
-    ),
+    open(cardOf(bounty(), { ...w, now: T0 + 100_001 }), /^Refund maintainer$/),
   );
   assert.ok(
     open(
       cardOf(bounty({ status: "Ineligible", claim: claim(), binding }), w),
-      /^Refund the maintainer's vault/,
+      /^Refund maintainer$/,
     ),
   );
 });
@@ -386,10 +382,10 @@ test("settlement recovery buttons follow the settlement's state", () => {
     }),
     w,
   );
-  assert.ok(open(html, /^Send the due settlement/));
+  assert.ok(open(html, /^Send settlement$/));
   // Unknown outcome, long past the open delay: anyone may ask the vault.
-  assert.ok(open(html, /^Ask the vault whether the payout arrived/));
-  assert.doesNotMatch(html, /Record the payout's result/);
+  assert.ok(open(html, /^Ask vault about payout/));
+  assert.doesNotMatch(html, /Record payout result/);
   const recorded = cardOf(
     bounty({
       status: "Paid",
@@ -397,7 +393,7 @@ test("settlement recovery buttons follow the settlement's state", () => {
     }),
     w,
   );
-  assert.ok(open(recorded, /^Record the payout's result/));
+  assert.ok(open(recorded, /^Record payout result/));
 });
 
 // ---- The claim step ----
@@ -421,55 +417,41 @@ test("the refund notice stands above the Claim button, with the date and the fin
   const b = bounty();
   const html = claimView({ bounty: b });
   const notice = html.indexOf("refunded to the maintainer");
-  const claimButton = html.indexOf(">Claim this bounty</button>");
+  const claimButton = html.indexOf(">Claim</button>");
   assert.ok(notice > 0 && claimButton > 0);
   assert.ok(notice < claimButton, "the notice comes before the Claim button");
   const date = utc(hardRefundAt(b, config.refund_cap_secs));
   assert.match(
-    html,
+    html.replace(/<!-- -->/g, ""),
     new RegExp(
-      `Merge checks are accepted until ${date}\\. If no check can read GitHub before then, a pull request merged on time is refunded to the maintainer and the contributor is not paid\\. The refund is final\\.`,
+      `If no check reads GitHub before\\s+${date}, an on-time merge is\\s+refunded to the maintainer, not paid\\. Final\\.`,
     ),
   );
-  // The notice is also above the key check button, so it is read before anything is signed.
-  assert.ok(notice < html.indexOf("Check which key my wallet signs"));
 });
 
-test("the claim step shows the claim length and the merge deadline", () => {
+test("the claim step shows the claim length and that a wallet claims once", () => {
   const html = claimView({});
-  assert.match(html, /A claim lasts 2 days/);
-  assert.match(html, /merged before 2027-/);
-  assert.match(html, /cannot claim this bounty again/);
-  assert.match(html, /Claiming\s+sends no NEAR/);
+  assert.match(html, /Lasts 2 days; free; one claim per wallet\./);
 });
 
-test("the claim step needs a key check, a GitHub link and a wallet, and says which is missing", () => {
-  const claimOff = (html: string) => button(html, /^Claim this bounty$/);
-  const ready = claimView({
+test("the claim step needs a GitHub link and a wallet, and says which is missing", () => {
+  const claimOff = (html: string) => button(html, /^Claim$/);
+  // The key check happens inside the claim, so it no longer blocks the button.
+  const ready = claimView({});
+  assert.equal(claimOff(ready).disabled, false);
+  const found = claimView({
     keyCheck: { text: "Key text.", key: MESSAGE_KEY, vault: VAULT },
   });
-  assert.equal(claimOff(ready).disabled, false);
-  assert.match(ready, new RegExp(`vault <code>${VAULT}</code>`));
-  const noCheck = claimView({});
-  assert.equal(claimOff(noCheck).disabled, true);
-  assert.match(noCheck, /Check your wallet's key first\./);
+  assert.match(found, new RegExp(`vault <code>${VAULT}</code>`));
   const noLink = claimView({ githubId: null });
   assert.equal(claimOff(noLink).disabled, true);
-  assert.match(noLink, /Connect GitHub to this wallet first/);
+  assert.match(noLink, /Link GitHub first/);
   const noWallet = claimView({ connected: false });
   assert.equal(claimOff(noWallet).disabled, true);
   assert.match(noWallet, /Connect a wallet to claim\./);
-  const barred = claimView({
-    barred: true,
-    keyCheck: { text: "Key text.", key: MESSAGE_KEY, vault: VAULT },
-  });
+  const barred = claimView({ barred: true });
   assert.equal(claimOff(barred).disabled, true);
-  assert.match(barred, /earlier claim on this bounty ended/);
-  const busy = claimView({
-    busy: true,
-    keyCheck: { text: "Key text.", key: MESSAGE_KEY, vault: VAULT },
-  });
-  assert.equal(claimOff(busy).disabled, true);
+  assert.match(barred, /already claimed this bounty once/);
 });
 
 test("the claim step shows what the key check found, including a message key that differs", () => {
@@ -500,7 +482,7 @@ test("a claim card for a connected contributor shows the notice, with signing of
     wallet: wallet(CONTRIB),
     link: linkReady(),
   });
-  assert.match(html, /If no check can read GitHub before then/);
+  assert.match(html, /If no check reads GitHub before/);
   assert.match(html, /Signing is off in this build/);
   for (const b of buttons(html)) assert.equal(b.disabled, true, b.text);
 });
@@ -527,7 +509,7 @@ const submitView = (value: string, over: Record<string, unknown> = {}) =>
     onSubmit() {},
     ...over,
   }) as string;
-const submitButton = (html: string) => button(html, /^Submit pull request/);
+const submitButton = (html: string) => button(html, /^Submit \(/);
 
 test("the submit button stays off until the input is a pull request of this repository", () => {
   assert.equal(submitButton(submitView("")).disabled, true);
@@ -554,12 +536,8 @@ test("the submit button stays off until the input is a pull request of this repo
 
 test("the submit step says what it costs and what it records", () => {
   const html = submitView("42");
-  assert.match(html, /attaches 0\.01 testnet NEAR/);
-  assert.match(html, /unused\s+part comes back/);
-  assert.match(
-    html,
-    /records the pull request, its author and your\s+payout key/,
-  );
+  assert.match(html, /Submit \(0\.01 testnet NEAR, unused part returned\)/);
+  assert.match(html, /Your pull request into/);
   assert.equal(
     submitButton(submitView("42", { approved: false })).disabled,
     true,
@@ -579,10 +557,10 @@ test("a claimant sees the submit step on a claimed bounty, and nobody else does"
     wallet: wallet(CONTRIB),
     link: linkReady(),
   });
-  assert.match(mine, /Submit your pull request/);
+  assert.match(mine, /Your pull request into/);
   assert.doesNotMatch(
     cardOf(b, { approved: true, wallet: wallet(STRANGER), link: linkReady() }),
-    /Submit your pull request/,
+    /Your pull request into/,
   );
   // After the claim's end there is nothing to submit to.
   assert.doesNotMatch(
@@ -592,7 +570,7 @@ test("a claimant sees the submit step on a claimed bounty, and nobody else does"
       link: linkReady(),
       now: T0 + 50_001,
     }),
-    /Submit your pull request/,
+    /Your pull request into/,
   );
   // A link that changed after the claim cannot submit; the page says to release and claim again.
   const changed = cardOf(b, {
@@ -661,8 +639,8 @@ test("while GitHub is waiting, the device code and the login link are shown", ()
 
 test("an active link is shown, and the connect button is gone", () => {
   const html = linkView({ link: linkReady("583231") });
-  assert.match(html, /<dt>GitHub id<\/dt><dd>583231<\/dd>/);
-  assert.match(html, /aa5a315d61ae9438b18d/);
+  assert.match(html, /Linked: GitHub id 583231/);
+  assert.match(html, /aa5a315d…/);
   assert.doesNotMatch(html, /Connect GitHub<\/button>/);
 });
 
@@ -780,7 +758,7 @@ const vaultView = (over: Record<string, unknown> = {}) =>
     ...over,
   }) as string;
 const lineOf = (html: string, cls: string) =>
-  (new RegExp(`<p class="${cls}">([\\s\\S]*?)</p>`).exec(html)?.[1] ?? "")
+  (new RegExp(`<p class="${cls}[^"]*">([\\s\\S]*?)</p>`).exec(html)?.[1] ?? "")
     .replace(/<[^>]*>/g, "")
     .replace(/\s+/g, " ");
 const delivered = {
@@ -852,8 +830,8 @@ test("a vault shared by several settlements shows one wallet line for the whole 
     ],
     shared: 2,
   });
-  assert.equal((html.match(/class="vault-credit"/g) ?? []).length, 2);
-  assert.equal((html.match(/class="wallet-withdrawal"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="vault-credit/g) ?? []).length, 2);
+  assert.equal((html.match(/class="wallet-withdrawal/g) ?? []).length, 1);
   assert.match(html, /Shown for the whole vault\./);
 });
 
@@ -874,10 +852,7 @@ test("the vault says money is not in the wallet until withdrawn, nothing is forw
 test("withdrawing signs with the vault's key, and the destination defaults to the connected account and can be edited", () => {
   const html = vaultView();
   assert.match(html, /<input spellCheck="false" value="contrib\.testnet"\/>/);
-  assert.match(
-    html,
-    /signs a message with the vault key, then sends the\s+withdrawal/,
-  );
+  assert.match(html, /Your wallet signs with the vault key, then sends it\./);
   assert.equal(button(html, /^Withdraw to contrib\.testnet$/).disabled, false);
   // The key check text of the last withdrawal is shown.
   const text = describeKeyCheck({
@@ -967,18 +942,19 @@ test("the same page with signing on has buttons that work, so the switch is the 
   const html = renderPage({
     wallet: wallet(CONTRIB),
     approved: true,
+    poster: false,
     link: linkReady(null),
   });
   assert.doesNotMatch(html, /Signing is off in this build/);
   assert.equal(button(html, /^Connect GitHub$/).disabled, false);
-  assert.equal(button(html, /^Release the claim/).disabled, false);
+  assert.equal(button(html, /^Release claim/).disabled, false);
 });
 
 test("the page shows the link panel, the posting form and every bounty, newest first", () => {
-  const html = renderPage();
+  const html = renderPage({ link: linkReady("583231") });
   assert.match(html, /<h2>Your GitHub account<\/h2>/);
   assert.match(html, /<h2>Post a bounty<\/h2>/);
-  const order = [...html.matchAll(/Bounty (\d+) ·/g)].map((m) => m[1]);
+  const order = [...html.matchAll(/#(\d+) ·/g)].map((m) => m[1]);
   assert.deepEqual(order, ["8", "7", "6", "5", "4", "3", "2", "1"]);
   const statuses = [
     ...html.matchAll(/<span class="status-pill">([^<]*)</g),
@@ -1005,10 +981,7 @@ test("the page header states the vault and sponsor rules without a check budget"
     html,
     /vaults controlled by one withdrawal key,\s+not to account names/,
   );
-  assert.match(
-    html,
-    /<dt>Record deposit<\/dt><dd>0\.03 testnet NEAR per bounty, kept/,
-  );
+  assert.match(html, /keeps 0\.03 testnet NEAR as its record/);
   assert.match(html, /paid from the owner's float/);
 });
 

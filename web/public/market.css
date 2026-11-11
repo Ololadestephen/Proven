@@ -325,3 +325,27 @@
     animation: none;
   }
 }
+
+/* PR bounties: one compact row per bounty; details open on click. */
+.bounty-card > summary.bounty-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.bounty-card > summary.bounty-summary::-webkit-details-marker {
+  display: none;
+}
+.bounty-summary .bounty-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+.bounty-summary .bounty-reward {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.bounty-card[open] > summary.bounty-summary {
+  margin-bottom: 12px;
+}

@@ -185,7 +185,6 @@ export function PostFormView(props: FormViewProps) {
   });
   const review = outcome?.ok ? outcome.review : null;
   const idle = !block && !props.busy;
-  const keyChecked = !!props.keyCheck;
   return (
     <section className="workspace-card">
       <h2>Post a bounty</h2>
@@ -257,24 +256,15 @@ export function PostFormView(props: FormViewProps) {
           ))}
         </div>
       </details>
-      {props.onCheckKey ? (
-        <>
-          <button
-            type="button"
-            className="button button-secondary"
-            disabled={!idle || !review}
-            aria-describedby="post-blocked"
-            onClick={props.onCheckKey}
-          >
-            Check wallet key
-          </button>
-          {props.keyCheck ? <p role="status">{props.keyCheck}</p> : null}
-        </>
+      {props.keyCheck ? (
+        <p role="status" className="post-hint">
+          {props.keyCheck}
+        </p>
       ) : null}
       <button
         type="button"
         className="button button-primary"
-        disabled={!idle || !review || !keyChecked || !props.onPost}
+        disabled={!idle || !review || !props.onPost}
         aria-describedby="post-blocked"
         onClick={() => review && props.onPost?.(review)}
       >
@@ -284,8 +274,8 @@ export function PostFormView(props: FormViewProps) {
         {[
           review ? "" : "Enter an issue link and a reward.",
           block,
-          review && !block && props.onCheckKey && !keyChecked
-            ? "Check your wallet key first: refunds go to a vault only that key controls."
+          review && !block
+            ? "Your wallet signs a message first: refunds go to a vault only that key controls."
             : "",
         ]
           .filter(Boolean)

@@ -106,12 +106,25 @@ function PostPreview(props: {
           : undefined
       }
       onPost={
-        wallet && key
+        wallet
           ? (review) =>
               void props.run(
                 "Posting the bounty",
                 { bountyId: null },
                 async () => {
+                  let use = key;
+                  if (!use) {
+                    const found = await discoverMessageKey({
+                      approved,
+                      contract: props.contract,
+                      wallet,
+                    });
+                    use = found.key;
+                    setKey(use);
+                    setKeyText(
+                      `Refunds go to vault ${vaultAddress(fromBase58(config.vault_code_hash), use)}.`,
+                    );
+                  }
                   await postFlow({
                     approved,
                     contract: props.contract,
@@ -119,7 +132,7 @@ function PostPreview(props: {
                     wallet,
                     chain: props.chain,
                     review,
-                    key,
+                    key: use,
                     nonce: randomNonce(),
                   });
                   setKey(null);
@@ -225,22 +238,11 @@ export function PrBountiesView(props: PageProps) {
   return (
     <>
       <section className="workspace-card">
-        <p>Paid when the pull request is merged before the deadline.</p>
-        <dl className="workspace-review bounty-facts">
-          <dt>Repository</dt>
-          <dd>
-            <code>{config.pilot_repo}</code>
-          </dd>
-          <dt>Check fee</dt>
-          <dd>{near(config.run_deposit)}, unused part returned</dd>
-          <dt>Record deposit</dt>
-          <dd>{near(config.storage_deposit)} per bounty, kept</dd>
-          <dt>Contract</dt>
-          <dd>
-            <code>{contract}</code>
-            {config.paused ? " (posting paused)" : ""}
-          </dd>
-        </dl>
+        <p className="post-hint">
+          Paid when the pull request merges before the deadline ·{" "}
+          <code>{config.pilot_repo}</code> · check {near(config.run_deposit)}
+          {config.paused ? " · posting paused" : ""}
+        </p>
         <details className="bounty-terms">
           <summary>How payment is decided</summary>
           <p>
@@ -252,7 +254,9 @@ export function PrBountiesView(props: PageProps) {
           <p>
             Payouts and refunds go to vaults controlled by one withdrawal key,
             not to account names. <SponsorNote config={config} /> Contributors
-            prove their GitHub account once, with a gist they own.
+            prove their GitHub account once, with a gist they own. A bounty
+            keeps {near(config.storage_deposit)} as its record. Contract{" "}
+            <code>{contract}</code>.
           </p>
         </details>
       </section>
@@ -292,18 +296,21 @@ export function PrBountiesView(props: PageProps) {
           done={props.done}
         />
       ) : null}
-      <LinkPanel
-        contract={contract}
-        config={config}
-        wallet={props.wallet}
-        run={props.run}
-        chain={props.chain}
-        approved={props.approved}
-        busy={props.busy}
-        now={props.now}
-        link={props.link}
-        done={props.done}
-      />
+      {props.poster &&
+      !(props.link.state === "ready" && props.link.value?.active) ? null : (
+        <LinkPanel
+          contract={contract}
+          config={config}
+          wallet={props.wallet}
+          run={props.run}
+          chain={props.chain}
+          approved={props.approved}
+          busy={props.busy}
+          now={props.now}
+          link={props.link}
+          done={props.done}
+        />
+      )}
     </>
   );
 }

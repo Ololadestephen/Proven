@@ -142,14 +142,10 @@ export function LinkView(props: LinkViewProps) {
       ) : (
         <>
           {value?.active ? (
-            <dl className="workspace-review bounty-facts">
-              <dt>GitHub id</dt>
-              <dd>{value.active.github_id}</dd>
-              <dt>Gist</dt>
-              <dd>
-                <code>{value.active.gist_id}</code> (keep it)
-              </dd>
-            </dl>
+            <p className="post-hint">
+              Linked: GitHub id {value.active.github_id} · gist{" "}
+              <code>{value.active.gist_id.slice(0, 8)}…</code> (keep it)
+            </p>
           ) : (
             <p>Not linked. Link once, before your first claim.</p>
           )}
@@ -264,12 +260,8 @@ function LinkReview({
     }
   };
   return (
-    <section className="workspace-card">
-      <h3>Link change for another wallet</h3>
-      <p className="post-hint">
-        Confirm or cancel a request to link your GitHub account to another
-        wallet.
-      </p>
+    <details className="workspace-card bounty-terms">
+      <summary>Someone else linking your GitHub account?</summary>
       <label>
         Wallet to look up
         <input
@@ -304,7 +296,7 @@ function LinkReview({
           onCancel={() => onAct("cancel", found.wallet)}
         />
       ) : null}
-    </section>
+    </details>
   );
 }
 
