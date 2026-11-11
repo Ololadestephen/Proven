@@ -167,11 +167,27 @@ test("a submitted pull request is refunded only after a definite look past the d
     },
   });
   assert.equal(refundDue(early, until + 1, CAP), false);
-  // A look requested at the deadline does.
+  // A look requested at the deadline, or 59 s after it, does not either: GitHub may not have
+  // reported the merge yet.
+  for (const early of [T0 + 10_000, T0 + 10_059]) {
+    const b2 = bound({
+      definite_look: {
+        requested_at: String(BigInt(early) * NANOS),
+        resolved_at: String(BigInt(early + 1) * NANOS),
+      },
+    });
+    assert.equal(refundDue(b2, until + 1, CAP), false, `requested at ${early}`);
+    assert.equal(
+      refundDue(b2, until + CAP, CAP),
+      true,
+      "the cutoff still opens it",
+    );
+  }
+  // A look requested a minute after the deadline does.
   const late = bound({
     definite_look: {
-      requested_at: String(BigInt(T0 + 10_000) * NANOS),
-      resolved_at: String(BigInt(T0 + 10_001) * NANOS),
+      requested_at: String(BigInt(T0 + 10_060) * NANOS),
+      resolved_at: String(BigInt(T0 + 10_061) * NANOS),
     },
   });
   assert.equal(refundDue(late, until + 1, CAP), true);

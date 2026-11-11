@@ -321,12 +321,12 @@ async fn no_merge_refunds_the_maintainer_vault_after_the_window_and_a_definite_l
         "cannot be refunded yet",
     );
     // The deadline passes and GitHub still shows the pull request open: a definite look taken
-    // after the deadline.
-    wait_past(&env, m).await?;
+    // at least a minute after the deadline (an earlier one does not count).
+    wait_past(&env, m + 60).await?;
     let r = check(&env, &env.stranger, id, &pull, RUN).await?;
     assert_eq!(answer(&r), "pending", "{:?}", r.failures());
     let b = get_bounty(&env, id).await?;
-    assert!(secs(&b["definite_look"]["requested_at"]) >= m * 1_000_000_000);
+    assert!(secs(&b["definite_look"]["requested_at"]) >= (m + 60) * 1_000_000_000);
     assert_eq!(status(&b), "Bound");
     // Still inside the checking window (deadline + 10 minutes grace): no refund.
     assert_refused(
@@ -1177,7 +1177,7 @@ async fn a_relink_that_activates_later_changes_neither_a_submission_nor_a_claim(
         &PullSpec::open(&env, GH).id(PR_ID + 1),
     )
     .await?;
-    assert_refused(&r, "your GitHub link changed after you claimed");
+    assert_refused(&r, "this wallet's GitHub link changed after it claimed");
     assert_eq!(status(&get_bounty(&env, id1).await?), "Claimed");
     withdraw_exact(
         &env,
@@ -2024,6 +2024,68 @@ async fn a_check_in_flight_at_the_cutoff_blocks_the_refund_and_its_valid_result_
     .await?;
     assert_closed(&env, &ledger, "in flight at the cutoff").await?;
     env.save_trace("flow-check-in-flight-at-cutoff")?;
+    Ok(())
+}
+
+/// The release build: an answer "not merged" read in the first minute after the deadline is not
+/// a negative (GitHub may not have reported the merge yet), so it cannot open the refund at the
+/// end of the grace; a later check that reads the merge before the deadline pays it.
+#[tokio::test]
+async fn an_early_not_merged_answer_cannot_open_the_refund_and_a_later_check_pays_the_on_time_merge(
+) -> anyhow::Result<()> {
+    let env = setup_with(RELEASE_WASM).await?;
+    let cvault = vault_of(&env, &env.contrib_key).await?;
+    let mvault = vault_of(&env, &env.maint_key).await?;
+    let ledger = Ledger::new(&env, &[cvault.clone(), mvault.clone()]).await?;
+    let (id, pull) = bind(&env, 21, Timing::RELEASE).await?;
+    let m = merge_deadline(&env, id).await?;
+    let grace = secs(&get_bounty(&env, id).await?["grace_secs"]);
+    // Just after the deadline GitHub still reports the pull request open.
+    wait_past(&env, m).await?;
+    let r = check(&env, &env.stranger, id, &pull, RUN).await?;
+    assert_eq!(answer(&r), "pending", "{:?}", r.failures());
+    let requested = secs(&get_bounty(&env, id).await?["definite_look"]["requested_at"]);
+    assert!(
+        requested >= m * 1_000_000_000 && requested < (m + 60) * 1_000_000_000,
+        "the early answer was requested within a minute after the deadline"
+    );
+    env.note(format!(
+        "  \"not merged\" requested {} ms after the deadline",
+        (requested - m * 1_000_000_000) / 1_000_000
+    ));
+    // The grace ends. That early answer does not open the refund.
+    wait_past(&env, m + grace).await?;
+    let r = settle_call(&env, &env.stranger, id).await?;
+    assert!(
+        exec_ns(&env, &r).await? >= (m + grace) * 1_000_000_000,
+        "settle ran after the grace"
+    );
+    assert_refused(&r, "cannot be refunded yet");
+    assert_eq!(status(&get_bounty(&env, id).await?), "Bound");
+    assert_eq!(held(&env).await?, (REWARD, 0));
+    // A later check reads the merge, one second before the deadline: it is paid.
+    let r = check(&env, &env.stranger, id, &pull.clone().merged(m - 1), RUN).await?;
+    assert_eq!(answer(&r), "paid", "{:?}", r.failures());
+    let b = get_bounty(&env, id).await?;
+    assert_eq!(status(&b), "Paid");
+    assert!(b["refund"].is_null());
+    assert_settled(&env, id, "Payout", &cvault, REWARD).await?;
+    assert_eq!(bal(&env, &mvault).await?, 0, "no refund vault exists");
+    assert_refused(
+        &settle_call(&env, &env.stranger, id).await?,
+        "cannot be refunded yet",
+    );
+    withdraw_exact(
+        &env,
+        &env.contrib_key.clone(),
+        &cvault,
+        env.payee.id(),
+        REWARD,
+        "on-time merge paid after an early not-merged answer",
+    )
+    .await?;
+    assert_closed(&env, &ledger, "early not-merged answer").await?;
+    env.save_trace("flow-early-not-merged-then-paid")?;
     Ok(())
 }
 

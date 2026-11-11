@@ -5,6 +5,11 @@
 // will accept, so a button is offered only when the call can succeed.
 import type { Bounty, Config } from "./bounty-types.ts";
 
+/**
+ * How long after the merge deadline a "not merged" answer must be requested to count (the
+ * contract's `MAX_CLOCK_SKEW_SECS`).
+ */
+export const MAX_CLOCK_SKEW_SECS = 60;
 /** A check older than this no longer blocks anything (the contract's `RUN_TIMEOUT_NANOS`). */
 export const LIVE_RUN_TIMEOUT_SECS = 15 * 60;
 const NANOS = 1_000_000_000n;
@@ -117,7 +122,8 @@ export const checksUntil = hardRefundAt;
  */
 const definiteLookAfterDeadline = (b: Bounty) =>
   !!b.definite_look &&
-  BigInt(b.definite_look.requested_at) >= BigInt(b.merge_deadline) * NANOS;
+  BigInt(b.definite_look.requested_at) >=
+    (BigInt(b.merge_deadline) + BigInt(MAX_CLOCK_SKEW_SECS)) * NANOS;
 
 /** Whether `settle` would accept now. Mirrors the contract's `settle`. */
 export function refundDue(

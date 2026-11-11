@@ -105,8 +105,9 @@ function Summary({ review }: { review: Review }) {
         Open for claims until {utc(d.claim_by)}. A claim lasts{" "}
         {duration(d.claim_secs)}. The pull request must be merged before{" "}
         {utc(d.merge_deadline)}. Merges are checked until {utc(d.checks_until)}.
-        A check after the deadline that finds it not merged lets you be refunded
-        from {utc(d.grace_ends)} ({duration(d.grace_secs)} grace).
+        A check at least a minute after the deadline that finds it not merged
+        lets you be refunded from {utc(d.grace_ends)} ({duration(d.grace_secs)}{" "}
+        grace).
       </dd>
       <dt>If checks fail</dt>
       <dd>

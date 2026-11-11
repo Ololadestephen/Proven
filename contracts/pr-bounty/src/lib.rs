@@ -1461,9 +1461,15 @@ impl PrBounty {
         let now = env::block_timestamp();
         let bounty = self.bounty(bounty_id);
         let idle = bounty.live_run(now).is_none();
+        // A "not merged" answer counts only if it was requested at least the clock skew after the
+        // deadline: GitHub's `merged_at` and NEAR's block time may differ by that much, and GitHub
+        // may report a merge late. An earlier "not merged" never opens the refund.
         let looked = bounty
             .definite_look
-            .map(|l| l.requested_at.0 >= secs_to_nanos(bounty.merge_deadline.0))
+            .map(|l| {
+                l.requested_at.0
+                    >= secs_to_nanos(bounty.merge_deadline.0.saturating_add(MAX_CLOCK_SKEW_SECS))
+            })
             .unwrap_or(false);
         let due = match bounty.status {
             Status::Open => now >= secs_to_nanos(bounty.claim_by.0),

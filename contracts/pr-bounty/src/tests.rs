@@ -4107,7 +4107,15 @@ fn a_claimed_bounty_with_a_live_submission_check_is_not_refunded_until_the_check
 fn a_bound_bounty_is_not_refunded_before_the_checking_window_ends_even_after_a_definite_look() {
     let (mut c, id) = bound();
     assert_cannot_settle(&mut c, id, T_CHECK);
-    assert_eq!(look(&mut c, id, DEADLINE * SEC, open_pull()), "pending");
+    assert_eq!(
+        look(
+            &mut c,
+            id,
+            (DEADLINE + MAX_CLOCK_SKEW_SECS) * SEC,
+            open_pull()
+        ),
+        "pending"
+    );
     assert!(c.get_bounty(id).unwrap().definite_look.is_some());
     assert_cannot_settle(&mut c, id, DEADLINE * SEC + 100 * SEC);
     assert_cannot_settle(&mut c, id, VERIFY_UNTIL - 1);
@@ -4116,8 +4124,8 @@ fn a_bound_bounty_is_not_refunded_before_the_checking_window_ends_even_after_a_d
 }
 
 #[test]
-fn after_the_window_a_bound_bounty_needs_a_definite_look_requested_at_or_after_the_merge_deadline()
-{
+fn after_the_window_a_bound_bounty_needs_a_definite_look_requested_a_minute_after_the_merge_deadline(
+) {
     // No look at all.
     isolated(|| {
         let (mut c, id) = bound();
@@ -4153,10 +4161,30 @@ fn after_the_window_a_bound_bounty_needs_a_definite_look_requested_at_or_after_t
         assert_eq!(c.get_bounty(id).unwrap().definite_look, None);
         assert_cannot_settle(&mut c, id, VERIFY_UNTIL);
     });
-    // A definite look requested exactly at the merge deadline opens the refund at the window's end.
+    // "Not merged" in the first minute after the deadline does not count: GitHub's clock and
+    // NEAR's may differ, and GitHub may report a merge late.
+    for early in [DEADLINE * SEC, (DEADLINE + MAX_CLOCK_SKEW_SECS) * SEC - 1] {
+        isolated(move || {
+            let (mut c, id) = bound();
+            assert_eq!(look(&mut c, id, early, open_pull()), "pending");
+            assert!(c.get_bounty(id).unwrap().definite_look.is_some());
+            assert_cannot_settle(&mut c, id, VERIFY_UNTIL);
+            assert_cannot_settle(&mut c, id, REFUND_CAP_AT - 1);
+        });
+    }
+    // A definite look requested exactly a minute after the deadline opens the refund at the
+    // window's end.
     isolated(|| {
         let (mut c, id) = bound();
-        assert_eq!(look(&mut c, id, DEADLINE * SEC, open_pull()), "pending");
+        assert_eq!(
+            look(
+                &mut c,
+                id,
+                (DEADLINE + MAX_CLOCK_SKEW_SECS) * SEC,
+                open_pull()
+            ),
+            "pending"
+        );
         assert_cannot_settle(&mut c, id, VERIFY_UNTIL - 1);
         settle_at(&mut c, id, VERIFY_UNTIL);
         let b = c.get_bounty(id).unwrap();
@@ -4228,7 +4256,15 @@ fn a_bound_bounty_with_no_definite_look_is_refunded_after_the_cap_so_an_on_time_
 #[test]
 fn a_live_check_blocks_a_bound_refund_until_it_goes_stale_and_its_late_result_cannot_pay() {
     let (mut c, id) = bound();
-    assert_eq!(look(&mut c, id, DEADLINE * SEC, open_pull()), "pending");
+    assert_eq!(
+        look(
+            &mut c,
+            id,
+            (DEADLINE + MAX_CLOCK_SKEW_SECS) * SEC,
+            open_pull()
+        ),
+        "pending"
+    );
     let requested = VERIFY_UNTIL - SEC;
     let seq = start_check(&mut c, id, &stranger(), RUN_DEPOSIT, requested);
     assert_cannot_settle(&mut c, id, VERIFY_UNTIL);

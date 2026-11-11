@@ -720,9 +720,10 @@ export function BountyCard({
           {duration(Number(bounty.claim_secs))}; merge before{" "}
           {utc(bounty.merge_deadline)}; checks until{" "}
           {utc(checksUntil(bounty, config.refund_cap_secs))}. A check after the
-          merge deadline that finds the pull request not merged opens the refund
-          from {utc(graceEnds(bounty))}. If no check reads GitHub, the refund
-          opens {utc(hardRefundAt(bounty, config.refund_cap_secs))}.
+          merge deadline (at least a minute after it) that finds the pull
+          request not merged opens the refund from {utc(graceEnds(bounty))}. If
+          no check reads GitHub, the refund opens{" "}
+          {utc(hardRefundAt(bounty, config.refund_cap_secs))}.
         </dd>
         <dt>Evidence</dt>
         <dd className="bounty-evidence">
