@@ -968,14 +968,19 @@ test("the same page with signing on has buttons that work, so the switch is the 
   assert.equal(button(page, /^Release claim/).disabled, false);
 });
 
-test("the list shows status tabs with counts and one card per bounty, newest first", () => {
+test("the list opens on the Open tab and counts every status", () => {
   const html = renderPage({ link: linkReady("583231") });
   assert.match(html, /<h2>Your GitHub account<\/h2>/);
   assert.match(html, /<h2>Post a bounty<\/h2>/);
   const order = [...html.matchAll(/href="\/app\/bounties\/(\d+)"/g)].map(
     (m) => m[1],
   );
-  assert.deepEqual(order, ["8", "7", "6", "5", "4", "3", "2", "1"]);
+  // Open is the default tab: only the unclaimed bounty shows until another tab is chosen.
+  assert.deepEqual(order, ["1"]);
+  assert.match(
+    html,
+    /aria-selected="true" class="bounty-tab active">Open <span class="bounty-count">1<\/span>/,
+  );
   const tabs = buttons(html)
     .map((b) => b.text)
     .filter((t) => /^(All|Open|In progress|Paid|Refunded) \d+$/.test(t));
@@ -990,7 +995,6 @@ test("the list shows status tabs with counts and one card per bounty, newest fir
   assert.ok(buttons(html).some((b) => b.text === "Needs action 1"));
   assert.doesNotMatch(renderPage({ wallet: null }), /Needs action/);
   assert.match(html, /Merge check · attested/);
-  assert.match(html, /proven-test\/bounty-pilot#12/);
   // The list carries no actions: they live on each bounty's page.
   assert.doesNotMatch(html, /Check merge|Refund maintainer|Release claim/);
   assert.doesNotMatch(html, /two keys|backup key|branch.?code|check budget/i);

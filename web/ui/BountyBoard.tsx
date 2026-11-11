@@ -90,7 +90,7 @@ export function BountyList(props: {
 }) {
   const { ctx } = props;
   const me = ctx.wallet?.accountId ?? null;
-  const [tab, setTab] = useState<Tab>("all");
+  const [tab, setTab] = useState<Tab>("open");
   const [query, setQuery] = useState("");
   const newest = props.bounties.slice().reverse();
   const counts = tabCounts(

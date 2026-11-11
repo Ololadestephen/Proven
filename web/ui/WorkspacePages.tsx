@@ -173,7 +173,7 @@ function JobTile({ bid, viewer }: { bid: MarketBid; viewer: string | null }) {
 function JobGrid({
   bids,
   viewer,
-  initial = "all",
+  initial = "open",
   empty,
 }: {
   bids: MarketBid[];
@@ -233,7 +233,7 @@ function MarketList({
   viewer: string | null;
 }) {
   // The server serves no query strings, so the completed view is chosen by the hash.
-  const initial = location.hash === "#completed" ? "paid" : "all";
+  const initial = location.hash === "#completed" ? "paid" : "open";
   return (
     <>
       <JobGrid
