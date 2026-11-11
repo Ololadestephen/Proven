@@ -13,6 +13,8 @@ import type { Bounty, Config, Listing, WalletLink } from "./bounty-types.ts";
 import { fromBase58, vaultAddress } from "./bounty-keys.ts";
 import type { BountyRun, BountyWallet } from "./bounty-wallet.ts";
 import { near } from "./bounty-text.ts";
+import { BountyList, BountyPage } from "./BountyBoard.tsx";
+import { useIssueTitles } from "./issue-titles.ts";
 import { BountyCard, SponsorNote, type LinkLoad } from "./BountyCard.tsx";
 import { LinkPanel } from "./LinkPanel.tsx";
 import { PostBountyForm } from "./PostBountyForm.tsx";
@@ -201,6 +203,10 @@ export interface PageProps {
   done: () => void;
   onCheckPending: () => void;
   onReleasePending: () => void;
+  /** Set on a bounty's own page (/app/bounties/:id). */
+  bountyId?: number;
+  /** The issue's title when GitHub has given it; the page shows "owner/repo#12" otherwise. */
+  titleOf?: (repo: string, issue: number) => string | undefined;
 }
 
 /** Statuses after which nothing more can happen to a bounty's money in the contract. */
@@ -238,15 +244,37 @@ export function PrBountiesView(props: PageProps) {
     done: props.done,
     link: props.link,
   };
-  // Newest first. A bounty is closed once its money has settled for good; an Ineligible one is
-  // still open until someone refunds it.
-  const newest = bounties.slice().reverse();
-  const isClosed = ([, b]: [number, Bounty]) => CLOSED.has(b.status);
-  const open = newest.filter((entry) => !isClosed(entry));
-  const closed = newest.filter(isClosed);
-  const card = ([id, bounty]: [number, Bounty]) => (
-    <BountyCard key={id} id={id} bounty={bounty} ctx={ctx} inVault={inVault} />
-  );
+  const titleOf = props.titleOf ?? (() => undefined);
+  const pendingNotice = props.pending ? (
+    <PendingNotice
+      pending={props.pending}
+      now={props.now}
+      onCheck={props.onCheckPending}
+      onRelease={props.onReleasePending}
+    />
+  ) : null;
+  if (props.bountyId !== undefined) {
+    const found = bounties.find(([id]) => id === props.bountyId);
+    return (
+      <>
+        {pendingNotice}
+        {found ? (
+          <BountyPage
+            id={found[0]}
+            bounty={found[1]}
+            ctx={ctx}
+            titleOf={titleOf}
+            inVault={inVault}
+          />
+        ) : (
+          <p className="workspace-empty">
+            There is no bounty {props.bountyId}.{" "}
+            <a href="/app/bounties">See all bounties</a>
+          </p>
+        )}
+      </>
+    );
+  }
   return (
     <>
       <section className="workspace-card">
@@ -272,36 +300,8 @@ export function PrBountiesView(props: PageProps) {
           </p>
         </details>
       </section>
-      {props.pending ? (
-        <PendingNotice
-          pending={props.pending}
-          now={props.now}
-          onCheck={props.onCheckPending}
-          onRelease={props.onReleasePending}
-        />
-      ) : null}
-      {bounties.length === 0 ? (
-        <p className="workspace-empty">No bounties yet.</p>
-      ) : (
-        <>
-          <section className="bounty-section">
-            <h2>Open ({open.length})</h2>
-            {open.length ? (
-              open.map(card)
-            ) : (
-              <p className="workspace-empty">No open bounties.</p>
-            )}
-          </section>
-          {closed.length ? (
-            <details className="bounty-section">
-              <summary>
-                <h2>Closed ({closed.length})</h2>
-              </summary>
-              {closed.map(card)}
-            </details>
-          ) : null}
-        </>
-      )}
+      {pendingNotice}
+      <BountyList bounties={bounties} ctx={ctx} titleOf={titleOf} />
       {!config.paused && props.poster ? (
         <PostPreview
           contract={contract}
@@ -337,9 +337,11 @@ export function PrBountiesView(props: PageProps) {
 export function PrBounties({
   actions,
   busy,
+  bountyId,
 }: {
   actions: BountyActions;
   busy: boolean;
+  bountyId?: number;
 }) {
   const { wallet, run, pending } = actions;
   const chain = useMemo(() => bountyChain(api), []);
@@ -375,6 +377,11 @@ export function PrBounties({
       live = false;
     };
   }, [account, configured, version, pending]);
+  const titleOf = useIssueTitles(
+    listing?.configured
+      ? listing.bounties.map(([, b]) => ({ repo: b.repo, issue: b.issue }))
+      : [],
+  );
   return (
     <PrBountiesView
       listing={listing}
@@ -391,6 +398,8 @@ export function PrBounties({
       done={() => setVersion((v) => v + 1)}
       onCheckPending={() => void actions.check().catch(() => undefined)}
       onReleasePending={() => void actions.release()}
+      bountyId={bountyId}
+      titleOf={titleOf}
     />
   );
 }

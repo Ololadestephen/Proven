@@ -3,6 +3,7 @@ import type { MarketBid } from "./market-steps.ts";
 export interface AppRoute {
   section: WorkspaceSection;
   bidId?: number;
+  bountyId?: number;
   title: string;
   subtitle: string;
 }
@@ -23,6 +24,15 @@ export function appRoute(path: string, hash = ""): AppRoute {
     return {
       section: "agents",
       title: "Agents",
+      subtitle: "",
+    };
+  const bountyPage = /^\/app\/bounties\/([0-9]{1,10})$/.exec(path);
+  // A bounty's page has its own heading, so the layout shows none of its own.
+  if (bountyPage)
+    return {
+      section: "bounties",
+      bountyId: Number(bountyPage[1]),
+      title: "",
       subtitle: "",
     };
   if (path === "/app/bounties")

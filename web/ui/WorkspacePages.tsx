@@ -257,7 +257,13 @@ export function WorkspacePages({
   if (route.section === "agents")
     return <AgentsPage wallet={wallet} run={run} busy={busy} />;
   if (route.section === "bounties")
-    return <PrBounties actions={bounty} busy={bountyBusy} />;
+    return (
+      <PrBounties
+        actions={bounty}
+        busy={bountyBusy}
+        bountyId={route.bountyId}
+      />
+    );
   if (route.section === "market") return <MarketList bids={market.bids} />;
   if (route.section === "jobs")
     return <MyJobs market={market} wallet={wallet} />;

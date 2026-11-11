@@ -116,7 +116,7 @@ export function RefundNotice({
   );
 }
 
-function Evidence({
+export function Evidence({
   id,
   label,
 }: {
@@ -340,7 +340,7 @@ const slots = (b: Bounty): SettlementSlot[] => [
   ["Payout", b.payout],
   ["Refund", b.refund],
 ];
-const present = (b: Bounty) =>
+export const present = (b: Bounty) =>
   slots(b).filter((s): s is [SettlementKind, SettlementView] => !!s[1]);
 
 /** One text for the sponsored-check note, wherever it appears. */

@@ -204,7 +204,7 @@ const unexpected = (what: string): MetadataResult =>
  * in a title to make the review read differently from what is signed), runs of space collapse,
  * and the result is cut to a displayable length.
  */
-function cleanTitle(title: string): string {
+export function cleanTitle(title: string): string {
   const flat = title
     // eslint-disable-next-line no-control-regex
     .replace(

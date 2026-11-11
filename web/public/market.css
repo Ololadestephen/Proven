@@ -363,3 +363,305 @@ details.bounty-section > summary {
   cursor: pointer;
   margin-top: 8px;
 }
+
+/* PR bounties: status tabs, card grid and the bounty page. */
+.bounty-board {
+  display: grid;
+  gap: 16px;
+}
+.bounty-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.bounty-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.bounty-tab {
+  border: 0;
+  background: transparent;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+.bounty-tab.active {
+  background: #efeeff;
+  color: var(--purple);
+  font-weight: 600;
+}
+.bounty-count {
+  display: inline-block;
+  min-width: 20px;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #efeeff;
+  color: var(--purple);
+  font-size: 0.75rem;
+  text-align: center;
+}
+.bounty-search {
+  flex: 1;
+  min-width: 200px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.bounty-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.bounty-tile {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper);
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+.bounty-tile:hover {
+  border-color: var(--purple);
+}
+.bounty-tile-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.bounty-tile-reward {
+  font-size: 1.25rem;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bounty-tile h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.35;
+}
+.bounty-tile-repo {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.bounty-tag {
+  justify-self: start;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #f2f3f7;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.bounty-tile-parties {
+  display: flex;
+  gap: 24px;
+  margin: 4px 0 0;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+.bounty-tile-parties dt {
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.bounty-tile-parties dd {
+  margin: 2px 0 0;
+  font-size: 0.875rem;
+}
+.bounty-tile-link {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--purple);
+}
+.bounty-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.bounty-dot.open {
+  background: var(--purple);
+}
+.bounty-dot.paid {
+  background: var(--green);
+}
+.bounty-dot.closed {
+  background: #9aa0ad;
+}
+.bounty-post > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.bounty-post > summary h2 {
+  display: inline;
+  font-size: 1.05rem;
+}
+
+/* One bounty's page. */
+.bounty-page {
+  display: grid;
+  gap: 16px;
+}
+.bounty-back {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.875rem;
+}
+.bounty-page-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 40px;
+  align-items: start;
+}
+.bounty-page-main {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.bounty-page-status {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.bounty-page-title {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+.bounty-page-reward {
+  margin: 0;
+  font-size: 2.25rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.bounty-path {
+  display: flex;
+  margin: 0;
+  padding: 16px 20px;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  overflow-x: auto;
+}
+.bounty-step {
+  position: relative;
+  flex: 1;
+  min-width: 90px;
+  padding-top: 22px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.bounty-step > span {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 2px solid #c9ccd6;
+  background: var(--paper);
+}
+.bounty-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 14px;
+  right: 2px;
+  height: 2px;
+  background: #e3e5ec;
+}
+.bounty-step.done {
+  color: var(--ink);
+}
+.bounty-step.done > span {
+  border-color: var(--green);
+  background: var(--green);
+}
+.bounty-step.done:not(:last-child)::before {
+  background: var(--green);
+}
+.bounty-step.current {
+  color: var(--purple);
+  font-weight: 600;
+}
+.bounty-step.current > span {
+  border-color: var(--purple);
+}
+.bounty-next {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--purple);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.bounty-next h3,
+.bounty-page-main section > h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+.bounty-page-side h4 {
+  margin: 24px 0 8px;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.bounty-page-side h4:first-child {
+  margin-top: 0;
+}
+.bounty-page-side dl {
+  margin: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.bounty-page-side dt {
+  margin-top: 10px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.bounty-page-side dd {
+  margin: 2px 0 0;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+.bounty-activity {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.875rem;
+}
+.bounty-activity li {
+  margin-bottom: 10px;
+}
+.bounty-activity time {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+@media (max-width: 1180px) {
+  .bounty-page-grid {
+    grid-template-columns: 1fr;
+  }
+}

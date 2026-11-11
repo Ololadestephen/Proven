@@ -929,13 +929,24 @@ test("with signing off, no button on the page can send a transaction", () => {
     wallet: wallet(STRANGER),
     now: T0 + 1_000_000,
   });
-  // Buttons that read only, and never sign or send, stay available.
-  const reads = /^(Cancel|Check again|Look up|Re-check|Try again)$/;
-  for (const html of [maintainer, contributor, stranger]) {
-    assert.match(html, /Signing is off in this build/);
+  // Buttons that read only, and never sign or send, stay available: the status tabs too.
+  const reads =
+    /^(Cancel|Check again|Look up|Re-check|Try again|(All|Open|In progress|Paid|Refunded|Needs action) \d+)$/;
+  const pages = [];
+  for (const w of [MAINT, CONTRIB, STRANGER])
+    for (let id = 1; id <= 8; id++)
+      pages.push(
+        renderPage({
+          wallet: wallet(w),
+          bountyId: id,
+          now: w === STRANGER ? T0 + 1_000_000 : T0,
+        }),
+      );
+  for (const html of [maintainer, contributor, stranger, ...pages]) {
     for (const b of buttons(html))
       if (!reads.test(b.text)) assert.equal(b.disabled, true, b.text);
   }
+  assert.ok(pages.some((html) => /Signing is off in this build/.test(html)));
 });
 
 test("the same page with signing on has buttons that work, so the switch is the only gate", () => {
@@ -947,36 +958,69 @@ test("the same page with signing on has buttons that work, so the switch is the 
   });
   assert.doesNotMatch(html, /Signing is off in this build/);
   assert.equal(button(html, /^Connect GitHub$/).disabled, false);
-  assert.equal(button(html, /^Release claim/).disabled, false);
+  const page = renderPage({
+    wallet: wallet(CONTRIB),
+    approved: true,
+    poster: false,
+    link: linkReady(null),
+    bountyId: 2,
+  });
+  assert.equal(button(page, /^Release claim/).disabled, false);
 });
 
-test("the page shows the link panel, the posting form and every bounty, newest first", () => {
+test("the list shows status tabs with counts and one card per bounty, newest first", () => {
   const html = renderPage({ link: linkReady("583231") });
   assert.match(html, /<h2>Your GitHub account<\/h2>/);
   assert.match(html, /<h2>Post a bounty<\/h2>/);
-  const order = [...html.matchAll(/#(\d+) ·/g)].map((m) => m[1]);
-  // Open bounties first, newest first; then the closed ones, newest first.
-  assert.deepEqual(order, ["8", "4", "3", "2", "1", "7", "6", "5"]);
-  const statuses = [
-    ...html.matchAll(/<span class="status-pill">([^<]*)</g),
-  ].map((m) => m[1]);
-  assert.deepEqual(
-    statuses.map((s) => s?.split(",")[0]),
-    [
-      "Ineligible",
-      "Verifying merge",
-      "PR submitted",
-      "Claimed",
-      "Open",
-      "Cancelled",
-      "Refunded",
-      "Paid",
-    ],
+  const order = [...html.matchAll(/href="\/app\/bounties\/(\d+)"/g)].map(
+    (m) => m[1],
   );
-  assert.match(html, /<h2>Open \(5\)<\/h2>/);
-  assert.match(html, /<summary><h2>Closed \(3\)<\/h2><\/summary>/);
-  assert.ok(html.indexOf("Open (5)") < html.indexOf("Closed (3)"));
+  assert.deepEqual(order, ["8", "7", "6", "5", "4", "3", "2", "1"]);
+  const tabs = buttons(html)
+    .map((b) => b.text)
+    .filter((t) => /^(All|Open|In progress|Paid|Refunded) \d+$/.test(t));
+  assert.deepEqual(tabs, [
+    "All 8",
+    "Open 1",
+    "In progress 4",
+    "Paid 1",
+    "Refunded 2",
+  ]);
+  // The connected contributor still has to submit on bounty 2.
+  assert.ok(buttons(html).some((b) => b.text === "Needs action 1"));
+  assert.doesNotMatch(renderPage({ wallet: null }), /Needs action/);
+  assert.match(html, /Merge check · attested/);
+  assert.match(html, /proven-test\/bounty-pilot#12/);
+  // The list carries no actions: they live on each bounty's page.
+  assert.doesNotMatch(html, /Check merge|Refund maintainer|Release claim/);
   assert.doesNotMatch(html, /two keys|backup key|branch.?code|check budget/i);
+});
+
+test("a bounty's page shows the path, the next step, parties, terms, records and activity", () => {
+  const html = renderPage({ bountyId: 5, wallet: wallet(CONTRIB) });
+  assert.match(html, /← Bounties/);
+  const steps = [
+    ...html.matchAll(/class="bounty-step (\w+)"><span[^>]*><\/span>([^<]+)</g),
+  ].map((m) => `${m[2]}:${m[1]}`);
+  assert.deepEqual(steps, [
+    "Posted:done",
+    "Claimed:done",
+    "PR submitted:done",
+    "Merge checked:done",
+    "Paid:done",
+  ]);
+  for (const heading of ["Your next step", "How it is judged"])
+    assert.match(html, new RegExp(`<h3>${heading}</h3>`));
+  for (const heading of ["Parties", "Terms", "On chain", "Activity"])
+    assert.match(html, new RegExp(`<h4>${heading}</h4>`));
+  assert.match(html, /Merged on GitHub/);
+  assert.match(
+    html,
+    /Nobody&#x27;s opinion decides it|Nobody's opinion decides it/,
+  );
+  const open = renderPage({ bountyId: 1 });
+  assert.match(open, /class="bounty-step current"><span[^>]*><\/span>Claimed/);
+  assert.match(renderPage({ bountyId: 99 }), /There is no bounty 99\./);
 });
 
 test("the page header states the vault and sponsor rules without a check budget", () => {
