@@ -7,6 +7,7 @@ import { PostJob } from "./PostJob.tsx";
 import type { Market, Wallet, Run } from "./market-types.ts";
 import { nextStep, showNear, type MarketBid } from "./market-steps.ts";
 import { short } from "./market-client.ts";
+import { TileToolbar, WorkTile } from "./WorkTile.tsx";
 import { bidTitle, completed, ownBids, type AppRoute } from "./app-route.ts";
 function JobRow({ bid, detail }: { bid: MarketBid; detail?: string }) {
   return (
@@ -114,73 +115,149 @@ function outcome(bid: MarketBid) {
   if (job?.state === "Refunded") return "Refunded to the buyer";
   return bid.state === "Done" ? "Done" : "Closed";
 }
-function MarketList({ bids }: { bids: MarketBid[] }) {
-  // The server serves no query strings, so the completed view is chosen by the hash.
-  const [tab, setTab] = useState(() =>
-    location.hash === "#completed" ? "completed" : "open",
-  );
-  const selected = bids.filter((bid) =>
-    tab === "completed" ? completed(bid) : !completed(bid),
-  );
-  const done = bids.filter(completed).length;
+type JobTab = "all" | "open" | "progress" | "paid" | "closed";
+const JOB_TABS: [JobTab, string][] = [
+  ["all", "All"],
+  ["open", "Open"],
+  ["progress", "In progress"],
+  ["paid", "Paid"],
+  ["closed", "Refunded or closed"],
+];
+/** Which tab a job belongs to. A refund is never shown as paid. */
+export function jobTab(bid: MarketBid): Exclude<JobTab, "all"> {
+  const job = bid.job ?? bid.last_job;
+  if (completed(bid)) return job?.state === "Released" ? "paid" : "closed";
+  return bid.claim || bid.job ? "progress" : "open";
+}
+const jobKind = (bid: MarketBid) =>
+  jobTab(bid) === "paid"
+    ? "paid"
+    : jobTab(bid) === "closed"
+      ? "closed"
+      : "open";
+function JobTile({ bid, viewer }: { bid: MarketBid; viewer: string | null }) {
+  const job = bid.job ?? bid.last_job;
+  const worker = bid.claim?.agent ?? job?.worker;
+  const role =
+    viewer && viewer === bid.buyer
+      ? " · Yours"
+      : viewer && viewer === worker
+        ? " · Your job"
+        : "";
   return (
-    <section className="workspace-card">
-      <div className="workspace-tabs" aria-label="Market filter">
-        {["open", "completed"].map((value) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={tab === value}
-            onClick={() => setTab(value)}
-          >
-            {value === "open" ? "Open jobs" : "Completed & closed"}
-          </button>
-        ))}
-      </div>
-      <div className="workspace-queue">
-        {selected.map((bid) => (
-          <JobRow key={bid.id} bid={bid} />
-        ))}
-      </div>
-      {!selected.length && tab === "open" ? (
-        <div className="workspace-empty">
-          <h3>No open jobs right now.</h3>
-          <p>
-            A job appears here once its buyer posts it and the bid review allows
-            it.
-            {done
-              ? " Completed jobs show how a job runs and pays."
-              : " The guide shows how a job runs and pays."}
-          </p>
-          <div className="workspace-empty-actions">
-            {done ? (
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setTab("completed")}
-              >
-                See completed and closed jobs
-              </button>
-            ) : null}
-            <a className="workspace-card-link" href="/guide">
-              How a job works
-            </a>
-          </div>
+    <WorkTile
+      href={`/app/bids/${bid.id}`}
+      status={
+        jobTab(bid) === "paid"
+          ? "Paid"
+          : jobTab(bid) === "closed"
+            ? job?.state === "Refunded"
+              ? "Refunded"
+              : "Closed"
+            : (bid.job?.state ?? bid.state)
+      }
+      kind={jobKind(bid)}
+      reward={showNear(bid.amount)}
+      title={bidTitle(bid)}
+      sub={`Job ${bid.id}${role}`}
+      tag="Executable check · attested"
+      parties={[
+        ["Buyer", short(bid.buyer)],
+        ["Worker", worker ? short(worker) : "Unclaimed"],
+      ]}
+      linkText="View job"
+    />
+  );
+}
+/** Tabs with counts, a search box and a grid of jobs. */
+function JobGrid({
+  bids,
+  viewer,
+  initial = "all",
+  empty,
+}: {
+  bids: MarketBid[];
+  viewer: string | null;
+  initial?: JobTab;
+  empty: string;
+}) {
+  const [tab, setTab] = useState<JobTab>(initial);
+  const [query, setQuery] = useState("");
+  const newest = bids.slice().sort((a, b) => b.id - a.id);
+  const counts = Object.fromEntries(
+    JOB_TABS.map(([t]) => [
+      t,
+      newest.filter((bid) => t === "all" || jobTab(bid) === t).length,
+    ]),
+  ) as Record<JobTab, number>;
+  const q = query.trim().toLowerCase();
+  const shown = newest.filter(
+    (bid) =>
+      (tab === "all" || jobTab(bid) === tab) &&
+      (!q ||
+        bidTitle(bid).toLowerCase().includes(q) ||
+        bid.buyer.toLowerCase().includes(q) ||
+        `job ${bid.id}`.includes(q.replace(/^#/, "job ")) ||
+        String(bid.id) === q.replace(/^#/, "")),
+  );
+  return (
+    <section className="bounty-board">
+      <TileToolbar
+        tabs={JOB_TABS}
+        counts={counts}
+        tab={tab}
+        onTab={setTab}
+        query={query}
+        onQuery={setQuery}
+        placeholder="Search by title, buyer or job number"
+      />
+      {shown.length ? (
+        <div className="bounty-grid">
+          {shown.map((bid) => (
+            <JobTile key={bid.id} bid={bid} viewer={viewer} />
+          ))}
         </div>
-      ) : null}
-      {!selected.length && tab === "completed" ? (
+      ) : (
         <p className="workspace-empty">
-          No completed or closed jobs on this board.
+          {bids.length ? "No jobs here." : empty}
         </p>
-      ) : null}
+      )}
     </section>
+  );
+}
+function MarketList({
+  bids,
+  viewer,
+}: {
+  bids: MarketBid[];
+  viewer: string | null;
+}) {
+  // The server serves no query strings, so the completed view is chosen by the hash.
+  const initial = location.hash === "#completed" ? "paid" : "all";
+  return (
+    <>
+      <JobGrid
+        bids={bids}
+        viewer={viewer}
+        initial={initial}
+        empty="No jobs on this board yet."
+      />
+      <p className="bounty-about">
+        <a href="/guide">How a job works</a>
+      </p>
+    </>
   );
 }
 function MyJobs({ market, wallet }: { market: Market; wallet: Wallet | null }) {
   const [role, setRole] = useState<"buying" | "delivering">("buying");
-  const selected = ownBids(market.bids, wallet?.accountId ?? null, role);
+  const viewer = wallet?.accountId ?? null;
+  const selected = ownBids(market.bids, viewer, role);
+  if (!wallet)
+    return (
+      <p className="workspace-empty">Connect a wallet to see your jobs.</p>
+    );
   return (
-    <section className="workspace-card">
+    <>
       <div className="workspace-tabs" aria-label="Your role">
         {(["buying", "delivering"] as const).map((value) => (
           <button
@@ -193,23 +270,13 @@ function MyJobs({ market, wallet }: { market: Market; wallet: Wallet | null }) {
           </button>
         ))}
       </div>
-      {wallet ? (
-        <>
-          <div className="workspace-queue">
-            {selected.map((bid) => (
-              <JobRow key={bid.id} bid={bid} />
-            ))}
-          </div>
-          {!selected.length ? (
-            <p className="workspace-empty">
-              No jobs for this account in this view yet.
-            </p>
-          ) : null}
-        </>
-      ) : (
-        <p className="workspace-empty">Connect a wallet to see your jobs.</p>
-      )}
-    </section>
+      <JobGrid
+        key={role}
+        bids={selected}
+        viewer={viewer}
+        empty="No jobs for this account in this view yet."
+      />
+    </>
   );
 }
 export function WorkspacePages({
@@ -264,7 +331,8 @@ export function WorkspacePages({
         bountyId={route.bountyId}
       />
     );
-  if (route.section === "market") return <MarketList bids={market.bids} />;
+  if (route.section === "market")
+    return <MarketList bids={market.bids} viewer={wallet?.accountId ?? null} />;
   if (route.section === "jobs")
     return <MyJobs market={market} wallet={wallet} />;
   return <Overview market={market} wallet={wallet} clock={clock} />;

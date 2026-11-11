@@ -21,6 +21,7 @@ import {
   type CardContext,
 } from "./BountyCard.tsx";
 import { VaultPanel } from "./VaultPanel.tsx";
+import { TileToolbar, WorkTile, type TileKind } from "./WorkTile.tsx";
 import { kindLabel } from "./vault-view.ts";
 import {
   activity,
@@ -33,14 +34,16 @@ import {
 } from "./bounty-board.ts";
 
 type TitleOf = (repo: string, issue: number) => string | undefined;
+// Without a title from GitHub the heading is the issue number; the repository is on the line below.
 const issueName = (b: Bounty, titleOf: TitleOf) =>
-  titleOf(b.repo, b.issue) ?? `${b.repo}#${b.issue}`;
-const dot = (b: Bounty) =>
+  titleOf(b.repo, b.issue) ?? `Issue #${b.issue}`;
+const tileKind = (b: Bounty): TileKind =>
   b.status === "Paid"
-    ? "bounty-dot paid"
+    ? "paid"
     : ["Refunded", "Cancelled"].includes(b.status)
-      ? "bounty-dot closed"
-      : "bounty-dot open";
+      ? "closed"
+      : "open";
+const dot = (b: Bounty) => `bounty-dot ${tileKind(b)}`;
 
 /** One bounty in the grid. */
 export function BountyTile(props: {
@@ -59,32 +62,23 @@ export function BountyTile(props: {
         ? "Your claim"
         : "";
   return (
-    <a className="bounty-tile" href={`/app/bounties/${id}`}>
-      <div className="bounty-tile-top">
-        <span>
-          <i className={dot(bounty)} aria-hidden="true" />
-          {status.line}
-        </span>
-        <strong className="bounty-tile-reward">{near(bounty.reward)}</strong>
-      </div>
-      <h3>{issueName(bounty, props.titleOf)}</h3>
-      <p className="bounty-tile-repo">
-        {bounty.repo}#{bounty.issue}
-        {role ? ` · ${role}` : ""}
-      </p>
-      <span className="bounty-tag">Merge check · attested</span>
-      <dl className="bounty-tile-parties">
-        <div>
-          <dt>Maintainer</dt>
-          <dd>{short(bounty.buyer)}</dd>
-        </div>
-        <div>
-          <dt>Contributor</dt>
-          <dd>{bounty.claim ? short(bounty.claim.wallet) : "Unclaimed"}</dd>
-        </div>
-      </dl>
-      <span className="bounty-tile-link">View bounty →</span>
-    </a>
+    <WorkTile
+      href={`/app/bounties/${id}`}
+      status={status.line}
+      kind={tileKind(bounty)}
+      reward={near(bounty.reward)}
+      title={issueName(bounty, props.titleOf)}
+      sub={`${bounty.repo}#${bounty.issue}${role ? ` · ${role}` : ""}`}
+      tag="Merge check · attested"
+      parties={[
+        ["Maintainer", short(bounty.buyer)],
+        [
+          "Contributor",
+          bounty.claim ? short(bounty.claim.wallet) : "Unclaimed",
+        ],
+      ]}
+      linkText="View bounty"
+    />
   );
 }
 
@@ -112,30 +106,15 @@ export function BountyList(props: {
   );
   return (
     <section className="bounty-board">
-      <div className="bounty-toolbar">
-        <div className="bounty-tabs" role="tablist">
-          {TABS.filter(([t]) => t !== "action" || me).map(([t, label]) => (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              aria-selected={tab === t}
-              className={tab === t ? "bounty-tab active" : "bounty-tab"}
-              onClick={() => setTab(t)}
-            >
-              {label} <span className="bounty-count">{counts[t]}</span>
-            </button>
-          ))}
-        </div>
-        <input
-          className="bounty-search"
-          type="search"
-          placeholder="Search by title or repository"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search bounties"
-        />
-      </div>
+      <TileToolbar
+        tabs={TABS.filter(([t]) => t !== "action" || me)}
+        counts={counts}
+        tab={tab}
+        onTab={setTab}
+        query={query}
+        onQuery={setQuery}
+        placeholder="Search by title or repository"
+      />
       {shown.length ? (
         <div className="bounty-grid">
           {shown.map(([id, bounty]) => (
@@ -191,9 +170,6 @@ export function BountyPage(props: {
     settlements.every(([, s]) => s.state === "Done" && !s.reconcile);
   return (
     <article className="bounty-page">
-      <a className="bounty-back" href="/app/bounties">
-        ← Bounties
-      </a>
       <div className="bounty-page-grid">
         <div className="bounty-page-main">
           <p className="bounty-page-status">

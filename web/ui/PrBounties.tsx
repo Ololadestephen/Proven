@@ -277,29 +277,6 @@ export function PrBountiesView(props: PageProps) {
   }
   return (
     <>
-      <section className="workspace-card">
-        <p className="post-hint">
-          Paid when the pull request merges before the deadline ·{" "}
-          <code>{config.pilot_repo}</code> · check {near(config.run_deposit)}
-          {config.paused ? " · posting paused" : ""}
-        </p>
-        <details className="bounty-terms">
-          <summary>How payment is decided</summary>
-          <p>
-            Proven's verifier (<code>{config.verifier_hash.slice(0, 12)}…</code>
-            ) runs on OutLayer and reads GitHub. It checks the merge only, not
-            the quality of the work. Anyone can verify a run from its
-            attestation link.
-          </p>
-          <p>
-            Payouts and refunds go to vaults controlled by one withdrawal key,
-            not to account names. <SponsorNote config={config} /> Contributors
-            prove their GitHub account once, with a gist they own. A bounty
-            keeps {near(config.storage_deposit)} as its record. Contract{" "}
-            <code>{contract}</code>.
-          </p>
-        </details>
-      </section>
       {pendingNotice}
       <BountyList bounties={bounties} ctx={ctx} titleOf={titleOf} />
       {!config.paused && props.poster ? (
@@ -315,8 +292,9 @@ export function PrBountiesView(props: PageProps) {
           done={props.done}
         />
       ) : null}
-      {props.poster &&
-      !(props.link.state === "ready" && props.link.value?.active) ? null : (
+      {!props.wallet ||
+      (props.poster &&
+        !(props.link.state === "ready" && props.link.value?.active)) ? null : (
         <LinkPanel
           contract={contract}
           config={config}
@@ -330,6 +308,27 @@ export function PrBountiesView(props: PageProps) {
           done={props.done}
         />
       )}
+      <details className="bounty-terms bounty-about">
+        <summary>How payment is decided</summary>
+        <p>
+          Repository <code>{config.pilot_repo}</code>. Each check attaches{" "}
+          {near(config.run_deposit)}; the unused part comes back.
+          {config.paused ? " Posting is paused." : ""}
+        </p>
+        <p>
+          Proven's verifier (<code>{config.verifier_hash.slice(0, 12)}…</code>)
+          runs on OutLayer and reads GitHub. It checks the merge only, not the
+          quality of the work. Anyone can verify a run from its attestation
+          link.
+        </p>
+        <p>
+          Payouts and refunds go to vaults controlled by one withdrawal key, not
+          to account names. <SponsorNote config={config} /> Contributors prove
+          their GitHub account once, with a gist they own. A bounty keeps{" "}
+          {near(config.storage_deposit)} as its record. Contract{" "}
+          <code>{contract}</code>.
+        </p>
+      </details>
     </>
   );
 }

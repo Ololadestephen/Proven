@@ -998,7 +998,8 @@ test("the list shows status tabs with counts and one card per bounty, newest fir
 
 test("a bounty's page shows the path, the next step, parties, terms, records and activity", () => {
   const html = renderPage({ bountyId: 5, wallet: wallet(CONTRIB) });
-  assert.match(html, /← Bounties/);
+  // No back link: the side navigation already leads to the list.
+  assert.doesNotMatch(html, /← Bounties/);
   const steps = [
     ...html.matchAll(/class="bounty-step (\w+)"><span[^>]*><\/span>([^<]+)</g),
   ].map((m) => `${m[2]}:${m[1]}`);
@@ -1064,7 +1065,7 @@ test("the page reads its own states", () => {
   const paused = renderPage({
     listing: { ...listing([]), config: { ...config, paused: true } },
   });
-  assert.match(paused, /posting paused/);
+  assert.match(paused, /Posting is paused\./);
   assert.doesNotMatch(paused, /<h2>Post a bounty<\/h2>/);
 });
 

@@ -39,7 +39,7 @@ export function appRoute(path: string, hash = ""): AppRoute {
     return {
       section: "bounties",
       title: "PR bounties",
-      subtitle: "",
+      subtitle: "Paid when the pull request merges before the deadline.",
     };
   if (path === "/app/jobs")
     return {

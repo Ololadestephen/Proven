@@ -545,13 +545,13 @@ details.bounty-section > summary {
 }
 .bounty-page-title {
   margin: 0;
-  font-size: 2rem;
+  font-size: 1.75rem;
   line-height: 1.15;
   text-wrap: balance;
 }
 .bounty-page-reward {
   margin: 0;
-  font-size: 2.25rem;
+  font-size: 1.5rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -664,4 +664,17 @@ details.bounty-section > summary {
   .bounty-page-grid {
     grid-template-columns: 1fr;
   }
+}
+.bounty-next .bounty-actions .workspace-empty,
+.bounty-next .bounty-action {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.bounty-about {
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 0.875rem;
 }
