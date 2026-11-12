@@ -19,6 +19,7 @@ import {
 } from "../src/custody.ts";
 import { ROOT } from "../src/config.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
+import { parseJson } from "../src/json.ts";
 
 const API = "https://testnet-api.outlayer.ai";
 const ESCROW = "escrow-v5.proven.testnet";
@@ -31,7 +32,10 @@ const evidencePath = `${ROOT}runs/swarm-setup.json`;
 const env = parseEnv(readFileSync(envPath, "utf8"));
 const provider = new JsonRpcProvider({ url: "https://test.rpc.fastnear.com" });
 const evidence: Record<string, unknown> = existsSync(evidencePath)
-  ? JSON.parse(readFileSync(evidencePath, "utf8"))
+  ? (parseJson(readFileSync(evidencePath, "utf8"), evidencePath) as Record<
+      string,
+      unknown
+    >)
   : {};
 const record = () =>
   writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, {
@@ -103,8 +107,9 @@ async function storePolicy(
   capabilities: Record<string, unknown> = {},
   dailyNative?: string,
 ): Promise<string> {
-  const stored = JSON.parse(
+  const stored = parseJson(
     readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+    "agent/custody-policy.json",
   ) as {
     capabilities: Record<string, unknown>;
     rules: { limits: { daily: { native: string } } };

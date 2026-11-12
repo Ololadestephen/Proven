@@ -10,6 +10,7 @@ import { ROOT } from "../src/config.ts";
 import { custodyCall } from "../src/custody.ts";
 import { waitTransactionResult } from "../src/near.ts";
 import type { Job } from "../src/types.ts";
+import { parseJson } from "../src/json.ts";
 
 const API = "https://testnet-api.outlayer.ai";
 const ESCROW = "escrow-v5.proven.testnet";
@@ -79,14 +80,17 @@ const created = await send(
     worker: env.PROVEN_HONEST_ACCOUNT_ID,
     spec_hash: sha(check),
     fakes_hash: sha(reference),
-    format_hash: sha((JSON.parse(check) as { format: string }).format),
+    format_hash: sha(
+      (parseJson(check, "check.json") as { format: string }).format,
+    ),
     amount: (10n ** 22n).toString(),
     token: null,
     deadline: (
       BigInt(block.header.timestamp_nanosec) + 3_600_000_000_000n
     ).toString(),
     verdict_window_secs: 1800,
-    verifier_hash: (JSON.parse(check) as { verifier: string }).verifier,
+    verifier_hash: (parseJson(check, "check.json") as { verifier: string })
+      .verifier,
   },
   5n * 10n ** 22n,
   70_000_000_000_000n,

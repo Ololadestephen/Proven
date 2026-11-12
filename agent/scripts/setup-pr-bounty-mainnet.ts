@@ -21,6 +21,7 @@ import {
 import { ROOT } from "../src/config.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
 import { networkSettings } from "../src/network.ts";
+import { parseJson } from "../src/json.ts";
 
 const YOCTO = 10n ** 24n;
 const MILLI = 10n ** 21n;
@@ -79,7 +80,10 @@ const evidencePath =
   process.env.PROVEN_EVIDENCE_FILE ??
   `${ROOT}runs/pr-bounty-mainnet-setup.json`;
 const evidence: Record<string, unknown> = existsSync(evidencePath)
-  ? (JSON.parse(readFileSync(evidencePath, "utf8")) as Record<string, unknown>)
+  ? (parseJson(readFileSync(evidencePath, "utf8"), evidencePath) as Record<
+      string,
+      unknown
+    >)
   : {};
 const record = () =>
   writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, {

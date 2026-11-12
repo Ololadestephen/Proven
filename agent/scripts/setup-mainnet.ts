@@ -26,6 +26,7 @@ import { ROOT } from "../src/config.ts";
 import { assertPolicy, custodyRead } from "../src/custody.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
 import { networkSettings } from "../src/network.ts";
+import { parseJson } from "../src/json.ts";
 
 // The owner's limits from November 7, enforced by the contract: two full jobs held, one per buyer.
 const MAX_JOB = 5n * 10n ** 24n; // 5 NEAR.
@@ -63,7 +64,10 @@ const dry = process.argv.includes("--dry-run");
 const provider = new JsonRpcProvider({ url: net.rpcs[0] });
 const evidencePath = `${ROOT}runs/stage2-setup.json`;
 const evidence: Record<string, unknown> = existsSync(evidencePath)
-  ? (JSON.parse(readFileSync(evidencePath, "utf8")) as Record<string, unknown>)
+  ? (parseJson(readFileSync(evidencePath, "utf8"), evidencePath) as Record<
+      string,
+      unknown
+    >)
   : {};
 const record = () =>
   writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, {
@@ -258,8 +262,9 @@ async function setupWallet() {
     });
   }
   const key = env.MAINNET_BUYER_CUSTODY_KEY!;
-  const stored = JSON.parse(
+  const stored = parseJson(
     readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+    "agent/custody-policy.json",
   ) as {
     rules: { addresses: { list: string[] } };
     capabilities: Record<string, unknown>;
@@ -479,8 +484,9 @@ async function deployBoard(wasmPath: string) {
       }),
     ),
   );
-  const stored = JSON.parse(
+  const stored = parseJson(
     readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+    "agent/custody-policy.json",
   ) as {
     rules: { addresses: { list: string[] } };
     capabilities: Record<string, unknown>;

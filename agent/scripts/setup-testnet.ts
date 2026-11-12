@@ -18,6 +18,7 @@ import {
 } from "near-api-js";
 import { assertPolicy, custodyRead } from "../src/custody.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
+import { parseJson } from "../src/json.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const envPath = `${root}.env`;
@@ -207,9 +208,10 @@ async function main() {
     address.asset_account_id
   )
     throw new PublicError("Unexpected custody account identity.");
-  const policy = JSON.parse(
+  const policy = parseJson(
     readFileSync(`${root}agent/custody-policy.json`, "utf8"),
-  );
+    "agent/custody-policy.json",
+  ) as Record<string, unknown>;
   let current = (await custodyRead(API, key, "/wallet/v1/policy")) as {
     policy?: string;
     controller?: string;

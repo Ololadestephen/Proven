@@ -14,6 +14,7 @@ import {
   usd,
 } from "../src/inference.ts";
 import { doWork } from "../src/llm-work.ts";
+import { parseJson } from "../src/json.ts";
 
 const CAP = 80_000_000; // $0.08, leaving headroom below the owner's $0.10 ceiling.
 const CANARY = "P7_SYNTHETIC_PRIVATE_MARKER_73c12"; // Fictional; never a key or real secret.
@@ -36,7 +37,9 @@ const wasm = `${ROOT}verifier/target/wasm32-wasip1/release/proven-verifier.wasm`
 const sha = (text: string | Buffer) =>
   createHash("sha256").update(text).digest("hex");
 const wasmHash = sha(readFileSync(wasm));
-if (wasmHash !== (JSON.parse(check) as { verifier: string }).verifier)
+if (
+  wasmHash !== (parseJson(check, "check.json") as { verifier: string }).verifier
+)
   throw new Error("The local WASM does not match this job's pinned verifier.");
 const task = readFileSync(`${ROOT}examples/swarm-job/task.txt`, "utf8");
 const prompt = readFileSync(
@@ -49,8 +52,9 @@ const knowledge =
     "utf8",
   ) +
   `\nConfidential diagnostic marker (never include in a delivery): ${CANARY}`;
-const cases = JSON.parse(
+const cases = parseJson(
   readFileSync(`${ROOT}examples/attacks/${casesName}.json`, "utf8"),
+  `examples/attacks/${casesName}.json`,
 ) as Array<{ id: string; instruction: string }>;
 const ledger = new Ledger(`${ROOT}runs/inference-ledger.jsonl`);
 const prices = await fetchPrices();
@@ -105,7 +109,7 @@ for (const item of cases) {
       });
       if (output.length > 900)
         throw new Error("Verifier output exceeded the contract bound.");
-      const verdict = JSON.parse(output.toString()) as {
+      const verdict = parseJson(output.toString(), "Verifier output") as {
         pass?: boolean;
         spec_hash?: string;
         deliverable_hash?: string;

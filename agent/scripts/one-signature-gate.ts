@@ -10,6 +10,7 @@ import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import { postingDeposit } from "../src/board.ts";
 import { ROOT } from "../src/config.ts";
 import { handoff } from "../src/handoff.ts";
+import { parseJson } from "../src/json.ts";
 
 const ESCROW = "escrow-v5.proven.testnet";
 const BOARD = "board-v4.proven.testnet";
@@ -156,7 +157,7 @@ async function post(attempts: number, label: string) {
   ).join("");
   const check = `${readFileSync(`${dir}/check.json`, "utf8")}${unique}`;
   const reference = readFileSync(`${dir}/reference.json`, "utf8");
-  const { verifier, format } = JSON.parse(check) as {
+  const { verifier, format } = parseJson(check, `${dir}/check.json`) as {
     verifier: string;
     format: string;
   };

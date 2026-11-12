@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import { ROOT } from "../src/config.ts";
+import { parseJson } from "../src/json.ts";
 
 const API = "https://testnet-api.outlayer.ai";
 const OUTSIDE = "proven.testnet"; // The owner's account, which no wallet's policy allows.
@@ -108,8 +109,9 @@ await attack("swap-quote", () =>
 // Can a Bearer-key holder replace the policy from an account that is not its controller? The policy
 // offered is the same strict one, so success would change who controls it, not what it allows.
 await attack("policy-store-from-non-controller", async () => {
-  const policy = JSON.parse(
+  const policy = parseJson(
     readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+    "agent/custody-policy.json",
   ) as Record<string, unknown>;
   const stranger = new Account(
     env.WORKER_FAKE_ACCOUNT_ID!,

@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import { ROOT } from "../src/config.ts";
+import { parseJson } from "../src/json.ts";
 
 const ESCROW = "escrow-v5.proven.testnet";
 const [released, refunded, open] = process.argv.slice(2).map(Number);
@@ -77,8 +78,9 @@ const newJob = (amount: bigint) => ({
   deadline: (BigInt(now) + 3_600_000_000_000n).toString(),
   verdict_window_secs: 1800,
   verifier_hash: (
-    JSON.parse(
+    parseJson(
       readFileSync(`${ROOT}examples/swarm-job/check.json`, "utf8"),
+      "examples/swarm-job/check.json",
     ) as { verifier: string }
   ).verifier,
 });
