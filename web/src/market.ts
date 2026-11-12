@@ -371,7 +371,23 @@ async function escrowCaps(): Promise<Caps | null> {
 }
 
 /** The access setting and the escrow's limits, for the page. */
-export async function marketSettings() {
+/** Every page waits for these settings, so one read serves all visitors for a few seconds. The board
+ * itself enforces who may post, so a briefly cached answer never lets anyone post. */
+const SETTINGS_MS = 15_000;
+let settingsRead: { at: number; value: Promise<unknown> } | null = null;
+export function marketSettings() {
+  const now = Date.now();
+  if (settingsRead && now - settingsRead.at < SETTINGS_MS)
+    return settingsRead.value;
+  const value = readMarketSettings();
+  settingsRead = { at: now, value };
+  // A failed read is not kept: the next visitor reads again.
+  value.catch(() => {
+    if (settingsRead?.value === value) settingsRead = null;
+  });
+  return value;
+}
+async function readMarketSettings() {
   const [access, caps] = await Promise.all([boardAccess(), escrowCaps()]);
   return {
     network: NETWORK,

@@ -182,3 +182,36 @@ test("workspace routes carry fresh nonce CSP; support pages stay read-only and a
   assert.ok(!evidence.includes('id="demo"'));
   assert.ok(!evidence.includes('id="trust"'));
 });
+
+test("static files are compressed, fingerprinted and answered 304 when unchanged; API reads are not cached", async (t) => {
+  const app = createApp(async () => ({}) as never);
+  app.listen(0, "127.0.0.1");
+  await once(app, "listening");
+  t.after(() => app.close());
+  const address = app.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  const get = (path: string, headers: Record<string, string> = {}) =>
+    new Promise<http.IncomingMessage>((resolve, reject) => {
+      http
+        .get(base + path, { headers }, (response) => {
+          response.resume();
+          resolve(response);
+        })
+        .on("error", reject);
+    });
+  const first = await get("/market.css", { "accept-encoding": "gzip" });
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.headers["content-encoding"], "gzip");
+  assert.equal(first.headers["cache-control"], "no-cache");
+  const etag = String(first.headers.etag);
+  assert.match(etag, /^"[A-Za-z0-9_-]{27}"$/);
+  const plain = await get("/market.css");
+  assert.equal(plain.headers["content-encoding"], undefined);
+  const again = await get("/market.css", { "if-none-match": etag });
+  assert.equal(again.statusCode, 304);
+  // An app page carries a fresh wallet nonce, so it is never reused.
+  const page = await get("/app/market", { "accept-encoding": "gzip" });
+  assert.equal(page.headers["cache-control"], "no-store");
+  assert.equal(page.headers.etag, undefined);
+});

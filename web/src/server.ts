@@ -3,7 +3,8 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserDemo } from "./demo.ts";
@@ -231,22 +232,59 @@ async function marketRoute(
   throw new ReadError("Route not found.", 404);
 }
 
+/** Static files are fixed for a release: each is read, fingerprinted and compressed once. */
+const COMPRESSIBLE = /^(text\/|application\/(javascript|json)|image\/svg)/;
+const prepared = new Map<
+  string,
+  { bytes: Buffer; gzip: Buffer | null; etag: string }
+>();
+async function preparedFile(name: string, type: string) {
+  let entry = prepared.get(name);
+  if (!entry) {
+    const bytes = await readFile(new URL(name, PUBLIC));
+    entry = {
+      bytes,
+      gzip:
+        COMPRESSIBLE.test(type) && bytes.length > 1024 ? gzipSync(bytes) : null,
+      etag: `"${createHash("sha256").update(bytes).digest("base64url").slice(0, 27)}"`,
+    };
+    prepared.set(name, entry);
+  }
+  return entry;
+}
+
 async function serveRead(
   path: string,
   res: ServerResponse,
   getJob: typeof loadJob,
   reads: { active: number },
   walletNonce?: string,
+  request?: { acceptEncoding?: string; ifNoneMatch?: string },
 ) {
   const file = isAppPath(path) ? FILES["/app"] : FILES[path];
   if (file) {
-    const bytes = await readFile(new URL(file[0], PUBLIC));
-    res.writeHead(200, { "Content-Type": file[1] });
-    res.end(
-      walletNonce
-        ? bytes.toString("utf8").replace("__WALLET_NONCE__", walletNonce)
-        : bytes,
-    );
+    const { bytes, gzip, etag } = await preparedFile(file[0], file[1]);
+    // An app page carries a fresh wallet nonce, so it is never reused from a cache.
+    if (walletNonce) {
+      res.writeHead(200, { "Content-Type": file[1] });
+      res.end(bytes.toString("utf8").replace("__WALLET_NONCE__", walletNonce));
+      return;
+    }
+    // Other files may be kept by the browser, but are checked on every visit (no stale release).
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("ETag", etag);
+    res.setHeader("Vary", "Accept-Encoding");
+    if (request?.ifNoneMatch === etag) {
+      res.writeHead(304);
+      res.end();
+      return;
+    }
+    const zipped = gzip && /\bgzip\b/.test(request?.acceptEncoding ?? "");
+    res.writeHead(200, {
+      "Content-Type": file[1],
+      ...(zipped ? { "Content-Encoding": "gzip" } : {}),
+    });
+    res.end(zipped ? gzip : bytes);
     return;
   }
   const job = /^\/api\/jobs\/([0-9]+)$/.exec(path);
@@ -328,7 +366,10 @@ export function createApp(
         res.setHeader("Allow", "GET");
         throw new ReadError("This route supports reads only.", 405);
       }
-      await serveRead(url.pathname, res, getJob, reads, walletNonce);
+      await serveRead(url.pathname, res, getJob, reads, walletNonce, {
+        acceptEncoding: String(req.headers["accept-encoding"] ?? ""),
+        ifNoneMatch: String(req.headers["if-none-match"] ?? ""),
+      });
     } catch (error) {
       if (res.headersSent) {
         res.end();
