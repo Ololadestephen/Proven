@@ -12,7 +12,7 @@ import {
   progress,
   type Job,
 } from "./model.ts";
-import { readJson, rpc } from "./read.ts";
+import { readJson, rpc, TESTNET_RPC } from "./read.ts";
 
 const API = "https://testnet-api.outlayer.ai";
 const NOT_CHECKED = [
@@ -131,7 +131,7 @@ export async function audit(
 export async function loadJob(text: string, transport: typeof fetch = fetch) {
   const id = jobNumber(text);
   const block = object(
-    (await rpc("block", { finality: "final" }, transport)).header,
+    (await rpc("block", { finality: "final" }, transport, TESTNET_RPC)).header,
   );
   if (
     typeof block.hash !== "string" ||
@@ -153,6 +153,7 @@ export async function loadJob(text: string, transport: typeof fetch = fetch) {
       ),
     },
     transport,
+    TESTNET_RPC,
   );
   if (
     data.block_hash !== block.hash ||

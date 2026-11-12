@@ -168,18 +168,17 @@
                 A binding match is not a signature check
               </h2>
               <p>
-                The historical testnet evidence reader compares public job
-                commitments with the selected attestation’s fields. It relies on
-                the public testnet RPC and OutLayer API; it does not verify NEAR
-                light-client proofs, Intel signatures or worker-measurement
-                approval.
+                A job's evidence panel compares its public commitments with the
+                attestation’s fields. It relies on the public NEAR RPC and
+                OutLayer API; it does not verify NEAR light-client proofs, Intel
+                signatures or worker-measurement approval.
               </p>
               <p>
-                Separate command-line checks of the recorded verdict
-                attestations for historical jobs 35 and 36 passed online and
-                offline Intel signature-chain, measurement and execution-binding
-                verification. Those checks cover those attestations, not every
-                run, and they do not make a buyer’s check fair.
+                Separate command-line checks of two earlier recorded verdict
+                attestations passed online and offline Intel signature-chain,
+                measurement and execution-binding verification. Those checks
+                cover those attestations, not every run, and they do not make a
+                buyer’s check fair.
               </p>
               <p>
                 The stored request ID helps locate an attestation. That ID is

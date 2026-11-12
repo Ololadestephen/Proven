@@ -49,6 +49,9 @@ export async function readJson(
 
 // The RPC for bounty and snapshot reads, on the network this site serves. PROVEN_MAINNET_RPC_URL
 // or PROVEN_TESTNET_RPC_URL moves them to another public endpoint when one rate-limits a busy page.
+/** Recorded testnet jobs are read from testnet whatever network the site serves. */
+export const TESTNET_RPC =
+  process.env.PROVEN_TESTNET_RPC_URL || "https://test.rpc.fastnear.com";
 const RPC =
   process.env.NEAR_NETWORK === "mainnet"
     ? process.env.PROVEN_MAINNET_RPC_URL || "https://rpc.mainnet.fastnear.com"
@@ -59,9 +62,10 @@ export async function rpcAnswer(
   method: RpcMethod,
   params: unknown,
   transport: typeof fetch,
+  url: string = RPC,
 ) {
   return object(
-    await readJson(RPC, transport, {
+    await readJson(url, transport, {
       jsonrpc: "2.0",
       id: "proven-read",
       method,
@@ -73,8 +77,9 @@ export async function rpc(
   method: RpcMethod,
   params: unknown,
   transport: typeof fetch,
+  url: string = RPC,
 ) {
-  const response = await rpcAnswer(method, params, transport);
+  const response = await rpcAnswer(method, params, transport, url);
   if (response.error || !("result" in response))
     throw new ReadError(
       "The NEAR RPC could not return this snapshot. No transaction was sent.",

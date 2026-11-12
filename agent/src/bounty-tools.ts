@@ -498,7 +498,7 @@ async function get(env: BountyEnv, args: Args) {
       submit_outlayer_request_id: b.binding.request_id,
     },
     merge: b.merge && {
-      merged_at_utc: isoNanos(b.merge.merged_at),
+      merged_at_utc: isoSecs(b.merge.merged_at), // GitHub's merge time, in seconds
       outlayer_request_id: b.merge.request_id,
     },
     live_run: b.live && {

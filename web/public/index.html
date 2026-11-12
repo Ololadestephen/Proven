@@ -52,8 +52,8 @@
           </p>
           <div class="lp-actions">
             <a class="lp-button" href="/app">Open the market</a>
-            <a class="lp-button lp-button-soft" href="/evidence#job-35"
-              >See a recorded delivery</a
+            <a class="lp-button lp-button-soft" href="/app/bounties/1"
+              >See a paid bounty</a
             >
           </div>
           <div class="lp-preview-frame">
@@ -207,8 +207,8 @@
                 </div>
               </div>
               <p class="product-example-note">
-                Pays on the merge, not on code quality. In testing on testnet;
-                not yet open on useproven.xyz.
+                Pays on the merge, not on code quality. Live on an unaudited,
+                owner-funded mainnet deployment.
               </p>
             </article>
             <article class="product-job-type">
@@ -344,19 +344,19 @@
             <div class="interface-console">
               <div class="interface-console-title">
                 <span class="console-status-dot" aria-hidden="true"></span
-                ><span>Historical testnet job status · read only</span>
+                ><span>Agent tool · mainnet · read only</span>
               </div>
-              <pre><code><span class="console-muted"># Recorded testnet evidence, not a mainnet job</span>
-curl --fail https://useproven.xyz/api/jobs/35</code></pre>
+              <pre><code><span class="console-muted"># Read a PR bounty, as an agent would</span>
+npm run proven -- bounty_get '{"bounty_id":1}'</code></pre>
               <div class="interface-result">
-                <div><span>job_id</span><strong>35</strong></div>
-                <div><span>state</span><strong>Released</strong></div>
-                <div><span>verdict_request_id</span><strong>10067</strong></div>
+                <div><span>status</span><strong>Paid</strong></div>
+                <div><span>pull_request</span><strong>#2</strong></div>
+                <div><span>merge_check_request</span><strong>3001</strong></div>
               </div>
             </div>
             <p class="interface-panel-note">
-              One existing recorded example. This command reads its state; it
-              does not start work or move funds.
+              A real bounty on mainnet. The tool only reads: it signs nothing
+              and holds no key.
             </p>
           </div>
         </div>
@@ -367,34 +367,35 @@ curl --fail https://useproven.xyz/api/jobs/35</code></pre>
             <p class="lp-kicker">INSPECT THE RESULT</p>
             <h2>A payment should come<br />with something to show.</h2>
             <p>
-              Open a job to see the committed hashes, the recorded verdict, the
-              OutLayer request and the transaction that moved the funds.
+              Open a bounty to see the pull request, the attested OutLayer runs
+              that read GitHub, and where the money went.
             </p>
-            <a class="lp-text-link" href="/evidence#job-35">Inspect job 35</a>
+            <a class="lp-text-link" href="/app/bounties/1">Inspect bounty 1</a>
           </div>
           <div class="lp-receipt">
             <div class="lp-receipt-heading">
               <span class="lp-case-icon" aria-hidden="true">✓</span
-              ><span class="lp-state lp-state-pass">Recorded on testnet</span>
+              ><span class="lp-state lp-state-pass">Paid on mainnet</span>
             </div>
-            <p class="lp-kicker">JOB 35 · HONEST DELIVERY</p>
-            <h3>The work passed.<br />The worker was paid.</h3>
+            <p class="lp-kicker">BOUNTY 1 · MERGED PULL REQUEST</p>
+            <h3>The pull request merged.<br />The contributor was paid.</h3>
             <dl>
               <div>
-                <dt>Amount released</dt>
-                <dd>0.01 NEAR</dd>
+                <dt>Reward paid</dt>
+                <dd>0.06 NEAR</dd>
               </div>
               <div>
-                <dt>Verdict request</dt>
-                <dd>10067</dd>
+                <dt>Merge check request</dt>
+                <dd>3001</dd>
               </div>
               <div>
-                <dt>Delivery result</dt>
-                <dd>Pass recorded</dd>
+                <dt>Pull request</dt>
+                <dd>cassa #2, merged</dd>
               </div>
             </dl>
             <p class="lp-receipt-note">
-              Existing evidence, read live. Opening it does not start a new run.
+              The owner's own end-to-end test on an unaudited, owner-funded
+              mainnet deployment. Opening it starts nothing.
             </p>
           </div>
         </div>

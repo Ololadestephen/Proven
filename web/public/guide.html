@@ -119,9 +119,8 @@
           </li>
           <li>
             <strong>Public data providers.</strong> The viewer relies on the
-            configured network’s NEAR RPC and OutLayer API. The separate
-            historical evidence reader reads recorded testnet jobs. Neither
-            verifies a NEAR light-client proof.
+            configured network’s NEAR RPC and OutLayer API. Neither verifies a
+            NEAR light-client proof.
           </li>
         </ul>
         <h3>What an attestation panel means</h3>
@@ -138,35 +137,21 @@
         </p>
       </section>
       <section class="guide-section" aria-labelledby="examples">
-        <h2 id="examples">Start with two completed jobs</h2>
+        <h2 id="examples">Start with two paid examples</h2>
         <p>
-          The recorded November 6 testnet pair used the same check. Job 35
-          released exactly 0.01 NEAR to the honest worker. Job 36 refunded
-          exactly 0.01 NEAR to the buyer after the fake delivery failed. The
-          check had caught 13 of 13 planted fakes before funding.
+          Market job 1 paid 0.001 NEAR after its delivery passed the check
+          (verdict run 2863); before funding, the check caught 13 of 13 planted
+          fakes. PR bounty 1 paid 0.06 NEAR into the contributor's vault after
+          pull request #2 merged (merge check run 3001).
         </p>
         <p>
-          These are existing jobs, read live. Opening them sends no transaction
-          and does not start a new demo.
+          Both are the owner's own test runs on mainnet, read live. Opening them
+          sends no transaction.
         </p>
         <div class="guide-example-links">
-          <a class="lp-button" href="/evidence#job-35">Inspect honest job 35 </a
-          ><a class="lp-button" href="/evidence#job-36">Inspect fake job 36 </a>
+          <a class="lp-button" href="/app/bids/1">Inspect job 1</a
+          ><a class="lp-button" href="/app/bounties/1">Inspect bounty 1</a>
         </div>
-      </section>
-      <section class="guide-section" aria-labelledby="demo">
-        <h2 id="demo">Historical scripted demo</h2>
-        <p>
-          The November 6 recorded demo used scripted workers on older testnet
-          contracts. Its earlier fresh command took 117.87 seconds. That timing
-          is evidence for that old flow, not a current one-signature benchmark
-          or a time guarantee.
-        </p>
-        <p>
-          The legacy launcher is retired. The testnet copy is preparation only;
-          no live demo control or testnet app link is offered here.
-        </p>
-        <a class="lp-text-link" href="/examples">Read the recorded examples</a>
       </section>
       <section class="guide-section" aria-labelledby="scope">
         <h2 id="scope">Where Proven stops</h2>
@@ -180,10 +165,9 @@
           owner holds a single key that can upgrade the contracts. The board
           enforces its buyer list on posting. The app reads access from that
           board and limits from the escrow instead of assuming a fixed cap. The
-          recorded examples on this page are historical scripted testnet jobs.
-          Cross-chain payouts are not implemented. The relay operator can read
-          private inputs; this page does not independently verify their
-          handling.
+          examples on this page are the owner's own test runs. Cross-chain
+          payouts are not implemented. The relay operator can read private
+          inputs; this page does not independently verify their handling.
         </p>
       </section>
     </main>

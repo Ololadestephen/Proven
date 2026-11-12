@@ -484,3 +484,28 @@ test("unknown fields and bad accounts are refused", async () => {
     /Invalid account/,
   );
 });
+
+test("bounty_get reads the merge time in seconds, as GitHub reports it", async () => {
+  const world = {
+    bounties: {
+      1: bounty({
+        status: "Paid",
+        claim: claimed,
+        binding: bound,
+        merge: {
+          merged_at: "1794471927",
+          request_id: "3001",
+          checked_at: "1794471984486396416",
+        },
+      }),
+    },
+  };
+  const { env } = fakeEnv(world);
+  const out = (await executeBountyTool(
+    "bounty_get",
+    { bounty_id: 1 },
+    env,
+  )) as any;
+  assert.equal(out.merge.merged_at_utc, "2026-11-12T08:25:27.000Z");
+  assert.equal(out.merge.outlayer_request_id, "3001");
+});

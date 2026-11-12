@@ -118,6 +118,8 @@ test("static pages have no stale caps, testnet app link or retired live-start co
       name,
     );
     assert.ok(!/href=["']https:\/\/testnet\.useproven\.xyz/.test(html), name);
+    // The public pages describe the mainnet deployment only; app.html is the old job reader.
+    if (name !== "app.html") assert.ok(!/testnet/i.test(html), name);
     // Pages with the app sidebar read the network's name live; the landing page and guide name no
     // network status at all (owner, November 9).
     if (["index.html", "guide.html"].includes(name))
@@ -131,7 +133,7 @@ test("static pages have no stale caps, testnet app link or retired live-start co
     new URL("../public/examples.html", import.meta.url),
     "utf8",
   );
-  assert.match(examples, /legacy launcher is\s+retired/);
+  assert.match(examples, /no page here starts a\s+new run/);
   assert.ok(!examples.includes('id="demo-start"'));
   assert.ok(!examples.includes('src="/demo.js"'));
 });
