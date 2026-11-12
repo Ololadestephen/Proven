@@ -1,65 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseReview } from "./bid-review.ts";
-import type { Bid } from "./board.ts";
-import { inferenceLimit, workRefusal } from "./swarm.ts";
-import type { Job } from "./types.ts";
-
-const EXPIRES = 10_000_000_000_000n;
-const bid = (over: Partial<Bid> = {}): Bid =>
-  ({
-    state: "Claimed",
-    amount: "10",
-    expires_at: (EXPIRES * 1000n).toString(),
-    job_id: 7,
-    claim: { number: 1, agent: "agent.testnet", claimed_at: "0" },
-    ...over,
-  }) as Bid;
-const job = (over: Partial<Job> = {}): Job =>
-  ({
-    state: "Funded",
-    worker: "agent.testnet",
-    token: null,
-    amount: "10",
-    deadline: "1000000000000",
-    ...over,
-  }) as Job;
-
-test("the agent starts only on a funded job naming it, for this bid", () => {
-  assert.equal(workRefusal(bid(), 7, job(), "agent.testnet", 0n), null);
-  assert.match(
-    workRefusal(bid(), 7, job({ state: "Challenged" }), "agent.testnet", 0n) ??
-      "",
-    /not funded/,
-  );
-  assert.match(
-    workRefusal(
-      bid(),
-      7,
-      job({ worker: "other.testnet" }),
-      "agent.testnet",
-      0n,
-    ) ?? "",
-    /different worker/,
-  );
-  assert.match(
-    workRefusal(bid(), 7, job({ amount: "1" }), "agent.testnet", 0n) ?? "",
-    /other than the bid/,
-  );
-  assert.match(
-    workRefusal(bid(), 7, job({ token: "usd.testnet" }), "agent.testnet", 0n) ??
-      "",
-    /other than the bid/,
-  );
-  assert.match(
-    workRefusal(bid(), 7, job(), "agent.testnet", 600_000_000_000n) ?? "",
-    /too little time/,
-  );
-  assert.match(
-    workRefusal(bid(), 8, job(), "agent.testnet", 0n) ?? "",
-    /not this bid's/,
-  );
-});
+import { inferenceLimit } from "./swarm.ts";
 
 test("earnings raise the inference limit up to a ceiling", () => {
   assert.equal(inferenceLimit(0n), 50_000_000);

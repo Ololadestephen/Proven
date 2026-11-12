@@ -6,7 +6,6 @@ import { randomBytes } from "node:crypto";
 // custody wallets. The model only ever produces candidate bytes for a job the chain says is funded:
 // job id, payee and amount all come from the chain. Only the escrow's recorded verdict moves money.
 import { workRefusal } from "./swarm-rules.ts";
-export { workRefusal };
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
