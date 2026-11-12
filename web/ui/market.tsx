@@ -20,7 +20,57 @@ function ProgressToast({ message }: { message: string }) {
   ) : null;
 }
 
+/** Whether a click on this link can move inside the app without reloading the page. */
+function inAppLink(event: MouseEvent): HTMLAnchorElement | null {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  )
+    return null;
+  const link = (event.target as Element | null)?.closest?.("a");
+  if (!link || link.target || link.hasAttribute("download")) return null;
+  const url = new URL(link.href, location.href);
+  return url.origin === location.origin && url.pathname.startsWith("/app")
+    ? link
+    : null;
+}
+
+/** The app's address. Links inside /app change it without a page reload, so the wallet, the loaded
+ * market and the scripts stay in place; back and forward work as before. */
+function useAppPath(): string {
+  const [path, setPath] = useState(location.pathname + location.hash);
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      const link = inAppLink(event);
+      if (!link) return;
+      const url = new URL(link.href, location.href);
+      event.preventDefault();
+      if (url.pathname + url.hash !== location.pathname + location.hash)
+        history.pushState(null, "", url.pathname + url.hash);
+      setPath(url.pathname + url.hash);
+      if (url.hash)
+        document.getElementById(url.hash.slice(1))?.scrollIntoView();
+      else window.scrollTo(0, 0);
+    };
+    const onPop = () => setPath(location.pathname + location.hash);
+    document.addEventListener("click", onClick);
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("hashchange", onPop);
+    return () => {
+      document.removeEventListener("click", onClick);
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("hashchange", onPop);
+    };
+  }, []);
+  return path;
+}
+
 function App() {
+  const path = useAppPath();
   const route = appRoute(location.pathname, location.hash);
   const state = useMarket(route.bidId);
   const {
@@ -111,6 +161,8 @@ function App() {
       ) : null}
       {market || !boardUnavailable ? (
         <WorkspacePages
+          // Each address starts its page fresh, as a full load did.
+          key={path}
           route={route}
           market={market}
           wallet={wallet}

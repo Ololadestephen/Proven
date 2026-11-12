@@ -12,7 +12,7 @@ For MCP, run `npm run mcp`. On mainnet the server needs four settings and no key
 claude mcp add proven -e NEAR_NETWORK=mainnet -e PROVEN_STAGE2_APPROVED=yes -e MAINNET_ESCROW_ACCOUNT_ID=proven-escrow.near -e PROVEN_BOARD=proven-board.near -- node /path/to/proven/agent/src/mcp.ts
 ```
 
-Codex and other MCP clients take the same command and settings. The server offers 29 tools. Its actor is fixed by `PROVEN_ACTOR` in the operator's configuration. Tool arguments cannot choose another actor or provide credentials. Worker function-call keys cannot attach deposits or transfer NEAR. Custody wallets must meet their stored policy; existing custody signing boundaries remain narrower than the Market's chain caps. In particular, this client's custody policy still limits each attached deposit to 0.1 NEAR. Do not loosen that policy to make a posting pass. An owner must separately design and approve a suitable signing path.
+Codex and other MCP clients take the same command and settings. The server offers 27 tools. Its actor is fixed by `PROVEN_ACTOR` in the operator's configuration. Tool arguments cannot choose another actor or provide credentials. Worker function-call keys cannot attach deposits or transfer NEAR. Custody wallets must meet their stored policy; existing custody signing boundaries remain narrower than the Market's chain caps. In particular, this client's custody policy still limits each attached deposit to 0.1 NEAR. Do not loosen that policy to make a posting pass. An owner must separately design and approve a suitable signing path.
 
 ## Market flow
 
@@ -32,7 +32,7 @@ Read tools need no signing key: `list_bids`, `bid_status` with `bid_id`, `list_a
 | `job_status`               | `job_id`                                                                 | Reads state, hashes and challenge/verdict attestation links. Links do not establish independent Intel signature verification.                                                                                                                                                                                          |
 | `recover_outlayer_deposit` | Decimal-string `request_id`                                              | Forwards stale cancellation; OutLayer decides whether cancellation is allowed and refunds the original payer.                                                                                                                                                                                                          |
 
-Do not create, link or fund a separate job after each worker claim. The legacy `post_job`, `challenge_check` and `fund_job` tools remain for direct jobs outside the Market; they are not the Market posting flow. The removed per-claim linking and funding tools are unavailable.
+Do not create, link or fund a separate job after each worker claim. The direct-job `post_job` and `fund_job` tools are removed: the current escrow has no separate create or fund call. `challenge_check` remains for an existing job awaiting its check; it is not the Market posting flow.
 
 Every tool accepts `dry_run:true`. Check, reference and deliverable arguments are exact strings; whitespace changes their hashes. CLI/MCP input is bounded at 512 KiB and individual private texts at 256 KiB. Large private payloads have not been validated on OutLayer. A function delivery uses the verifier's JSON function format, not an arbitrary executable.
 

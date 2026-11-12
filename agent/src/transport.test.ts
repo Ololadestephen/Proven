@@ -323,3 +323,19 @@ executeTool:async()=>({state:'Draft'})});`;
   assert.equal(replies.length, 2);
   assert.equal(replies[1].result.structuredContent.state, "Draft");
 });
+
+test("a submitted call that failed or is unknown is a tool error that still carries its transaction", async () => {
+  for (const [value, isError] of [
+    [{ transaction_hash: "t", failed: true }, true],
+    [{ transaction_hash: "t", pending: true }, true],
+    [{ transaction_hash: "t" }, false],
+  ] as const) {
+    const handle = await ready({ ...service, executeTool: async () => value });
+    const response = await handle(
+      request("tools/call", { name: "job_status" }),
+    );
+    const result = response?.result as Record<string, unknown>;
+    assert.equal(result.isError, isError);
+    assert.deepEqual(result.structuredContent, value);
+  }
+});

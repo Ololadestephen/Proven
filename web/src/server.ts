@@ -1,3 +1,5 @@
+import { createDevWallet } from "./dev-wallet.ts";
+import { RateLimiter } from "./rate-limiter.ts";
 import {
   createServer,
   type IncomingMessage,
@@ -17,8 +19,6 @@ import {
   marketSettings,
   postingOutcome,
   revealRoute,
-  createDevWallet,
-  RateLimiter,
   readMarketCached,
   relayRoute,
   reviewRoute,
@@ -436,15 +436,12 @@ if (
         "The dev signer runs only on the testnet preparation server.",
       );
     const root = fileURLToPath(new URL("../../", import.meta.url));
-    (globalThis as { __provenEnv?: string }).__provenEnv = await readFile(
-      `${root}.env`,
-      "utf8",
-    );
-    (globalThis as { __provenOutsider?: unknown }).__provenOutsider =
-      JSON.parse(
+    devWallet = createDevWallet({
+      envText: await readFile(`${root}.env`, "utf8"),
+      outsider: JSON.parse(
         await readFile(`${root}runs/private/outsider/key.json`, "utf8"),
-      );
-    devWallet = createDevWallet();
+      ),
+    });
     console.log("Dev signer on: testnet keys only, this machine only.");
   }
   const server = createApp(loadJob, demo, origin, devWallet);

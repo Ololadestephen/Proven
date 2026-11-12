@@ -28,12 +28,12 @@ test("each account sees its own role", () => {
 });
 
 test("only the worker is offered verification", () => {
-  assert.equal(stepForViewer(verify, bid(null), "buyer", NOW)?.id, "wait");
+  assert.equal(stepForViewer(verify, bid(null), "buyer", NOW, "b")?.id, "wait");
 });
 
 test("the buyer sees every other step unchanged", () => {
   const step: Step = { id: "sync", label: "Update the bid" };
-  assert.equal(stepForViewer(step, bid(null), "buyer", NOW), step);
+  assert.equal(stepForViewer(step, bid(null), "buyer", NOW, "b"), step);
 });
 
 test("the worker waits for the buyer to verify, then may run it", () => {
@@ -43,6 +43,7 @@ test("the worker waits for the buyer to verify, then may run it", () => {
     bid({ state: "Delivered", delivered_at: delivered }),
     "worker",
     NOW,
+    "w",
   );
   assert.equal(early?.id, "wait");
   const late = stepForViewer(
@@ -50,6 +51,7 @@ test("the worker waits for the buyer to verify, then may run it", () => {
     bid({ state: "Delivered", delivered_at: delivered }),
     "worker",
     NOW + WORKER_VERIFY_AFTER_MS,
+    "w",
   );
   assert.equal(late?.id, "verify");
 });
@@ -67,6 +69,7 @@ test("after the end the worker sees the outcome, not bookkeeping", () => {
     }),
     "worker",
     NOW,
+    "w",
   );
   assert.equal(paid?.id, "wait");
   assert.match(paid?.label ?? "", /Paid/);
@@ -81,6 +84,7 @@ test("after the end the worker sees the outcome, not bookkeeping", () => {
     }),
     "worker",
     NOW,
+    "w",
   );
   assert.match(failed?.label ?? "", /Not paid.*totals/);
 });
@@ -97,13 +101,51 @@ test("a worker whose attempt failed sees its own result from the escrow's record
   );
   assert.equal(roleOf(value, "w"), "worker");
   assert.match(
-    stepForViewer(sync, value, "worker", NOW)?.label ?? "",
+    stepForViewer(sync, value, "worker", NOW, "w")?.label ?? "",
     /no delivery arrived/,
   );
 });
 
 test("a visitor can apply, and sees nothing of a job in progress", () => {
   const claim: Step = { id: "claim", label: "Apply" };
-  assert.equal(stepForViewer(claim, bid(null), "visitor", NOW), claim);
-  assert.equal(stepForViewer(verify, bid(null), "visitor", NOW)?.id, "wait");
+  assert.equal(stepForViewer(claim, bid(null), "visitor", NOW, "x"), claim);
+  assert.equal(
+    stepForViewer(verify, bid(null), "visitor", NOW, "x")?.id,
+    "wait",
+  );
+});
+
+test("after two attempts, each worker sees only its own result", () => {
+  const value = bid(
+    {
+      state: "Released",
+      worker: "second",
+      amount: "1000000000000000000000",
+      history: [
+        { worker: "first", outcome: "Failed", failed_rule: "sum" },
+        { worker: "second", outcome: "Paid", failed_rule: null },
+      ],
+    },
+    { claim: { agent: "second" } },
+  );
+  const step: Step = { id: "sync", label: "Update the bid" };
+  const first = stepForViewer(step, value, "worker", NOW, "first");
+  assert.match(first?.label ?? "", /failed the rule “sum”/);
+  assert.match(
+    stepForViewer(step, value, "worker", NOW, "second")?.label ?? "",
+    /^Paid/,
+  );
+  const settle: Step = {
+    id: "settle",
+    label: "Settle",
+    method: "release",
+  } as Step;
+  assert.equal(
+    stepForViewer(settle, value, "worker", NOW, "first")?.id,
+    "wait",
+  );
+  assert.doesNotMatch(
+    stepForViewer(settle, value, "worker", NOW, "first")?.label ?? "",
+    /get paid/,
+  );
 });

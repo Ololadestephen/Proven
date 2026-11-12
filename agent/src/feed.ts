@@ -22,6 +22,13 @@ function jobView(jobId: number, job: Job | null, escrow: string) {
     fakes_caught: job.fakes_caught,
     fakes_total: job.fakes_total,
     failed_rule: job.failed_rule,
+    /** Every finished attempt, in the order the escrow recorded it. */
+    history: (job.history ?? []).map((attempt) => ({
+      worker: attempt.worker,
+      outcome: attempt.outcome,
+      failed_rule: attempt.failed_rule,
+      verdict_request_id: attempt.verdict_request_id,
+    })),
     deliverable_hash: job.deliverable_hash,
     report_hash: job.report_hash,
     challenge_attestation: job.challenge_request_id

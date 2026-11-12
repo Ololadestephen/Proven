@@ -1273,3 +1273,23 @@ test("suspended transaction metadata must be valid before it can be reconciled",
       (error) => error instanceof Error && !error.message.includes("PRIVATE"),
     );
 });
+
+test("a delivery sweep treats only a missing folder as empty", async () => {
+  const { mkdtemp, mkdir, chmod } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const directory = await mkdtemp(join(tmpdir(), "sweep-"));
+  const deps = {
+    escrow: "escrow.testnet",
+    getJob: async () => null,
+  } as unknown as Parameters<typeof sweepDeliveries>[0];
+  assert.deepEqual(await sweepDeliveries(deps, directory), []);
+  const records = join(directory, `jobs-${sha256Hex("escrow.testnet")}`);
+  await mkdir(records);
+  await chmod(records, 0o000);
+  try {
+    if (process.getuid?.() !== 0)
+      await assert.rejects(sweepDeliveries(deps, directory));
+  } finally {
+    await chmod(records, 0o700);
+  }
+});

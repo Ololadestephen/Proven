@@ -47,6 +47,17 @@ test("only recorded outcomes and confirmed payout states produce verdict/payment
   );
 });
 
+test("an open job has no worker yet, and a decided refund says the transfer is retried", () => {
+  const open = parseJob({ ...fixture("Open"), worker: null });
+  assert.equal(open.worker, null);
+  assert.match(progress(open, 100n).funds, /has not been funded/);
+  const due = parseJob(fixture("RefundDue"));
+  assert.match(
+    progress(due, 100n).funds,
+    /Refund decided; the transfer is retried/,
+  );
+});
+
 test("stale, retry and expiry boundaries mirror contract strict inequalities", () => {
   const start = 1_000_000_000_000n;
   const job = { ...fixture("Verifying"), run_started_at: String(start) };

@@ -4,12 +4,14 @@
 // few calls that must fail are refused. Testnet only. Needs the relay running with PROVEN_BOARD set:
 //   PROVEN_RELAY_SOCKET=<socket> node scripts/one-signature-gate.ts
 import { createHash, randomBytes, sign as edSign } from "node:crypto";
+import { sha256Hex } from "../../relay/src/hash.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import { postingDeposit } from "../src/board.ts";
 import { ROOT } from "../src/config.ts";
 import { handoff } from "../src/handoff.ts";
+import { parseJson } from "../src/json.ts";
 
 const ESCROW = "escrow-v5.proven.testnet";
 const BOARD = "board-v4.proven.testnet";
@@ -31,7 +33,6 @@ const honest = signer(
   env.WORKER_HONEST_ACCOUNT_ID!,
   env.WORKER_HONEST_PRIVATE_KEY!,
 );
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const evidence: Record<string, unknown> = {
   at: new Date().toISOString(),
   steps: [],
@@ -117,7 +118,7 @@ function relayAuth(
   payload: string,
 ) {
   const pair = KeyPair.fromString(key as `ed25519:${string}`);
-  const message = `proven-relay:${action}:${jobId}:${sha(payload)}:${Date.now()}`;
+  const message = `proven-relay:${action}:${jobId}:${sha256Hex(payload)}:${Date.now()}`;
   const borsh = (text: string) => {
     const bytes = Buffer.from(text);
     const length = Buffer.alloc(4);
@@ -156,7 +157,7 @@ async function post(attempts: number, label: string) {
   ).join("");
   const check = `${readFileSync(`${dir}/check.json`, "utf8")}${unique}`;
   const reference = readFileSync(`${dir}/reference.json`, "utf8");
-  const { verifier, format } = JSON.parse(check) as {
+  const { verifier, format } = parseJson(check, `${dir}/check.json`) as {
     verifier: string;
     format: string;
   };
@@ -175,8 +176,8 @@ async function post(attempts: number, label: string) {
     {
       description: readFileSync(`${dir}/task.txt`, "utf8"),
       amount: AMOUNT.toString(),
-      check_hash: sha(check),
-      reference_hash: sha(reference),
+      check_hash: sha256Hex(check),
+      reference_hash: sha256Hex(reference),
       verifier_hash: verifier,
       format,
       expires_at: (now + 24n * 3_600n * 1_000_000_000n).toString(),
@@ -190,7 +191,9 @@ async function post(attempts: number, label: string) {
   const bids = await view<
     Array<[number, { check_hash: string; job_id: number }]>
   >(BOARD, "get_bids", { from_id: 0, limit: 50 });
-  const [bidId, found] = bids.find(([, b]) => b.check_hash === sha(check))!;
+  const [bidId, found] = bids.find(
+    ([, b]) => b.check_hash === sha256Hex(check),
+  )!;
   log(`${label}_posted`, {
     one_transaction: posted.hash,
     ok: posted.ok,
@@ -231,7 +234,7 @@ log(
     {
       bid_id: a.bidId,
       allow: true,
-      review_hash: sha("gate"),
+      review_hash: sha256Hex("gate"),
       model: "gate",
       chat_id: "gate",
     },
@@ -274,9 +277,9 @@ for (const [who, key] of [
         BOARD,
         "register_agent",
         {
-          prompt_hash: sha(who.accountId),
-          knowledge_hash: sha(""),
-          tools_hash: sha("[]"),
+          prompt_hash: sha256Hex(who.accountId),
+          knowledge_hash: sha256Hex(""),
+          tools_hash: sha256Hex("[]"),
           model: "scripted",
           owner: null,
         },
@@ -320,7 +323,7 @@ log(
     fake,
     ESCROW,
     "deliver",
-    { job_id: a.jobId, deliverable_hash: sha(wrong) },
+    { job_id: a.jobId, deliverable_hash: sha256Hex(wrong) },
     0n,
     15n * TGAS,
   ),
@@ -379,7 +382,7 @@ log(
     honest,
     ESCROW,
     "deliver",
-    { job_id: a.jobId, deliverable_hash: sha(right) },
+    { job_id: a.jobId, deliverable_hash: sha256Hex(right) },
     0n,
     15n * TGAS,
   ),

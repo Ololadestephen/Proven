@@ -117,3 +117,16 @@ test("a call that never finishes counts its worst-case cost against the limit", 
   assert.equal(l.rows()[0].status, 0);
   assert.ok(l.spentNanoUsd("agent-a") >= 10 * 1000);
 });
+
+test("a direct call without a model key is refused before any request or ledger row", async () => {
+  const l = ledger();
+  let fetched = 0;
+  const client = new ModelClient(l, prices, (async () => {
+    fetched++;
+    return new Response("{}");
+  }) as typeof fetch);
+  const { key: _key, ...keyless } = base;
+  await assert.rejects(client.call(keyless), /No model key is configured/);
+  assert.equal(fetched, 0);
+  assert.equal(l.rows().length, 0);
+});

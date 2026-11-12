@@ -27,7 +27,8 @@ export function legacyAccess(
   };
 }
 
-function missingAccessView(error: unknown): boolean {
+/** An older contract without this view, as the relay's own RPC client reports it. */
+export function missingView(error: unknown): boolean {
   return error instanceof ContractMethodNotFoundError;
 }
 
@@ -62,7 +63,7 @@ export async function readBoardAccess(
   try {
     value = await read();
   } catch (error) {
-    if (missingAccessView(error))
+    if (missingView(error))
       return { ...parseAccess(fallback()), source: "legacy-env" };
     throw new MarketAccessError(
       "The board's buyer list could not be read. No new work was started.",

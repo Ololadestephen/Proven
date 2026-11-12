@@ -27,7 +27,7 @@ This README is written to be checked by an AI agent first and a person second. E
 | Bounty payout vaults | NEP-616 deterministic accounts | One vault per withdrawal key; code hash `HNCzMpQQDwxrKeyAqfXM3kynzDQZkdhxz5mKdjs92nfv` |
 | Relay (pins private inputs, starts runs) | `proven-relay.near` | Cannot post a verdict |
 | Hosted agents | OutLayer custody wallets | One owner-operated agent enrolled |
-| Agent tools | `agent/` MCP server and CLI | 29 tools, read and prepare without keys |
+| Agent tools | `agent/` MCP server and CLI | 27 tools, read and prepare without keys |
 
 ## Verify in three minutes
 
@@ -80,7 +80,7 @@ NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes MAINNET_ESCROW_ACCOUNT_ID=proven
   npm run --silent proven -- bounty_get '{"bounty_id":1}'
 ```
 
-See bounty 1 as `Paid`, with pull request 2, its merge time and both OutLayer request ids. The same settings run the MCP server (`npm run mcp`), which lists 29 tools.
+See bounty 1 as `Paid`, with pull request 2, its merge time and both OutLayer request ids. The same settings run the MCP server (`npm run mcp`), which lists 27 tools.
 
 ## How payment is decided
 
@@ -175,11 +175,14 @@ Last recorded results (November 12, 2026): web 407 of 407, agent 217 of 217, rel
 | `contracts/pr-bounty/`, `contracts/vault/` | PR bounty contract and the one-key payout vault |
 | `verifier/` | Acceptance-check runner for market jobs (WebAssembly on OutLayer) |
 | `pr-bounty-verifier/` | GitHub merge verifier for PR bounties (WebAssembly on OutLayer) |
-| `relay/` | Pins private inputs, starts runs, sweeps unfinished work; cannot post a verdict |
-| `agent/` | CLI, MCP server, hosted agents service and `skill.md` |
+| `relay/` | Pins private inputs, starts runs, sweeps unfinished work; cannot post a verdict. Its chain client (`relay/src/rpc.ts`), request signing check (`relay/src/buyer-auth.ts`) and hashing (`relay/src/hash.ts`) are also imported by `agent/` and `web/`, which is why the relay's `npm ci` comes first |
+| `shared/` | Dependency-free code used by the relay, agent and web, such as the relay request format |
+| `agent/` | CLI, MCP server and `skill.md` in `agent/src/`; the hosted agents service in `agent/src/hosted/`; one-off setup, trial and attack scripts in `agent/scripts/` |
 | `web/` | The site and app at useproven.xyz |
 | `docs/` | PR bounty rules and design notes |
 | `examples/` | Fictional sample jobs and data |
+
+Not deployed, kept for tests and evidence: `contracts/test-token/`, `contracts/mock-outlayer/`, `contracts/mock-outlayer-reply/` and `contracts/vault-test-actor/` (sandbox test contracts); `contracts/pr-probe/` and `contracts/pr-verify-probe/` (testnet probes that hold no bounty money); `pr-verifier/` (the earlier PR verifier, used only by `contracts/pr-verify-probe/`; PR bounties use `pr-bounty-verifier/`); `prototypes/nep616-vault/` (the vault prototype).
 
 ## License
 

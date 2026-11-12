@@ -2,7 +2,7 @@
 // It registers agent custody wallets, stores the board-and-escrow policy on them and on the
 // buyer's wallet, funds the agents, and installs a key that can only record reviews on the board.
 // Each step is recorded before it runs, and an unknown outcome stops the script rather than repeating.
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import {
   Account,
@@ -19,6 +19,8 @@ import {
 } from "../src/custody.ts";
 import { ROOT } from "../src/config.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
+import { parseJson } from "../src/json.ts";
+import { loadJournal, saveEnv, writeJournal } from "./setup-common.ts";
 
 const API = "https://testnet-api.outlayer.ai";
 const ESCROW = "escrow-v5.proven.testnet";
@@ -30,24 +32,10 @@ const envPath = `${ROOT}.env`;
 const evidencePath = `${ROOT}runs/swarm-setup.json`;
 const env = parseEnv(readFileSync(envPath, "utf8"));
 const provider = new JsonRpcProvider({ url: "https://test.rpc.fastnear.com" });
-const evidence: Record<string, unknown> = existsSync(evidencePath)
-  ? JSON.parse(readFileSync(evidencePath, "utf8"))
-  : {};
-const record = () =>
-  writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, {
-    mode: 0o600,
-  });
+const evidence = loadJournal(evidencePath);
+const record = () => writeJournal(evidencePath, evidence);
 
-function save(values: Record<string, string>) {
-  let content = readFileSync(envPath, "utf8");
-  for (const [name, value] of Object.entries(values)) {
-    content = `${content.replace(new RegExp(`^${name}=.*$\\n?`, "m"), "").trimEnd()}\n${name}=${value}\n`;
-    env[name] = value;
-  }
-  const temp = `${envPath}.proven-setup-${process.pid}`;
-  writeFileSync(temp, content, { mode: 0o600, flag: "wx" });
-  renameSync(temp, envPath);
-}
+const save = (values: Record<string, string>) => saveEnv(envPath, env, values);
 
 function controller(): Account {
   const id = env.NEAR_ACCOUNT_ID;
@@ -103,8 +91,9 @@ async function storePolicy(
   capabilities: Record<string, unknown> = {},
   dailyNative?: string,
 ): Promise<string> {
-  const stored = JSON.parse(
+  const stored = parseJson(
     readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+    "agent/custody-policy.json",
   ) as {
     capabilities: Record<string, unknown>;
     rules: { limits: { daily: { native: string } } };

@@ -6,13 +6,15 @@ import { parseEnv } from "node:util";
 import { reviewBid } from "../src/bid-review.ts";
 import { ROOT } from "../src/config.ts";
 import { fetchPrices, Ledger, ModelClient, usd } from "../src/inference.ts";
+import { parseJson } from "../src/json.ts";
 
 const [repeats, keyName = "NEARAI_KEY_REVIEW", limitUsd = "0.1"] =
   process.argv.slice(2);
 const env = parseEnv(readFileSync(`${ROOT}.env`, "utf8"));
 const key = env[keyName] ?? "";
-const cases = JSON.parse(
+const cases = parseJson(
   readFileSync(new URL("./review-cases.json", import.meta.url), "utf8"),
+  "agent/scripts/review-cases.json",
 ) as Array<{ id: string; expect: "allow" | "block"; description: string }>;
 const client = new ModelClient(
   new Ledger(`${ROOT}runs/inference-ledger.jsonl`),

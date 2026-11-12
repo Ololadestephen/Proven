@@ -8,6 +8,7 @@ import {
   randomBytes,
   sign,
 } from "node:crypto";
+import { sha256Hex } from "../../relay/src/hash.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { JsonRpcProvider } from "near-api-js";
@@ -22,7 +23,6 @@ const [releasedId, refundedId] = process.argv.slice(2).map(Number);
 const env = parseEnv(readFileSync(`${ROOT}.env`, "utf8"));
 const config = loadConfig("buyer");
 const provider = new JsonRpcProvider({ url: config.rpc });
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const job = async (id: number) =>
   (await provider.callFunction({
     contractId: config.escrow,
@@ -70,7 +70,8 @@ const collected = (await executeTool(
   { actor: "buyer" },
 )) as { deliverable: string };
 results.buyer_collects = {
-  matches_chain_hash: sha(collected.deliverable) === released.deliverable_hash,
+  matches_chain_hash:
+    sha256Hex(collected.deliverable) === released.deliverable_hash,
   bytes: collected.deliverable.length,
 };
 

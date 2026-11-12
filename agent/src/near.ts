@@ -2,7 +2,7 @@ import { postedBidFromOutcome } from "../../shared/post-result.ts";
 import { chainProvider } from "./rpc.ts";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner } from "near-api-js";
 import type { Config } from "./config.ts";
-import { PublicError } from "./errors.ts";
+import { PublicError, safeCode } from "./errors.ts";
 import { custodyCall, custodySignForRelay } from "./custody.ts";
 import { handoff, handoffOverWeb } from "./handoff.ts";
 import { relayMessage, signWithKey } from "./relay-auth.ts";
@@ -112,7 +112,6 @@ export function createRuntime(
     actor: config.actor,
     identity: config.account ?? null,
     escrow: config.escrow,
-    allowedWorkers: config.allowedWorkers,
     async view<T>(method: string, args: Record<string, unknown>): Promise<T> {
       return (await provider.callFunction({
         contractId: config.escrow,
@@ -156,9 +155,10 @@ export function createRuntime(
           deposit: "0",
           gas: BigInt(plan.gas),
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           throw new PublicError(
-            "Worker submission outcome is unknown. Inspect job status and account history before retrying; no automatic retry was made.",
+            `Worker submission outcome is unknown (${safeCode(error)}). Inspect job status and account history before retrying; no automatic retry was made.`,
+            { cause: error },
           );
         });
       return waitTransactionResult(

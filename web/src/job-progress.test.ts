@@ -82,3 +82,31 @@ test("a worker sees four stages", () => {
     ["Applied", "Delivered", "Verdict", "Paid"],
   );
 });
+
+test("a refund with no verdict never shows the work as verified", () => {
+  for (const outcome of ["NoDelivery", "NoVerdict"]) {
+    const stages = jobProgress(
+      bid({
+        state: "Closed",
+        job: {
+          state: "Refunded",
+          worker: "w",
+          delivered_at: outcome === "NoVerdict" ? "1" : null,
+          verdict_request_id: null,
+          history: [{ worker: "w", outcome }],
+        },
+      }),
+    );
+    const verified = stages.find((stage) => stage.id === "verified");
+    assert.notEqual(verified?.status, "done", outcome);
+    assert.notEqual(verified?.status, "failed", outcome);
+    assert.equal(stages.at(-1)?.status, "failed");
+  }
+  const paid = jobProgress(
+    bid({
+      state: "Closed",
+      job: { state: "Released", worker: "w", verdict_request_id: "9" },
+    }),
+  );
+  assert.equal(paid.find((stage) => stage.id === "verified")?.status, "done");
+});

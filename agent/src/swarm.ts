@@ -1,4 +1,5 @@
 import { savePublicReview } from "../../shared/public-review.ts";
+import { sha256Hex } from "../../relay/src/hash.ts";
 import { chainProvider } from "./rpc.ts";
 import { randomBytes } from "node:crypto";
 // One attempt on one bid, driven from what the chain says at each step, so an interrupted attempt
@@ -6,12 +7,16 @@ import { randomBytes } from "node:crypto";
 // custody wallets. The model only ever produces candidate bytes for a job the chain says is funded:
 // job id, payee and amount all come from the chain. Only the escrow's recorded verdict moves money.
 import { workRefusal } from "./swarm-rules.ts";
-export { workRefusal };
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { Account, KeyPair, KeyPairSigner } from "near-api-js";
-import { BoardClient, postingDeposit, type Bid, type Wallet } from "./board.ts";
+import {
+  BoardClient,
+  postingDeposit,
+  requireSettled,
+  type Bid,
+  type Wallet,
+} from "./board.ts";
 import { handoff, handoffOverWeb } from "./handoff.ts";
 import { keysFrom, KeyPool } from "./key-pool.ts";
 import { attestationUrl } from "./network.ts";
@@ -32,8 +37,6 @@ import { reviewBid } from "./bid-review.ts";
 import { createService } from "./service.ts";
 import type { Job } from "./types.ts";
 
-const sha256 = (text: string) =>
-  createHash("sha256").update(text).digest("hex");
 const NANO_USD_PER_USD = 1e9;
 const YOCTO_PER_NEAR = 10 ** 24;
 /** What an agent may spend before it has earned anything, and the most earnings can raise that to. */
@@ -188,8 +191,8 @@ export async function postBid(
   const call = {
     description,
     amount: amount.toString(),
-    check_hash: sha256(check),
-    reference_hash: sha256(reference),
+    check_hash: sha256Hex(check),
+    reference_hash: sha256Hex(reference),
     verifier_hash: verifier,
     format,
     expires_at: ((await board.now()) + 72n * 3_600_000_000_000n).toString(),
@@ -199,10 +202,13 @@ export async function postBid(
     // A test can keep a bid to named workers, so hosted agents do not take it.
     allowed_workers: process.env.PROVEN_BID_WORKERS?.split(",") ?? null,
   };
-  const result = await board.postBid(
-    wallet,
-    call,
-    postingDeposit(amount, call.max_attempts, BigInt(run_deposit)),
+  const result = requireSettled(
+    await board.postBid(
+      wallet,
+      call,
+      postingDeposit(amount, call.max_attempts, BigInt(run_deposit)),
+    ),
+    "post_bid",
   );
   // The bid and its job, then the check to the relay, which tests it. No signature is needed.
   const found = (await board.bids(0, 50)).find(
@@ -366,20 +372,27 @@ export async function attempt(
   };
 
   if (!(await board.agent(account))) {
-    const registered = await board.register(agent.wallet, {
-      prompt_hash: sha256(agent.prompt),
-      knowledge_hash: sha256(agent.knowledge),
-      tools_hash: sha256(AGENT_TOOLS),
-      model: DEFAULT_MODEL,
-      owner: null,
-    });
+    const registered = requireSettled(
+      await board.register(agent.wallet, {
+        prompt_hash: sha256Hex(agent.prompt),
+        knowledge_hash: sha256Hex(agent.knowledge),
+        tools_hash: sha256Hex(AGENT_TOOLS),
+        model: DEFAULT_MODEL,
+        owner: null,
+      }),
+      "register_agent",
+    );
     log("register_agent", registered.transaction_hash);
   }
 
   let bid = await readBid();
   if (bid.state === "Open") {
     // The money is already held: the claim gives this agent the job straight away.
-    log("claim", (await board.claim(agent.wallet, bidId)).transaction_hash);
+    log(
+      "claim",
+      requireSettled(await board.claim(agent.wallet, bidId), "claim")
+        .transaction_hash,
+    );
     bid = await readBid();
   }
   if (
@@ -423,7 +436,7 @@ export async function attempt(
           writeFileSync(deliverablePath, scriptedDeliverable, { mode: 0o600 });
           log("scripted_wrong_delivery", {
             note: "Scripted by the operator, not model work",
-            hash: sha256(scriptedDeliverable),
+            hash: sha256Hex(scriptedDeliverable),
           });
         }
         if (!existsSync(deliverablePath)) {
@@ -516,7 +529,7 @@ export async function attempt(
         break;
       case "Open":
         // The escrow ended this agent's attempt and reopened the job for the next worker.
-        await board.sync(agent.wallet, bidId);
+        requireSettled(await board.sync(agent.wallet, bidId), "sync");
         return {
           bid_id: bidId,
           job_id: jobId,
@@ -524,7 +537,7 @@ export async function attempt(
           history: job.history,
         };
       default: {
-        await board.sync(agent.wallet, bidId);
+        requireSettled(await board.sync(agent.wallet, bidId), "sync");
         const after = await readBid();
         const final = await readJob();
         return {

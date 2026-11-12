@@ -199,6 +199,21 @@ class Refused extends Error {}
 function requireSafe(condition: unknown): asserts condition {
   if (!condition) throw new Refused();
 }
+/** A folder's names. Only a folder that does not exist yet is empty; a read failure is thrown. */
+async function listOrEmpty(directory: string): Promise<string[]> {
+  try {
+    return await readdir(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+/** A short, text-free description of a failure for the keeper's log. */
+const failure = (error: unknown) =>
+  String(error instanceof Error ? error.message : "request failed").slice(
+    0,
+    200,
+  );
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -377,7 +392,7 @@ export async function sweepDeliveries(
 ): Promise<number[]> {
   const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
   const deleted: number[] = [];
-  const names = await readdir(records).catch(() => [] as string[]);
+  const names = await listOrEmpty(records);
   for (const name of names) {
     const parts = /^(\d+)\.(deliverable|check)\.json$/.exec(name);
     if (!parts) continue;
@@ -421,7 +436,7 @@ export async function keepJobs(
   if (!deps.keep) return [];
   const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
   const ids = new Set<number>();
-  for (const name of await readdir(records).catch(() => [] as string[])) {
+  for (const name of await listOrEmpty(records)) {
     const parts = /^(\d+)\.(deliverable|check)\.json$/.exec(name);
     if (parts) ids.add(Number(parts[1]));
   }
@@ -479,7 +494,7 @@ export async function sweepSecrets(
   cleaned: Set<string>,
 ): Promise<void> {
   const records = join(directory, `jobs-${sha256Hex(deps.escrow)}`);
-  const names = await readdir(records).catch(() => [] as string[]);
+  const names = await listOrEmpty(records);
   for (const name of names) {
     const parts = /^(\d+)\.check\.json$/.exec(name);
     if (!parts) continue;
@@ -635,7 +650,19 @@ export async function createHandoffHandler(
           )
             .then(() => wallet(() => deps.trigger!(request.job_id, "Verify")))
             .then((hash) => ({ verification: hash }))
-            .catch(() => ({ verification: null }))
+            .catch((error: unknown) => {
+              // The delivery is kept either way; the keeper's sweep starts the run later.
+              console.error(
+                `relay: job ${request.job_id} verification did not start: ${failure(error)}`,
+              );
+              return {
+                verification: null,
+                verification_note:
+                  error instanceof Refused
+                    ? "Verification was refused for now. The relay's keeper tries again."
+                    : "Verification did not start. The relay's keeper tries again.",
+              };
+            })
         : {};
       return { deliverable_hash: job.deliverable_hash, ...started };
     }
@@ -855,8 +882,10 @@ export async function createHandoffHandler(
           if (!job || job.state === "Draft")
             await unlink(path(jobId, "check")).catch(() => undefined);
         });
-      } catch {
-        /* Try again on the next sweep. */
+      } catch (error) {
+        // Tried again on the next sweep. A refusal is the expected "not yet", so only other causes are logged.
+        if (!(error instanceof Refused))
+          console.error(`keeper: pin ${name} expiry failed: ${failure(error)}`);
       }
     }
   }
@@ -1040,13 +1069,21 @@ export async function startHandoffServer(
   }
   const handle = await createHandoffHandler(deps, directory);
   const cleaned = new Set<string>();
+  // Each step runs even when an earlier one fails, and a failure is logged and retried next sweep.
+  const step = async (name: string, run: () => Promise<unknown>) => {
+    try {
+      await run();
+    } catch (error) {
+      console.error(`keeper sweep: ${name} failed: ${failure(error)}`);
+    }
+  };
   const sweep = async () => {
-    await deps.reconcile?.().catch(() => undefined);
-    await keepJobs(deps, directory);
-    await sweepSecrets(deps, directory, handle, cleaned);
-    await handle({ action: "expire_pins" }, true);
-    await sweepDeliveries(deps, directory);
-    await deps.finish?.().catch(() => undefined);
+    await step("reconcile", async () => deps.reconcile?.());
+    await step("keep jobs", () => keepJobs(deps, directory));
+    await step("secrets", () => sweepSecrets(deps, directory, handle, cleaned));
+    await step("expire pins", () => handle({ action: "expire_pins" }, true));
+    await step("deliveries", () => sweepDeliveries(deps, directory));
+    await step("finish storage", async () => deps.finish?.());
   };
   void sweep();
   setInterval(() => void sweep(), SWEEP_EVERY_MS).unref();
@@ -1279,9 +1316,7 @@ async function main(): Promise<void> {
       near.nudge(account, board, "finish_bid", { bid_id: bidId }),
     suspended: () => signingSuspended,
     report: (bidId, error) =>
-      console.error(
-        `keeper: bid ${bidId} storage: ${String(error instanceof Error ? error.message : "request failed").slice(0, 200)}`,
-      ),
+      console.error(`keeper: bid ${bidId} storage: ${failure(error)}`),
   });
 
   async function signing<T>(call: () => Promise<T>): Promise<T> {

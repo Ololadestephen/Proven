@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { PublicError } from "./errors.ts";
+import { PublicError, safeCode } from "./errors.ts";
 import type { CallPlan } from "./types.ts";
+import { RELAY_RECIPIENT } from "../../shared/relay-auth.ts";
 
 const CAPABILITIES = [
   "raw_sign",
@@ -97,7 +98,7 @@ export function assertPolicy(
 }
 
 /** The one thing signing may be open for: messages addressed to this project's relay. */
-export const RELAY_RECIPIENT = "proven-relay";
+export { RELAY_RECIPIENT };
 function relaySigning(
   name: string,
   policy: {
@@ -194,6 +195,9 @@ export async function custodyTransaction(
 ): Promise<string> {
   let body = initial;
   const id = initial.request_id;
+  // Status reads that failed, and the kind of the last failure, for the final message.
+  let failedReads = 0;
+  let lastFailure = "";
   for (let read = 0; read <= 30; read++) {
     if (
       body.result?.never_reached_chain ||
@@ -229,8 +233,10 @@ export async function custodyTransaction(
         key,
         `/wallet/v1/requests/${id}`,
       )) as CustodyResponse;
-    } catch {
+    } catch (error) {
       // Only repeat a status read. A transient read failure says nothing about admission.
+      failedReads++;
+      lastFailure = safeCode(error);
       continue;
     }
     if (response?.request_id !== id || response.type !== "call")
@@ -240,7 +246,7 @@ export async function custodyTransaction(
     body = response;
   }
   throw new PublicError(
-    `Custody did not return a transaction hash${id && /^[a-f0-9-]{36}$/i.test(id) ? ` for request ${id}` : ""}. Check wallet history before retrying; no automatic retry was made.`,
+    `Custody did not return a transaction hash${id && /^[a-f0-9-]{36}$/i.test(id) ? ` for request ${id}` : ""}.${failedReads ? ` ${failedReads} status reads failed (last: ${lastFailure}).` : ""} Check wallet history before retrying; no automatic retry was made.`,
   );
 }
 
@@ -298,9 +304,10 @@ export async function custodyCall(
     body: JSON.stringify(plan),
     signal: AbortSignal.timeout(180000),
     redirect: "error",
-  }).catch(() => {
+  }).catch((error: unknown) => {
     throw new PublicError(
-      "Custody submission outcome is unknown. Inspect wallet history before retrying; no automatic retry was made.",
+      `Custody submission outcome is unknown (${safeCode(error)}). Inspect wallet history before retrying; no automatic retry was made.`,
+      { cause: error },
     );
   });
   let body: CustodyResponse = {};

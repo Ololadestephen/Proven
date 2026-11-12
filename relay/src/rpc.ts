@@ -1,9 +1,36 @@
 import { JsonRpcProvider } from "near-api-js";
-import { AccountDoesNotExistError } from "near-api-js/rpc-errors";
+import {
+  AccessKeyDoesNotExistError,
+  AccountDoesNotExistError,
+} from "near-api-js/rpc-errors";
 
 /** Match the SDK instance used by this provider, including callers in sibling packages. */
 export function isAbsentAccount(error: unknown): boolean {
   return error instanceof AccountDoesNotExistError;
+}
+
+/** Whether this key is on the account. The chain saying the key or account does not exist is a no; any
+ * other failure (an outage, a rate limit) is thrown, so it is never reported as a missing key. */
+export async function keyOnAccount(
+  provider: Pick<JsonRpcProvider, "viewAccessKey">,
+  accountId: string,
+  publicKey: string,
+): Promise<boolean> {
+  try {
+    await provider.viewAccessKey({
+      accountId,
+      publicKey,
+      finalityQuery: { finality: "final" },
+    });
+    return true;
+  } catch (error) {
+    if (
+      error instanceof AccessKeyDoesNotExistError ||
+      error instanceof AccountDoesNotExistError
+    )
+      return false;
+    throw error;
+  }
 }
 import { TESTNET_RPC_URLS } from "./config.ts";
 

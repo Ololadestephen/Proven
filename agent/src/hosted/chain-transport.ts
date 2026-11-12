@@ -55,7 +55,7 @@ const GC_MESSAGE =
   "Free nodes no longer keep that block's data; they keep roughly the last 100,000 blocks (about 16 hours). Ask for a recent block, or use events for history.";
 
 /** A read that gave no result, for a reason the agent should hear. */
-export class Refused extends Error {}
+export class ChainReadRefused extends Error {}
 /** The node no longer keeps that block. */
 class Gone extends Error {}
 
@@ -105,7 +105,7 @@ export function createTransport(
 export async function readCapped(response: Response): Promise<string> {
   const declared = Number(response.headers.get("content-length") ?? 0);
   if (declared > CHAIN_LIMITS.maxResponseBytes)
-    throw new Refused("The response is over 1 MB.");
+    throw new ChainReadRefused("The response is over 1 MB.");
   const reader = response.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];
@@ -116,7 +116,7 @@ export async function readCapped(response: Response): Promise<string> {
     size += value.byteLength;
     if (size > CHAIN_LIMITS.maxResponseBytes) {
       await reader.cancel();
-      throw new Refused("The response is over 1 MB.");
+      throw new ChainReadRefused("The response is over 1 MB.");
     }
     chunks.push(value);
   }
@@ -156,7 +156,7 @@ async function rpcAt(
   params: unknown,
 ): Promise<unknown> {
   if (!t.rpcWindow.take(t.now()))
-    throw new Refused(
+    throw new ChainReadRefused(
       "The service's read limit is reached; try again in a minute.",
     );
   const response = await t.fetchImpl(url, {
@@ -178,14 +178,14 @@ async function archivalRead(
   count: ReadCount,
 ): Promise<unknown> {
   const archival = t.endpoints.archival;
-  if (!archival) throw new Refused(GC_MESSAGE);
+  if (!archival) throw new ChainReadRefused(GC_MESSAGE);
   if (count.archival >= CHAIN_LIMITS.archivalPerRun)
-    throw new Refused("This attempt has used its archival reads.");
+    throw new ChainReadRefused("This attempt has used its archival reads.");
   count.archival += 1;
   try {
     return await rpcAt(t, archival, method, params);
   } catch (error) {
-    throw new Refused(
+    throw new ChainReadRefused(
       error instanceof Gone
         ? "Not even the archival node has that block."
         : `The archival node did not answer: ${(error as Error).message.slice(0, 100)}`,
@@ -206,12 +206,12 @@ export async function rpc(
     try {
       return await rpcAt(t, url, method, params);
     } catch (error) {
-      if (error instanceof Refused) throw error;
+      if (error instanceof ChainReadRefused) throw error;
       if (error instanceof Gone) return archivalRead(t, method, params, count);
       lastError = error as Error;
     }
   }
-  throw new Refused(
+  throw new ChainReadRefused(
     `No free RPC answered: ${lastError?.message.slice(0, 100) ?? "unknown"}.`,
   );
 }
@@ -225,7 +225,7 @@ function redirectTarget(home: URL, from: URL, location: string | null): URL {
     next.hostname.endsWith(`.${home.hostname}`) &&
     next.pathname === from.pathname;
   if (!allowed)
-    throw new Refused(
+    throw new ChainReadRefused(
       "neardata redirected somewhere this skill does not read.",
     );
   return next;
@@ -243,7 +243,7 @@ async function neardataGet(t: Transport, path: string): Promise<Response> {
     await response.body?.cancel();
     url = redirectTarget(home, url, response.headers.get("location"));
   }
-  throw new Refused("neardata redirected too many times.");
+  throw new ChainReadRefused("neardata redirected too many times.");
 }
 
 interface NeardataBlock {
@@ -304,19 +304,22 @@ export async function blockEvents(
   block: number,
 ): Promise<unknown> {
   if (!t.neardataWindow.take(t.now()))
-    throw new Refused(
+    throw new ChainReadRefused(
       "The service's history read limit is reached; try again in a minute.",
     );
   const response = await neardataGet(t, `/v0/block/${block}`);
   const text = await readCapped(response);
   if (response.status === 404)
-    throw new Refused(`neardata has no block ${block}: ${text.slice(0, 120)}`);
-  if (!response.ok) throw new Refused(`neardata HTTP ${response.status}.`);
+    throw new ChainReadRefused(
+      `neardata has no block ${block}: ${text.slice(0, 120)}`,
+    );
+  if (!response.ok)
+    throw new ChainReadRefused(`neardata HTTP ${response.status}.`);
   let data: NeardataBlock | null;
   try {
     data = JSON.parse(text) as NeardataBlock | null;
   } catch {
-    throw new Refused("neardata's answer was not JSON.");
+    throw new ChainReadRefused("neardata's answer was not JSON.");
   }
   // neardata answers null for a height that produced no block.
   if (data === null) return { block, skipped: true, events: [] };

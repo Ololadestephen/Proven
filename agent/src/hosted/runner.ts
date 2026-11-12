@@ -1,8 +1,14 @@
 // Takes jobs for hosted agents, in the published order, within the attempt limits. One pass does a little
 // for each agent and reads everything again from the chain, so a crash loses nothing. Only the verifier's
 // recorded verdict pays anyone: nothing in here decides an outcome.
-import { createHash } from "node:crypto";
-import { BoardClient, buyerRecord, type Bid, type Wallet } from "../board.ts";
+import { sha256Hex } from "../../../relay/src/hash.ts";
+import {
+  BoardClient,
+  buyerRecord,
+  requireSettled,
+  type Bid,
+  type Wallet,
+} from "../board.ts";
 import type { Config } from "../config.ts";
 import { PublicError } from "../errors.ts";
 import {
@@ -21,7 +27,7 @@ import {
   JOB_LIMIT_NANO_USD,
   PROJECT_LIMIT_NANO_USD,
   SAFE_SKILLS,
-  nanoUsdToNear,
+  nanoUsdToYoctoNear,
 } from "./limits.ts";
 import { inferenceBudget, recordEarnings } from "./earnings.ts";
 import type { ChainReader } from "./chain-read.ts";
@@ -36,7 +42,6 @@ export interface RunnerDeps {
   client: Pick<ModelClient, "call"> & {
     account?: <T>(operation: () => T | Promise<T>) => Promise<T>;
   };
-  key: string;
   balance: (account: string) => Promise<bigint>;
   /** Moves spent NEAR to the treasury. Returns the transaction hash. */
   settle: (agent: HostedAgent, yocto: bigint) => Promise<string>;
@@ -45,14 +50,25 @@ export interface RunnerDeps {
   /** Read-only NEAR access for chain_read. Without it, chain_read is refused. */
   chain?: ChainReader;
   earningsCapYocto?: string;
+  /** When each job's verification was last tried, by escrow and job id. */
+  verifyTries: Map<string, number>;
   log: (line: string, detail?: unknown) => void;
 }
 
-const sha256 = (text: string) =>
-  createHash("sha256").update(text).digest("hex");
-
 const VERIFY_RETRY_MS = 300_000;
-const lastVerifyTry = new Map<number, number>();
+/** A failed hand-over or run waits before trying again, so one stuck job cannot flood the relay or use
+ * up its signing allowance. The tries belong to one runner and are keyed by escrow and job. Returns true
+ * when a try may start now, and records it. */
+export function takeVerifyTry(
+  deps: Pick<RunnerDeps, "config" | "verifyTries">,
+  jobId: number,
+  now: number,
+): boolean {
+  const key = `${deps.config.escrow}:${jobId}`;
+  if (now - (deps.verifyTries.get(key) ?? 0) < VERIFY_RETRY_MS) return false;
+  deps.verifyTries.set(key, now);
+  return true;
+}
 
 export const spenderOf = (wallet: string) => `hosted:${wallet}`;
 
@@ -76,7 +92,6 @@ export function agentConfig(
     actor: "agent",
     custodyKey: agent.custody_key,
     account: agent.wallet,
-    allowedWorkers: [],
     hosted: { owner: agent.owner, treasury },
   };
 }
@@ -105,7 +120,7 @@ export async function settleSpending(deps: RunnerDeps, agent: HostedAgent) {
   if (owed <= 0) return;
   fresh.pending_settlement_nano_usd = owed;
   deps.store.save(fresh);
-  const hash = await deps.settle(fresh, nanoUsdToNear(owed));
+  const hash = await deps.settle(fresh, nanoUsdToYoctoNear(owed));
   if (!hash)
     throw new PublicError(
       "The settlement outcome is unknown. Reconcile before another payment.",
@@ -283,7 +298,6 @@ async function work(
       knowledge: agent.knowledge,
       skills: agent.skills,
       model: agent.model,
-      key: deps.key,
     },
     { description: bid.description, format: bid.format },
     `bid-${bidId}`,
@@ -371,7 +385,7 @@ async function advance(
     job.worker !== agent.wallet &&
     !["Released", "Refunded"].includes(job.state)
   ) {
-    await board.sync(wallet, bidId);
+    requireSettled(await board.sync(wallet, bidId), "sync");
     await settleSpending(deps, agent);
     const mine = (job.history ?? [])
       .filter((a) => a.worker === agent.wallet)
@@ -390,11 +404,7 @@ async function advance(
     case "Funded":
       return work(deps, agent, bid, bidId, jobId, job);
     case "Delivered": {
-      // A failed hand-over or run waits before trying again, so one stuck job cannot flood the relay
-      // or use up its signing allowance.
-      const now = Date.now();
-      if (now - (lastVerifyTry.get(jobId) ?? 0) < VERIFY_RETRY_MS) return;
-      lastVerifyTry.set(jobId, now);
+      if (!takeVerifyTry(deps, jobId, Date.now())) return;
       // A delivery the relay does not have yet goes first, or the run would have nothing to check.
       await handOver(deps, agent, jobId);
       const run = (await tool("request_verification", { job_id: jobId })) as {
@@ -418,8 +428,9 @@ async function advance(
     }
     case "Released":
     case "Refunded": {
+      deps.verifyTries.delete(`${deps.config.escrow}:${jobId}`);
       // The sync settles this attempt's fee by its recorded outcome.
-      await board.sync(wallet, bidId);
+      requireSettled(await board.sync(wallet, bidId), "sync");
       await settleSpending(deps, agent);
       return log("finished", {
         state: job.state,
@@ -516,13 +527,16 @@ export async function runnerPass(
       deps.store.save(latest);
       const wallet = walletOf(agent, deps.config);
       wallet.hosted = { owner: agent.owner, treasury: deps.treasury };
-      const done = await board.register(wallet, {
-        prompt_hash: sha256(agent.prompt),
-        knowledge_hash: sha256(agent.knowledge),
-        tools_hash: sha256(JSON.stringify([...agent.skills].sort())),
-        model: agent.model,
-        owner: agent.owner,
-      });
+      const done = requireSettled(
+        await board.register(wallet, {
+          prompt_hash: sha256Hex(agent.prompt),
+          knowledge_hash: sha256Hex(agent.knowledge),
+          tools_hash: sha256Hex(JSON.stringify([...agent.skills].sort())),
+          model: agent.model,
+          owner: agent.owner,
+        }),
+        "register_agent",
+      );
       const registered = deps.store.get(agent.wallet);
       if (!registered?.pending_registration)
         throw new PublicError(
@@ -577,7 +591,10 @@ export async function runnerPass(
           continue;
         beforeClaim.pending_claim_bid = bidId;
         deps.store.save(beforeClaim);
-        const claimed = await board.claim(wallet, bidId);
+        const claimed = requireSettled(
+          await board.claim(wallet, bidId),
+          "claim",
+        );
         const fresh = deps.store.get(agent.wallet) ?? agent;
         delete fresh.pending_claim_bid;
         fresh.last_claim_at = new Date().toISOString();

@@ -1,6 +1,7 @@
 // The client for the code sandbox, which runs on its own isolated machine. Output from it is untrusted,
 // and goes back to the model as data. It never decides anything: a test result here pays nobody. Only the
 // verifier's verdict, through the escrow's callback, does.
+import { isObject } from "../json.ts";
 
 export interface SandboxRun {
   exit_code: number | null;
@@ -23,6 +24,22 @@ export type SandboxCall = (
   agent: string,
 ) => Promise<SandboxRun>;
 
+/** A sandbox reply in the shape the client promises, or null. */
+function sandboxRun(value: unknown): SandboxRun | null {
+  if (!isObject(value)) return null;
+  const { exit_code, timed_out, truncated, ms, output, repo_bytes } = value;
+  if (
+    (exit_code !== null && typeof exit_code !== "number") ||
+    typeof timed_out !== "boolean" ||
+    typeof truncated !== "boolean" ||
+    typeof ms !== "number" ||
+    typeof repo_bytes !== "number" ||
+    typeof output !== "string"
+  )
+    return null;
+  return { exit_code, timed_out, truncated, ms, output, repo_bytes };
+}
+
 export function sandboxClient(url: string, token: string): SandboxCall {
   return async (request, agent) => {
     const response = await fetch(`${url}/run`, {
@@ -36,12 +53,32 @@ export function sandboxClient(url: string, token: string): SandboxCall {
       signal: AbortSignal.timeout(75_000),
       redirect: "error",
     });
-    const body = (await response.json()) as SandboxRun & { error?: string };
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new Error("The sandbox sent an unreadable reply.");
+    }
     if (!response.ok)
-      throw new Error(body.error ?? "The sandbox refused this.");
-    return body;
+      throw new Error(
+        isObject(body) && typeof body.error === "string"
+          ? body.error
+          : "The sandbox refused this.",
+      );
+    const run = sandboxRun(body);
+    if (!run) throw new Error("The sandbox sent a malformed result.");
+    return run;
   };
 }
+
+/** The files a request may carry: names to text, nothing else. */
+const isFiles = (value: unknown): value is Record<string, string> =>
+  isObject(value) && Object.values(value).every((v) => typeof v === "string");
+const isRepo = (value: unknown): value is SandboxRequest["repo"] =>
+  isObject(value) &&
+  typeof value.owner === "string" &&
+  typeof value.name === "string" &&
+  typeof value.commit === "string";
 
 /** Runs a skill's text input, which the model writes. `run_code` is the only way code runs at all. */
 export async function runCodeSkill(
@@ -50,25 +87,37 @@ export async function runCodeSkill(
   input: string,
   agent: string,
 ): Promise<{ output: string; ran: boolean }> {
-  let request: SandboxRequest;
+  let value: unknown;
   try {
-    const value = JSON.parse(input) as SandboxRequest;
-    if (value.language !== "python" && value.language !== "node")
-      return { output: "Error: language must be python or node.", ran: false };
-    if (typeof value.command !== "string")
-      return { output: "Error: give a command as text.", ran: false };
-    request = {
-      language: value.language,
-      command: value.command,
-      files: value.files ?? {},
-      repo: value.repo,
-    };
+    value = JSON.parse(input);
   } catch {
+    value = undefined;
+  }
+  if (!isObject(value))
     return {
       output: `Error: ${skill} takes JSON: {"language","command","files","repo":{"owner","name","commit"}}.`,
       ran: false,
     };
-  }
+  if (value.language !== "python" && value.language !== "node")
+    return { output: "Error: language must be python or node.", ran: false };
+  if (typeof value.command !== "string")
+    return { output: "Error: give a command as text.", ran: false };
+  if (value.files !== undefined && !isFiles(value.files))
+    return {
+      output: "Error: files must map file names to text.",
+      ran: false,
+    };
+  if (value.repo !== undefined && !isRepo(value.repo))
+    return {
+      output: "Error: repo needs owner, name and commit as text.",
+      ran: false,
+    };
+  const request: SandboxRequest = {
+    language: value.language,
+    command: value.command,
+    files: value.files ?? {},
+    repo: value.repo,
+  };
   try {
     const run = await sandbox(request, agent);
     return {

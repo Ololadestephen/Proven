@@ -6,7 +6,7 @@ import {
   createTransport,
   eventsInBlock,
   readCapped,
-  Refused,
+  ChainReadRefused,
   rpc,
 } from "./chain-transport.ts";
 
@@ -38,7 +38,7 @@ test("a body is read up to the cap, and refused past it even without a length he
       controller.enqueue(new Uint8Array(256 * 1024));
     },
   });
-  await assert.rejects(readCapped(new Response(stream)), Refused);
+  await assert.rejects(readCapped(new Response(stream)), ChainReadRefused);
   const declared = new Response("x", {
     headers: { "content-length": String(CHAIN_LIMITS.maxResponseBytes + 1) },
   });

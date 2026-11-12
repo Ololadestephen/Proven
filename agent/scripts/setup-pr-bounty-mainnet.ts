@@ -9,7 +9,7 @@
 // Each write is journalled before it is sent; a step whose outcome is unknown stops the script
 // rather than being repeated. The deploy key stays a single full-access key held by the owner.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import {
   Account,
@@ -21,6 +21,7 @@ import {
 import { ROOT } from "../src/config.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
 import { networkSettings } from "../src/network.ts";
+import { loadJournal, writeJournal } from "./setup-common.ts";
 
 const YOCTO = 10n ** 24n;
 const MILLI = 10n ** 21n;
@@ -78,13 +79,8 @@ const provider = new JsonRpcProvider({ url: net.rpcs[0] });
 const evidencePath =
   process.env.PROVEN_EVIDENCE_FILE ??
   `${ROOT}runs/pr-bounty-mainnet-setup.json`;
-const evidence: Record<string, unknown> = existsSync(evidencePath)
-  ? (JSON.parse(readFileSync(evidencePath, "utf8")) as Record<string, unknown>)
-  : {};
-const record = () =>
-  writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, {
-    mode: 0o600,
-  });
+const evidence = loadJournal(evidencePath);
+const record = () => writeJournal(evidencePath, evidence);
 
 const near = (y: bigint) => `${(Number(y) / 1e24).toFixed(6)} NEAR`;
 

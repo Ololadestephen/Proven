@@ -1,13 +1,20 @@
 import { postedBidId, matchesPostedBid } from "../../shared/post-result.ts";
+import { sha256Hex } from "../../relay/src/hash.ts";
 // CLI and MCP tools for the bid board. Writes go through the configured custody wallet; board calls
 // hold no job money. The JSON feed is read-only and needs no credentials.
-import { createHash } from "node:crypto";
 import {
   BoardClient,
   buyerRecord,
+  CLAIM_DEPOSIT,
+  CLAIM_GAS,
+  POST_GAS,
   postingDeposit,
+  READ_GAS,
+  REGISTER_DEPOSIT,
+  SHORT_GAS,
   type Wallet,
 } from "./board.ts";
+import type { CallPlan } from "./types.ts";
 import { handoff, handoffOverWeb } from "./handoff.ts";
 import type { Config } from "./config.ts";
 import { BOARD } from "./custody.ts";
@@ -25,8 +32,6 @@ import {
   type Args,
 } from "./validation.ts";
 
-const hash = (value: string) =>
-  createHash("sha256").update(value).digest("hex");
 const string = { type: "string" };
 const id = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
 const page = {
@@ -185,9 +190,21 @@ export async function executeBoardTool(
     if (!bid) throw new PublicError("Bid was not found.");
     return bid;
   }
-  const planned = (method_name: string, call: Record<string, unknown>) => ({
+  /** The exact call a signed run would send: the same receiver, deposit and gas. */
+  const planned = (
+    method_name: string,
+    call: Record<string, unknown>,
+    deposit: bigint,
+    gas: string,
+  ): { dry_run: true; call: CallPlan } => ({
     dry_run: true,
-    call: { receiver_id: BOARD, method_name, args: call },
+    call: {
+      receiver_id: BOARD,
+      method_name,
+      args: call,
+      deposit: deposit.toString(),
+      gas,
+    },
   });
 
   if (name === "post_bid") {
@@ -214,8 +231,8 @@ export async function executeBoardTool(
     const call = {
       description: text(args, "description", 2048),
       amount: yocto(text(args, "amount_near", 30)),
-      check_hash: hash(check),
-      reference_hash: hash(reference),
+      check_hash: sha256Hex(check),
+      reference_hash: sha256Hex(reference),
       verifier_hash: verifier,
       format,
       expires_at: ((await board.now()) + hours * 3_600_000_000_000n).toString(),
@@ -226,7 +243,6 @@ export async function executeBoardTool(
         ? args.allowed_workers.map((worker) => accountId(String(worker)))
         : null,
     };
-    if (dry) return planned("post_bid", call);
     const escrowConfig = await board.view<{ run_deposit: string }>(
       "get_config",
       {},
@@ -238,12 +254,15 @@ export async function executeBoardTool(
       call.max_attempts,
       BigInt(escrowConfig.run_deposit),
     );
+    // The config read above is public and unsigned, so a dry run carries the full attachment.
+    if (dry) return planned("post_bid", call, deposit, POST_GAS);
     const buyerWallet = wallet(config);
     const posted = await board.postBid(buyerWallet, call, deposit);
     const bidId = postedBidId(posted.posted_bid_id);
     const reconcile =
       "Posting has completed. Reconcile this transaction and its exact bid before any further action; do not post again.";
-    if (bidId === null) return { ...posted, note: reconcile };
+    if (bidId === null || posted.failed || posted.pending)
+      return { ...posted, note: reconcile };
     let bid;
     try {
       bid = await board.bid(bidId);
@@ -301,29 +320,29 @@ export async function executeBoardTool(
   }
   if (name === "register_agent") {
     const call = {
-      prompt_hash: hash(text(args, "prompt")),
-      knowledge_hash: hash(
+      prompt_hash: sha256Hex(text(args, "prompt")),
+      knowledge_hash: sha256Hex(
         typeof args.knowledge === "string" ? args.knowledge : "",
       ),
-      tools_hash: hash(text(args, "tools")),
+      tools_hash: sha256Hex(text(args, "tools")),
       model: text(args, "model", 128),
       owner: null,
     };
     return dry
-      ? planned("register_agent", call)
+      ? planned("register_agent", call, REGISTER_DEPOSIT, SHORT_GAS)
       : board.register(wallet(config), call);
   }
   if (name === "claim_bid")
     return dry
-      ? planned("claim", { bid_id: bidId() })
+      ? planned("claim", { bid_id: bidId() }, CLAIM_DEPOSIT, CLAIM_GAS)
       : board.claim(wallet(config), bidId());
   if (name === "sync_bid")
     return dry
-      ? planned("sync", { bid_id: bidId() })
+      ? planned("sync", { bid_id: bidId() }, 0n, READ_GAS)
       : board.sync(wallet(config), bidId());
   if (name === "close_bid")
     return dry
-      ? planned("close_bid", { bid_id: bidId() })
+      ? planned("close_bid", { bid_id: bidId() }, 0n, POST_GAS)
       : board.close(wallet(config), bidId());
 
   throw new PublicError("Unknown tool.");

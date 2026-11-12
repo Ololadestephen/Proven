@@ -1,7 +1,7 @@
 // CLI and MCP tools for PR merge bounties. Reads use public NEAR RPC and GitHub's public API.
 // The prepare tools only validate chain state and describe a step; nothing here signs, sends a
 // transaction, or holds a key. The person approves every NEAR step in their own wallet.
-import { PublicError } from "./errors.ts";
+import { PublicError, unreachable } from "./errors.ts";
 import {
   accountId,
   fields,
@@ -249,8 +249,8 @@ async function view<T>(
       }),
       signal: AbortSignal.timeout(20_000),
     });
-  } catch {
-    throw new PublicError("The NEAR RPC could not be reached.");
+  } catch (error) {
+    throw unreachable("The NEAR RPC", error);
   }
   let body: { result?: { result?: unknown }; error?: unknown };
   try {
@@ -396,8 +396,8 @@ async function checkPr(env: BountyEnv, args: Args) {
         signal: AbortSignal.timeout(20_000),
       },
     );
-  } catch {
-    throw new PublicError("GitHub could not be reached.");
+  } catch (error) {
+    throw unreachable("GitHub", error);
   }
   if (response.status === 404)
     throw new PublicError(

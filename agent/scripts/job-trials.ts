@@ -7,6 +7,7 @@ import { ROOT } from "../src/config.ts";
 import { fetchPrices, Ledger, ModelClient, usd } from "../src/inference.ts";
 import { doWork, type AgentProfile } from "../src/llm-work.ts";
 import { publicMessage } from "../src/errors.ts";
+import { parseJson } from "../src/json.ts";
 
 const [
   label,
@@ -29,14 +30,15 @@ const agent: AgentProfile = {
   limitNanoUsd: Number(limitUsd) * 1e9,
 };
 const verify = (file: string) =>
-  JSON.parse(
+  parseJson(
     execFileSync(`${ROOT}verifier/target/release/proven`, [
       "run",
       "verify",
       `${ROOT}examples/swarm-job/check.json`,
       file,
     ]).toString(),
-  );
+    "Verifier CLI output",
+  ) as { pass?: boolean; failed_rule?: string };
 
 const count = Number(countArg);
 const tally: Record<string, number> = {};

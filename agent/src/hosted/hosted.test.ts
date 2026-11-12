@@ -8,13 +8,13 @@ import {
   OPERATING_RESERVE,
   SKILL_USE_NANO_USD,
   budgetNanoUsd,
-  nanoUsdToNear,
-  nearToNanoUsd,
+  nanoUsdToYoctoNear,
+  yoctoNearToNanoUsd,
   withdrawable,
   WITHDRAW_LEFT_BEHIND,
 } from "./limits.ts";
 import { doHostedWork, parseSkillRequest } from "./work.ts";
-import { claimRefusal } from "./runner.ts";
+import { claimRefusal, takeVerifyTry } from "./runner.ts";
 import { stuckReason, telegramNotifier } from "./health.ts";
 import type { CallResult } from "../inference.ts";
 import type { Bid } from "../board.ts";
@@ -95,13 +95,13 @@ test("a budget comes from the wallet above the reserve, less spending, under a h
 });
 
 test("spending is never undercharged, and a withdrawal leaves what is owed", () => {
-  const owed = nanoUsdToNear(1234);
-  assert.ok(nearToNanoUsd(owed) >= 1234);
-  assert.equal(nanoUsdToNear(0), 0n);
+  const owed = nanoUsdToYoctoNear(1234);
+  assert.ok(yoctoNearToNanoUsd(owed) >= 1234);
+  assert.equal(nanoUsdToYoctoNear(0), 0n);
   assert.equal(withdrawable(NEAR, 0), NEAR - WITHDRAW_LEFT_BEHIND);
   assert.equal(
     withdrawable(NEAR, NANO_USD),
-    NEAR - nanoUsdToNear(NANO_USD) - WITHDRAW_LEFT_BEHIND,
+    NEAR - nanoUsdToYoctoNear(NANO_USD) - WITHDRAW_LEFT_BEHIND,
   );
   assert.equal(withdrawable(WITHDRAW_LEFT_BEHIND, 0), 0n);
   assert.equal(withdrawable(0n, 5 * NANO_USD), 0n);
@@ -124,7 +124,6 @@ const profile = {
   prompt: "p",
   knowledge: "alpha beta",
   skills: ["calculator" as const],
-  key: "k",
 };
 const task = {
   description: "d",
@@ -355,4 +354,21 @@ test("a function job's format has no rows to compare, so it goes through as it i
   );
   assert.equal(work.deliverable, '{"wasm_base64":"AAAA"}');
   assert.equal(work.calls.length, 1);
+});
+
+test("each runner keeps its own verify cooldown, keyed by escrow and job", () => {
+  const runner = (escrow: string) => ({
+    config: { escrow } as Parameters<typeof takeVerifyTry>[0]["config"],
+    verifyTries: new Map<string, number>(),
+  });
+  const NOW = 1_800_000_000_000;
+  const one = runner("escrow.near");
+  const two = runner("escrow.near");
+  const other = runner("other-escrow.near");
+  assert.equal(takeVerifyTry(one, 7, NOW), true);
+  assert.equal(takeVerifyTry(one, 7, NOW + 299_999), false);
+  assert.equal(takeVerifyTry(two, 7, NOW + 1), true);
+  assert.equal(takeVerifyTry(other, 7, NOW + 1), true);
+  assert.equal(takeVerifyTry(one, 8, NOW + 1), true);
+  assert.equal(takeVerifyTry(one, 7, NOW + 300_000), true);
 });

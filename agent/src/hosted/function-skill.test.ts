@@ -224,7 +224,6 @@ test(
         prompt: "p",
         knowledge: "",
         skills: ["wat_compile", "run_function"],
-        key: "k",
       },
       { description: "d", format: VAT },
       "run",
@@ -257,7 +256,7 @@ test('an agent without wat_compile gets no compiling, so {"wat"} fails the forma
         return call(JSON.stringify({ wat: IDENTITY }));
       },
     },
-    { id: "hosted:y", prompt: "p", knowledge: "", skills: [], key: "k" },
+    { id: "hosted:y", prompt: "p", knowledge: "", skills: [] },
     { description: "d", format: VAT },
     "run",
     () => 1e12,

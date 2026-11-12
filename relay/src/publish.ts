@@ -5,8 +5,8 @@
 //
 //   npm run publish-verifier -- <file.wasm>
 
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { sha256Hex } from "./hash.ts";
 import { actions } from "near-api-js";
 import { loadConfig } from "./config.ts";
 import { relayAccount } from "./near.ts";
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const account = relayAccount(config);
   const content = readFileSync(file);
-  const hash = createHash("sha256").update(content).digest("hex");
+  const hash = sha256Hex(content);
   const path = `${hash}.wasm`;
   const nonce = Math.floor(Date.now() / 1000) - NONCE_EPOCH_SECS;
   for (let offset = 0; offset < content.length; offset += CHUNK_SIZE) {

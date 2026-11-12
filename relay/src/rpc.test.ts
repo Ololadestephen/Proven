@@ -98,3 +98,36 @@ test("opt-in fallback uses the next endpoint on transient queries only", async (
   await assert.rejects(send("broadcast_tx_async"), /fetch failed/);
   assert.deepEqual(calls, [primary]);
 });
+
+test("a missing key or account is a no; an outage is thrown, never read as a missing key", async () => {
+  const { keyOnAccount } = await import("./rpc.ts");
+  const { AccessKeyDoesNotExistError, AccountDoesNotExistError } =
+    await import("near-api-js/rpc-errors");
+  const provider = (error: unknown) => ({
+    viewAccessKey: async () => {
+      if (error) throw error;
+      return {} as never;
+    },
+  });
+  assert.equal(await keyOnAccount(provider(null), "a.near", "ed25519:k"), true);
+  assert.equal(
+    await keyOnAccount(
+      provider(Object.create(AccessKeyDoesNotExistError.prototype)),
+      "a.near",
+      "ed25519:k",
+    ),
+    false,
+  );
+  assert.equal(
+    await keyOnAccount(
+      provider(Object.create(AccountDoesNotExistError.prototype)),
+      "a.near",
+      "ed25519:k",
+    ),
+    false,
+  );
+  await assert.rejects(
+    keyOnAccount(provider(new Error("rpc down")), "a.near", "ed25519:k"),
+    /rpc down/,
+  );
+});

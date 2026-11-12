@@ -12,7 +12,6 @@ import { join } from "node:path";
 import { ALLOWED_SKILLS, type Skill } from "./limits.ts";
 import { PublicError } from "../errors.ts";
 import { isObject } from "../json.ts";
-import type { EarningsRecord } from "./earnings.ts";
 import type { WalletSetup } from "./wallets.ts";
 
 export const SETUP_HASH = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
@@ -25,6 +24,17 @@ export interface SetupRecord {
   refused?: string;
   walletSetup?: WalletSetup;
   completed?: string;
+}
+
+/** One paid job credited to a hosted worker: what escrow paid, what went to inference and what was kept. */
+export interface EarningsRecord {
+  escrow: string;
+  job_id: number;
+  verdict_request_id: string;
+  amount_yocto: string;
+  inference_yocto: string;
+  retained_yocto: string;
+  at: string;
 }
 
 export interface HostedAgent {

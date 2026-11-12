@@ -198,7 +198,9 @@ test("submission transport failure reports unknown outcome and never retries the
     const url = String(input);
     if (url.endsWith("/call")) {
       writes++;
-      throw new Error("private upstream body");
+      throw new TypeError("private upstream body", {
+        cause: { code: "ECONNRESET" },
+      });
     }
     return new Response(
       JSON.stringify(
@@ -223,7 +225,16 @@ test("submission transport failure reports unknown outcome and never retries the
           deposit: "1",
         },
       ),
-      /outcome is unknown.*history before retrying/,
+      (error: Error) => {
+        // A safe code and the original as its cause; never the upstream text.
+        assert.match(
+          error.message,
+          /outcome is unknown \(ECONNRESET\).*history before retrying/,
+        );
+        assert.doesNotMatch(error.message, /private upstream body/);
+        assert.ok(error.cause instanceof TypeError);
+        return true;
+      },
     );
     assert.equal(writes, 1);
   } finally {

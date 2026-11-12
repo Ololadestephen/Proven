@@ -13,7 +13,7 @@
 //   NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes node scripts/setup-mainnet.ts storage <escrow.wasm> <board.wasm>
 // Add --dry-run to read the chain and print the writes without sending any.
 // Each one-time step is recorded before it runs, and an unknown outcome stops rather than repeats.
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import {
   Account,
@@ -26,6 +26,8 @@ import { ROOT } from "../src/config.ts";
 import { assertPolicy, custodyRead } from "../src/custody.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
 import { networkSettings } from "../src/network.ts";
+import { parseJson } from "../src/json.ts";
+import { loadJournal, saveEnv, writeJournal } from "./setup-common.ts";
 
 // The owner's limits from November 7, enforced by the contract: two full jobs held, one per buyer.
 const MAX_JOB = 5n * 10n ** 24n; // 5 NEAR.
@@ -62,24 +64,9 @@ const env: Record<string, string | undefined> = {
 const dry = process.argv.includes("--dry-run");
 const provider = new JsonRpcProvider({ url: net.rpcs[0] });
 const evidencePath = `${ROOT}runs/stage2-setup.json`;
-const evidence: Record<string, unknown> = existsSync(evidencePath)
-  ? (JSON.parse(readFileSync(evidencePath, "utf8")) as Record<string, unknown>)
-  : {};
-const record = () =>
-  writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, {
-    mode: 0o600,
-  });
-
-function saveEnv(values: Record<string, string>) {
-  let content = readFileSync(envPath, "utf8");
-  for (const [name, value] of Object.entries(values)) {
-    content = `${content.replace(new RegExp(`^${name}=.*$\\n?`, "m"), "").trimEnd()}\n${name}=${value}\n`;
-    env[name] = value;
-  }
-  const temp = `${envPath}.proven-setup-${process.pid}`;
-  writeFileSync(temp, content, { mode: 0o600, flag: "wx" });
-  renameSync(temp, envPath);
-}
+const evidence = loadJournal(evidencePath);
+const record = () => writeJournal(evidencePath, evidence);
+const save = (values: Record<string, string>) => saveEnv(envPath, env, values);
 
 function account(prefix: string): Account {
   const id = env[`${prefix}_ACCOUNT_ID`];
@@ -249,7 +236,7 @@ async function setupWallet() {
         typeof wallet.near_account_id !== "string"
       )
         throw new PublicError("Unexpected registration fields; not printed.");
-      saveEnv({
+      save({
         MAINNET_BUYER_CUSTODY_KEY: wallet.api_key,
         MAINNET_BUYER_WALLET_ID: wallet.wallet_id,
         MAINNET_BUYER_ACCOUNT_ID: wallet.near_account_id,
@@ -258,8 +245,9 @@ async function setupWallet() {
     });
   }
   const key = env.MAINNET_BUYER_CUSTODY_KEY!;
-  const stored = JSON.parse(
+  const stored = parseJson(
     readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+    "agent/custody-policy.json",
   ) as {
     rules: { addresses: { list: string[] } };
     capabilities: Record<string, unknown>;
@@ -479,8 +467,9 @@ async function deployBoard(wasmPath: string) {
       }),
     ),
   );
-  const stored = JSON.parse(
+  const stored = parseJson(
     readFileSync(`${ROOT}agent/custody-policy.json`, "utf8"),
+    "agent/custody-policy.json",
   ) as {
     rules: { addresses: { list: string[] } };
     capabilities: Record<string, unknown>;
@@ -519,9 +508,8 @@ async function setupWorkers() {
   for (const letter of ["A", "B"]) {
     const worker = account(`MAINNET_WORKER_${letter}`);
     const name = `MAINNET_WORKER_${letter}_SCOPED_PRIVATE_KEY`;
-    if (!env[name])
-      saveEnv({ [name]: KeyPair.fromRandom("ed25519").toString() });
-    saveEnv({
+    if (!env[name]) save({ [name]: KeyPair.fromRandom("ed25519").toString() });
+    save({
       [`MAINNET_WORKER_${letter}_SCOPED_ACCOUNT_ID`]: worker.accountId,
     });
     const key = KeyPair.fromString(env[name] as `ed25519:${string}`);
@@ -574,7 +562,7 @@ async function setupRelay() {
   );
   if (dry) return;
   if (!env.MAINNET_REVIEWER_PRIVATE_KEY)
-    saveEnv({
+    save({
       MAINNET_REVIEWER_PRIVATE_KEY: KeyPair.fromRandom("ed25519").toString(),
     });
   const key = KeyPair.fromString(
