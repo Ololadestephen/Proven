@@ -28,6 +28,7 @@ export function stepForViewer(
   bid: MarketBid,
   role: Role,
   nowMs: number,
+  viewer: string | null,
 ): Step | null {
   if (!step) return step;
   // Only the relay or the worker can start verification; the relay does it as soon as the work arrives.
@@ -41,7 +42,11 @@ export function stepForViewer(
     return wait("Someone is working on this job.");
   }
 
-  // The worker's view.
+  // The worker's view. Only the current worker acts; a past worker sees its own attempt's result.
+  const current =
+    viewer !== null && (viewer === job?.worker || viewer === bid.claim?.agent);
+  if (!current && ["verify", "settle", "deliver"].includes(step.id))
+    return outcomeFor(bid, viewer);
   switch (step.id) {
     case "verify": {
       const delivered = Number(BigInt(job?.delivered_at ?? "0") / 1_000_000n);
@@ -65,16 +70,19 @@ export function stepForViewer(
     case "register":
       return step;
     default:
-      return outcomeFor(bid);
+      return outcomeFor(bid, viewer);
   }
 }
 
 /** What a worker who has finished sees: its own result, read from the escrow's record of attempts. */
-function outcomeFor(bid: MarketBid): Step | null {
+function outcomeFor(bid: MarketBid, viewer: string | null): Step | null {
   const job = bid.job ?? bid.last_job;
-  const last = job?.history?.at(-1);
-  if (job?.state === "Released")
-    return wait(`Paid. ${showNear(job.amount)} was sent to the worker.`);
+  const last = job?.history?.findLast((attempt) => attempt.worker === viewer);
+  if (
+    (job?.state === "Released" && viewer === job.worker) ||
+    last?.outcome === "Paid"
+  )
+    return wait(`Paid. ${showNear(job?.amount ?? bid.amount)} was sent to the worker.`);
   if (last?.outcome === "Failed")
     return wait(
       `Not paid: the work failed the rule “${last.failed_rule ?? "unknown"}”.`,

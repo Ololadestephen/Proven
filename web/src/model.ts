@@ -4,6 +4,7 @@ export const RUN_TIMEOUT_NS = 900_000_000_000n;
 const NS_PER_SEC = 1_000_000_000n;
 const HASH = /^[0-9a-f]{64}$/;
 const STATES = [
+  "Open",
   "Draft",
   "Challenging",
   "CheckRejected",
@@ -15,6 +16,7 @@ const STATES = [
   "Failed",
   "Releasing",
   "Refunding",
+  "RefundDue",
   "Expiring",
   "Released",
   "Refunded",
@@ -80,7 +82,7 @@ export function parseJob(value: unknown) {
     throw new ReadError("Invalid failed-rule identifier.");
   return {
     buyer: account(j.buyer),
-    worker: account(j.worker),
+    worker: nullable(j.worker, account),
     token: nullable(j.token, account),
     amount: decimal(j.amount),
     state: j.state,
@@ -169,9 +171,15 @@ function funds(state: string): string {
     return "Paid to the worker by the confirmed payout callback.";
   if (["Refunded", "Expired"].includes(state))
     return "Returned to the buyer by the confirmed payout callback.";
+  if (state === "RefundDue")
+    return "Refund decided; the transfer is retried by refund.";
   if (["Releasing", "Refunding", "Expiring"].includes(state))
     return "Payout pending; transfer success is not confirmed yet.";
-  if (["Draft", "Challenging", "CheckRejected", "Challenged"].includes(state))
+  if (
+    ["Open", "Draft", "Challenging", "CheckRejected", "Challenged"].includes(
+      state,
+    )
+  )
     return "Job payment has not been funded. Storage and compute deposits are separate.";
   return "Job payment is locked in escrow. Compute deposits are separate.";
 }

@@ -38,7 +38,7 @@ interface Prepared {
   expires_at: string;
 }
 
-function terms(draft: Draft) {
+export function terms(draft: Draft) {
   if (
     !draft.description.trim() ||
     new TextEncoder().encode(draft.description).length > 2048

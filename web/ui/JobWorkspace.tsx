@@ -42,6 +42,7 @@ export function JobWorkspace({
     bid,
     role,
     clock,
+    viewer,
   );
   const job = bid.job ?? bid.last_job;
   const worker = bid.claim?.agent ?? job?.worker;

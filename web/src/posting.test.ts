@@ -1,86 +1,86 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  confirmedPostedBid,
-  decodeCallResult,
-  postedBidId,
-} from "../ui/posting.ts";
-import type { MarketBid } from "../ui/market-steps.ts";
-const expected = {
-  buyer: "buyer.near",
-  check_hash: "a".repeat(64),
-  reference_hash: "b".repeat(64),
-  verifier_hash: "c".repeat(64),
-};
-const bid = (id: number, buyer = expected.buyer) =>
-  ({ id, ...expected, buyer }) as MarketBid;
-test("posting uses the confirmed returned ID, including zero and IDs beyond the first page", () => {
-  const bids = [bid(1), bid(0), bid(150)];
-  for (const id of [0, 150])
-    assert.equal(
-      confirmedPostedBid(
-        bids,
-        { transaction_hash: "tx", posted_bid_id: id },
-        expected,
-      )?.id,
-      id,
-    );
-  assert.equal(
-    confirmedPostedBid(
-      bids,
-      { transaction_hash: "tx", posted_bid_id: 999 },
-      expected,
-    ),
-    null,
-  );
+import { build } from "esbuild";
+
+// The posting form's money and draft rules, run from the bundled component without a JSX test runtime.
+const built = await build({
+  entryPoints: [new URL("../ui/PostJob.tsx", import.meta.url).pathname],
+  bundle: true,
+  write: false,
+  platform: "node",
+  format: "esm",
+  jsx: "automatic",
 });
-test("matching hashes never substitute for absent or mismatched posting identity", () => {
-  const bids = [bid(1), bid(2, "stranger.near")];
-  for (const result of [
-    undefined,
-    null,
-    {},
-    -1,
-    1.5,
-    "01",
-    "1x",
-    Number.MAX_SAFE_INTEGER + 1,
-  ]) {
-    assert.equal(postedBidId(result), null);
-    assert.equal(
-      confirmedPostedBid(
-        bids,
-        { transaction_hash: "tx", posted_bid_id: result as number },
-        expected,
-      ),
-      null,
-    );
+const module = await import(
+  `data:text/javascript;base64,${Buffer.from(built.outputFiles[0]!.text).toString("base64")}`
+);
+const postingCost = module.postingCost as (
+  amount: bigint,
+  attempts: number,
+  runDeposit: bigint,
+) => Record<"amount" | "budget" | "fees" | "storage" | "total", bigint>;
+const terms = module.terms as (draft: Record<string, unknown>) => unknown;
+
+const NEAR = 10n ** 24n;
+const RUN = NEAR / 100n;
+
+test("a posting attaches the reward, the run budget, fees and storage", () => {
+  for (const attempts of [1, 3]) {
+    const amount = NEAR / 2n;
+    const budget = RUN * BigInt(2 + 2 * attempts);
+    const fees = ((NEAR * 17n) / 1000n) * BigInt(attempts);
+    const storage = (NEAR * 7n) / 100n + NEAR / 100n;
+    assert.deepEqual(postingCost(amount, attempts, RUN), {
+      amount,
+      budget,
+      fees,
+      storage,
+      total: amount + budget + fees + storage,
+    });
   }
-  assert.equal(
-    confirmedPostedBid(
-      bids,
-      { transaction_hash: "tx", posted_bid_id: 2 },
-      expected,
-    ),
-    null,
-  );
-  assert.equal(
-    confirmedPostedBid(
-      [{ ...bid(1), reference_hash: "other" }],
-      { transaction_hash: "tx", posted_bid_id: 1 },
-      expected,
-    ),
-    null,
-  );
-  assert.equal(confirmedPostedBid(bids, undefined, expected), null);
+  assert.equal(postingCost(NEAR, 1, RUN).total, (1137n * NEAR) / 1000n);
 });
-test("wallet return bytes are decoded without treating malformed bytes as a created bid", () => {
-  assert.equal(decodeCallResult(btoa("150")), 150);
-  for (const value of [
+
+const draft = {
+  description: "Sum the column.",
+  check: "",
+  reference: "",
+  amount: "0.5",
+  deliverHours: "4",
+  attempts: "2",
+  workers: "",
+  days: "3",
+  revealAgreed: true,
+};
+
+test("a valid draft becomes the bid's terms", () => {
+  assert.deepEqual(terms({ ...draft, workers: "a.near, b.near a.near" }), {
+    amount: NEAR / 2n,
+    deliver_secs: 14_400,
+    max_attempts: 2,
+    allowed_workers: ["a.near", "b.near"],
+  });
+  assert.equal(
+    (terms(draft) as { allowed_workers: unknown }).allowed_workers,
     null,
-    "!not-base64",
-    btoa("{bad"),
-    btoa(String.fromCharCode(255)),
-  ])
-    assert.equal(decodeCallResult(value), null);
+  );
+});
+
+test("an invalid draft is refused before anything is signed", () => {
+  const cases: Array<[Record<string, unknown>, RegExp]> = [
+    [{ description: "  " }, /1 to 2,048 bytes/],
+    [{ description: "x".repeat(2049) }, /1 to 2,048 bytes/],
+    [{ days: "0" }, /1 to 7 days/],
+    [{ days: "8" }, /1 to 7 days/],
+    [{ deliverHours: "2" }, /how long a worker has/],
+    [{ attempts: "0" }, /1 to 3 attempts/],
+    [{ attempts: "4" }, /1 to 3 attempts/],
+    [{ workers: "Not_Valid!" }, /up to 20 valid/],
+    [
+      { workers: Array.from({ length: 21 }, (_, i) => `w${i}.near`).join(" ") },
+      /up to 20 valid/,
+    ],
+  ];
+  for (const [change, message] of cases)
+    assert.throws(() => terms({ ...draft, ...change }), message);
 });
