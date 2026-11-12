@@ -796,3 +796,170 @@ details.bounty-section > summary {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Job and bounty tiles: the recorded-example card, about 15% smaller. The title's link covers the
+   whole card, and the spotlight from SpotlightCard follows the cursor. */
+.workspace-app .work-card {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 20px;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 2px #1a16400a,
+    inset 0 1px white;
+  min-width: 0;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.workspace-app .work-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(
+    360px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(112, 98, 237, 0.12),
+    transparent 76%
+  );
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  pointer-events: none;
+}
+.workspace-app .work-card:hover::before,
+.workspace-app .work-card:focus-within::before {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce), (hover: none) {
+  .workspace-app .work-card::before {
+    display: none;
+  }
+}
+.workspace-app .work-card:hover {
+  border-color: #d9d4f2;
+  box-shadow: 0 6px 20px #1a164012;
+}
+.workspace-app .work-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.workspace-app .work-card-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #d9d4f2;
+  border-radius: 10px;
+  background: #efedff;
+  color: #7166d7;
+  font-size: 17px;
+}
+.workspace-app .work-card-status {
+  padding: 5px 9px;
+  border: 1px solid #d9d4f2;
+  border-radius: 100px;
+  background: #f6f5ff;
+  color: #5a51c4;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: right;
+}
+.workspace-app .work-card-status.paid {
+  border-color: #d2e7df;
+  background: #f1faf5;
+  color: #3b7960;
+}
+.workspace-app .work-card-status.closed {
+  border-color: #efdcd9;
+  background: #fff2f1;
+  color: #a15d55;
+}
+.workspace-app .work-card-kicker {
+  margin: 0 0 7px;
+  color: #696d7a;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  line-height: 1.6;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+.workspace-app .work-card h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  line-height: 1.3;
+}
+.workspace-app .work-card-link {
+  color: var(--ink);
+  text-decoration: none;
+}
+/* The whole card opens the item. */
+.workspace-app .work-card-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.workspace-app .work-card-link:focus-visible {
+  outline: none;
+}
+.workspace-app .work-card:has(.work-card-link:focus-visible) {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+.workspace-app .work-card-description {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.workspace-app .work-card-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: auto 0 0;
+  padding: 14px 0;
+  border-top: 1px solid #efedf3;
+}
+.workspace-app .work-card-details > span {
+  min-width: 0;
+  color: #6a6d7b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.workspace-app .work-card-details strong {
+  display: block;
+  margin-top: 3px;
+  color: #343745;
+  font-size: 13px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-app .work-card-open {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 13px;
+  border-top: 1px solid #efedf3;
+  color: #655ccd;
+  font-size: 12px;
+  font-weight: 550;
+}
+.workspace-app .work-card:hover .work-card-open {
+  color: #38308a;
+}

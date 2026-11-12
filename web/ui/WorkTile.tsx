@@ -1,6 +1,11 @@
+import type { MouseEvent } from "react";
 // One card in a grid of work: market jobs and PR bounties share it, so both lists look the same.
 export type TileKind = "open" | "paid" | "closed";
 
+const ICON: Record<TileKind, string> = { open: "→", paid: "✓", closed: "×" };
+
+/** The same card as the recorded examples: icon, status pill, kicker, title, two details and a link,
+ * with the soft spotlight that follows the cursor. The whole card opens the item. */
 export function WorkTile(props: {
   href: string;
   status: string;
@@ -12,28 +17,48 @@ export function WorkTile(props: {
   parties: [string, string][];
   linkText: string;
 }) {
+  const [poster, worker] = props.parties;
+  // The spotlight follows the cursor, as on the recorded-example cards (style in market.css).
+  const move = (event: MouseEvent<HTMLDivElement>) => {
+    const card = event.currentTarget;
+    const rect = card.getBoundingClientRect();
+    card.style.setProperty("--mouse-x", `${event.clientX - rect.left}px`);
+    card.style.setProperty("--mouse-y", `${event.clientY - rect.top}px`);
+  };
   return (
-    <a className="bounty-tile" href={props.href}>
-      <div className="bounty-tile-top">
-        <span>
-          <i className={`bounty-dot ${props.kind}`} aria-hidden="true" />
-          {props.status}
+    <div className={`work-card work-card-${props.kind}`} onMouseMove={move}>
+      <div className="work-card-top">
+        <span className="work-card-icon" aria-hidden="true">
+          {ICON[props.kind]}
         </span>
-        <strong className="bounty-tile-reward">{props.reward}</strong>
+        <span className={`work-card-status ${props.kind}`}>{props.status}</span>
       </div>
-      <h3>{props.title}</h3>
-      <p className="bounty-tile-repo">{props.sub}</p>
-      <span className="bounty-tag">{props.tag}</span>
-      <dl className="bounty-tile-parties">
-        {props.parties.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <span className="bounty-tile-link">{props.linkText} →</span>
-    </a>
+      <p className="work-card-kicker">{props.sub}</p>
+      <h3>
+        <a className="work-card-link" href={props.href}>
+          {props.title}
+        </a>
+      </h3>
+      <p className="work-card-description">
+        {poster ? `${poster[0]} ${poster[1]} · ` : ""}
+        {props.tag}
+      </p>
+      <div className="work-card-details">
+        <span>
+          Reward<strong>{props.reward}</strong>
+        </span>
+        {worker ? (
+          <span>
+            {worker[0]}
+            <strong>{worker[1]}</strong>
+          </span>
+        ) : null}
+      </div>
+      <span className="work-card-open" aria-hidden="true">
+        {props.linkText}
+        <span>→</span>
+      </span>
+    </div>
   );
 }
 
