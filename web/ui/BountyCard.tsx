@@ -4,6 +4,7 @@ import type { Call } from "./market-types.ts";
 import type { Bounty, Config, WalletLink } from "./bounty-types.ts";
 import type { FlowChain } from "./bounty-actions.ts";
 import {
+  GAS,
   SIGNING_OFF,
   cancelCall,
   checkMergeCall,
@@ -95,6 +96,19 @@ export function SigningNote({ approved }: { approved: boolean }) {
   return approved ? null : (
     <p className="workspace-empty signing-off" role="note">
       {SIGNING_OFF}
+    </p>
+  );
+}
+
+/** NEAR holds gas at 0.001 NEAR per Tgas when a call is signed and returns what is not used. */
+const GAS_HOLD_PER_GAS = 1_000_000_000n;
+/** For the calls that start an OutLayer run (link, submit, merge check): what the wallet must have
+ * free while the call runs, and that it comes back. */
+export function GasHoldNote({ gas }: { gas: bigint }) {
+  return (
+    <p className="post-hint">
+      Your wallet needs about {near(gas * GAS_HOLD_PER_GAS)} free: it is held
+      for gas while this runs, and nearly all of it comes back.
     </p>
   );
 }
@@ -328,6 +342,7 @@ export function SubmitView(props: {
       >
         Submit ({near(RUN_DEPOSIT)}, unused part returned)
       </TxButton>
+      <GasHoldNote gas={GAS.submit} />
       <SigningNote approved={props.approved} />
     </div>
   );
@@ -469,11 +484,11 @@ export function Actions({
         Expire claim
       </TxButton>,
     );
-  if (
-    wallet &&
+  const checkable =
+    !!wallet &&
     bounty.status === "Bound" &&
-    mergeCheckable(bounty, now, config.refund_cap_secs)
-  ) {
+    mergeCheckable(bounty, now, config.refund_cap_secs);
+  if (checkable) {
     const free =
       me === bounty.binding?.wallet &&
       sponsored > 0 &&
@@ -617,6 +632,7 @@ export function Actions({
       {buttons.length ? (
         <>
           <div className="market-actions">{buttons}</div>
+          {checkable ? <GasHoldNote gas={GAS.check} /> : null}
           <SigningNote approved={approved} />
         </>
       ) : null}

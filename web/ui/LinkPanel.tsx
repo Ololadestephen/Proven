@@ -3,6 +3,7 @@ import { api, short } from "./market-client.ts";
 import type { Config, WalletLink } from "./bounty-types.ts";
 import {
   LINK_DEPOSIT,
+  GAS,
   LINK_STORAGE_DEPOSIT,
   RUN_DEPOSIT,
   activateLinkCall,
@@ -17,7 +18,12 @@ import {
   type FlowChain,
 } from "./bounty-actions.ts";
 import { BOUNTY_PATH } from "./bounty-chain.ts";
-import { SigningNote, TxButton, type LinkLoad } from "./BountyCard.tsx";
+import {
+  GasHoldNote,
+  SigningNote,
+  TxButton,
+  type LinkLoad,
+} from "./BountyCard.tsx";
 import { utc } from "./bounty-status.ts";
 import { near } from "./bounty-text.ts";
 import { linkErrorMessage, type DeviceStart } from "./github-link.ts";
@@ -208,6 +214,7 @@ export function LinkView(props: LinkViewProps) {
               >
                 Connect GitHub
               </TxButton>
+              <GasHoldNote gas={GAS.link} />
               <SigningNote approved={props.approved} />
             </div>
           ) : null}

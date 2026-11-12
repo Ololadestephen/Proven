@@ -1121,6 +1121,11 @@ test("an unlinked wallet links GitHub on an open bounty's page; the maintainer a
   });
   assert.match(contributor, heading);
   assert.match(contributor, /Link your GitHub account first, below\./);
+  // The link starts an OutLayer run: 300 Tgas, held at 0.001 NEAR per Tgas while it runs.
+  assert.match(
+    contributor.replace(/<!-- -->/g, ""),
+    /needs about 0\.3 (testnet )?NEAR free: it is held\s+for gas while this runs/,
+  );
   const maintainer = renderPage({
     wallet: wallet(MAINT),
     poster: true,
