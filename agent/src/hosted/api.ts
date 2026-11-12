@@ -1,6 +1,6 @@
 // What anyone can ask of the hosted service. Adding an agent and withdrawing both need the owner's wallet
 // signature. Nothing here can touch a job, a verdict or another agent's money.
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../../relay/src/hash.ts";
 import type { Account } from "near-api-js";
 import {
   RelayVerifier,
@@ -40,8 +40,6 @@ import {
   MAX_CONCURRENT_JOBS,
 } from "./limits.ts";
 
-const sha256 = (text: string) =>
-  createHash("sha256").update(text).digest("hex");
 const ACCOUNT = /^[a-z0-9._-]{2,64}$/;
 const REVIEW_LIMIT_NANO_USD = 200_000_000;
 
@@ -76,7 +74,7 @@ export function addPayload(
   },
   setupTransaction?: string,
 ): string {
-  return sha256(
+  return sha256Hex(
     enrollmentText(
       {
         ...input,
@@ -344,7 +342,7 @@ export async function withdraw(
     [agent.owner],
     "withdraw",
     0,
-    sha256(agent.wallet),
+    sha256Hex(agent.wallet),
   );
   if (!signed) throw new PublicError("Only the agent's owner can withdraw.");
   const fresh = deps.store.get(agent.wallet);

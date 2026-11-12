@@ -7,11 +7,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { JsonRpcProvider } from "near-api-js";
-import {
-  relayPayload,
-  RelayVerifier,
-  type RelayAuth,
-} from "../../relay/src/buyer-auth.ts";
+import { relayPayload, type RelayAuth } from "../../relay/src/buyer-auth.ts";
 import { FallbackRpcProvider } from "../../relay/src/rpc.ts";
 import {
   buyerAllowed,
@@ -450,19 +446,6 @@ export async function relayRoute(body: unknown) {
     throw new ReadError("Sign this request with your wallet.", 401);
   return relay(request);
 }
-
-const verifier = new RelayVerifier(async (accountId, publicKey) => {
-  try {
-    await provider.viewAccessKey({
-      accountId,
-      publicKey,
-      finalityQuery: { finality: "final" },
-    });
-    return true;
-  } catch {
-    return false;
-  }
-});
 
 let reviewing = false;
 /** Each review spends the operator's model credit. The key pool also caps the project's total on disk. */

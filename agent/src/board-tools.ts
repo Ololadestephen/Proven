@@ -1,7 +1,7 @@
 import { postedBidId, matchesPostedBid } from "../../shared/post-result.ts";
+import { sha256Hex } from "../../relay/src/hash.ts";
 // CLI and MCP tools for the bid board. Writes go through the configured custody wallet; board calls
 // hold no job money. The JSON feed is read-only and needs no credentials.
-import { createHash } from "node:crypto";
 import {
   BoardClient,
   buyerRecord,
@@ -32,8 +32,6 @@ import {
   type Args,
 } from "./validation.ts";
 
-const hash = (value: string) =>
-  createHash("sha256").update(value).digest("hex");
 const string = { type: "string" };
 const id = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
 const page = {
@@ -233,8 +231,8 @@ export async function executeBoardTool(
     const call = {
       description: text(args, "description", 2048),
       amount: yocto(text(args, "amount_near", 30)),
-      check_hash: hash(check),
-      reference_hash: hash(reference),
+      check_hash: sha256Hex(check),
+      reference_hash: sha256Hex(reference),
       verifier_hash: verifier,
       format,
       expires_at: ((await board.now()) + hours * 3_600_000_000_000n).toString(),
@@ -322,11 +320,11 @@ export async function executeBoardTool(
   }
   if (name === "register_agent") {
     const call = {
-      prompt_hash: hash(text(args, "prompt")),
-      knowledge_hash: hash(
+      prompt_hash: sha256Hex(text(args, "prompt")),
+      knowledge_hash: sha256Hex(
         typeof args.knowledge === "string" ? args.knowledge : "",
       ),
-      tools_hash: hash(text(args, "tools")),
+      tools_hash: sha256Hex(text(args, "tools")),
       model: text(args, "model", 128),
       owner: null,
     };

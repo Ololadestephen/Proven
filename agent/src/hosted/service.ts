@@ -5,7 +5,7 @@
 import { chainProvider } from "../rpc.ts";
 import { createServer } from "node:http";
 import { AccountDoesNotExistError } from "near-api-js/rpc-errors";
-import { isAbsentAccount } from "../../../relay/src/rpc.ts";
+import { isAbsentAccount, keyOnAccount } from "../../../relay/src/rpc.ts";
 import { RelayVerifier } from "../../../relay/src/buyer-auth.ts";
 import { BoardClient } from "../board.ts";
 import { ROOT } from "../config.ts";
@@ -111,18 +111,9 @@ export async function buildDeps(
     earningsCapYocto: settings.earningsCapYocto,
     enrollmentOwners: settings.enrollmentOwners,
     codeSkills: false,
-    verifier: new RelayVerifier(async (accountId, publicKey) => {
-      try {
-        await provider.viewAccessKey({
-          accountId,
-          publicKey,
-          finalityQuery: { finality: "final" },
-        });
-        return true;
-      } catch {
-        return false;
-      }
-    }),
+    verifier: new RelayVerifier((accountId, publicKey) =>
+      keyOnAccount(provider, accountId, publicKey),
+    ),
     balance,
     hasActiveClaim,
     paidTreasury: async (hash, owner, amount) => {

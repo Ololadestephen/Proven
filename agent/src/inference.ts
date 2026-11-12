@@ -2,7 +2,7 @@
 // per run and per agent, including failed calls, and enforces a per-agent limit before spending.
 // Prompts, responses and keys are never logged. Model output is untrusted text: nothing here acts
 // on it, and it can never decide payment.
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../relay/src/hash.ts";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { PublicError } from "./errors.ts";
@@ -64,10 +64,6 @@ export interface CallResult {
   requestHash: string;
   responseHash: string;
   publicResponseBody?: string;
-}
-
-function sha256(bytes: Uint8Array | string): string {
-  return createHash("sha256").update(bytes).digest("hex");
 }
 
 export class Ledger {
@@ -195,7 +191,7 @@ export class ModelClient {
         );
       }
     }
-    const requestHash = sha256(body);
+    const requestHash = sha256Hex(body);
     const row = (status: number): LedgerRow => ({
       at: new Date().toISOString(),
       spender: request.spender,
@@ -248,7 +244,7 @@ export class ModelClient {
         errorMessage(bytes),
       );
     }
-    const responseHash = sha256(bytes);
+    const responseHash = sha256Hex(bytes);
     let parsed: ModelReply;
     try {
       parsed = parseModelReply(new TextDecoder().decode(bytes));

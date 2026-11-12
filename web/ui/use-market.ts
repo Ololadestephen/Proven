@@ -33,6 +33,8 @@ export function useMarket(bidId?: number) {
   const pendingRef = useRef(pending);
   const gate = useRef(new ActionGate());
   const [notice, setNotice] = useState<string | null>(null);
+  /** Set when the shown notice is "submitted, waiting for the board", so it can turn into a confirmation. */
+  const awaitingBoard = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [boardUnavailable, setBoardUnavailable] = useState(false);
   const boardFailed = useRef(false);
@@ -138,7 +140,8 @@ export function useMarket(bidId?: number) {
   // A confirmation is news for a moment. It should not stay on the page and look like a waiting state.
   useEffect(() => {
     if (!notice) return;
-    if (!pending && notice.startsWith("Submitted")) {
+    if (awaitingBoard.current && !pending) {
+      awaitingBoard.current = false;
       setNotice("Confirmed on the board.");
       return;
     }
@@ -147,28 +150,33 @@ export function useMarket(bidId?: number) {
   }, [notice, pending]);
   const run: Run = async (label, task, progress) => {
     if (!gate.current.enter()) return;
-    if (pendingRef.current) {
-      setError(
-        "The last action is still being confirmed on chain. Try again in a few seconds.",
-      );
+    try {
+      const refusal = pendingRef.current
+        ? "The last action is still being confirmed on chain. Try again in a few seconds."
+        : boardFailed.current
+          ? "Wait for the job board to reconnect before starting an action."
+          : null;
+      if (refusal || !market || !wallet) {
+        setError(refusal ?? "Connect a wallet and wait for the board to load.");
+        return;
+      }
+      await perform(label, task, progress, market, wallet);
+    } finally {
       gate.current.leave();
-      return;
     }
-    if (boardFailed.current) {
-      setError(
-        "Wait for the job board to reconnect before starting an action.",
-      );
-      gate.current.leave();
-      return;
-    }
-    if (!market || !wallet) {
-      setError("Connect a wallet and wait for the board to load.");
-      gate.current.leave();
-      return;
-    }
+  };
+  /** One action, once the gate is held and nothing refuses it. */
+  const perform = async (
+    label: string,
+    task: () => Promise<unknown>,
+    progress: string | undefined,
+    market: Market,
+    wallet: Wallet,
+  ) => {
     setBusy(progress ?? `${label}… check your wallet for any request.`);
     setError(null);
     setNotice(null);
+    awaitingBoard.current = false;
     const readOnly = label === "Collect the work";
     try {
       if (!readOnly)
@@ -181,10 +189,11 @@ export function useMarket(bidId?: number) {
         };
       await task();
       await refresh().catch(() => undefined);
+      awaitingBoard.current = !readOnly && pendingRef.current !== null;
       setNotice(
         readOnly
           ? "The delivery is ready below."
-          : pendingRef.current
+          : awaitingBoard.current
             ? "Submitted. Waiting for the board to confirm."
             : `${label}: done.`,
       );
@@ -197,7 +206,6 @@ export function useMarket(bidId?: number) {
     } finally {
       intentRef.current = null;
       setBusy(null);
-      gate.current.leave();
     }
   };
 

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../relay/src/hash.ts";
 import { PublicError } from "./errors.ts";
 import { loadConfig } from "./config.ts";
 import { createRuntime } from "./near.ts";
@@ -20,8 +20,6 @@ import {
 } from "./validation.ts";
 import type { Actor, CallPlan, Job, RunKind, Runtime } from "./types.ts";
 
-const hash = (value: string) =>
-  createHash("sha256").update(value).digest("hex");
 const string = { type: "string" };
 const id = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
 const boolean = { type: "boolean" };
@@ -106,8 +104,8 @@ function checkedFiles(
   }
   if (
     parsed.verifier !== job.verifier_hash ||
-    hash(check) !== job.spec_hash ||
-    hash(other) !== job.fakes_hash
+    sha256Hex(check) !== job.spec_hash ||
+    sha256Hex(other) !== job.fakes_hash
   )
     throw new PublicError(
       "Private texts or verifier build do not match the job commitments.",
@@ -233,8 +231,8 @@ export function createService(runtime: Runtime) {
         return submit(call, true, {
           action: "challenge",
           job_id: jobId,
-          check_hash: hash(check),
-          reference_hash: hash(reference),
+          check_hash: sha256Hex(check),
+          reference_hash: sha256Hex(reference),
           pin_only: pinOnly,
         });
       const pinned = await runtime.handoff({
@@ -254,7 +252,7 @@ export function createService(runtime: Runtime) {
     }
     if (name === "deliver") {
       const deliverable = text(args, "deliverable"),
-        commitment = hash(deliverable);
+        commitment = sha256Hex(deliverable);
       if (!["Funded", "Delivered"].includes(current.state))
         throw new PublicError("Job is not awaiting this delivery.");
       if (!dry && current.worker !== runtime.identity)

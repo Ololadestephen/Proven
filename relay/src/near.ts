@@ -13,7 +13,7 @@ import {
 import { createHash } from "node:crypto";
 import { timed, type TimingSink } from "./timing.ts";
 import { confirmTransaction } from "./admission.ts";
-import { DemoRpcProvider, FallbackRpcProvider } from "./rpc.ts";
+import { DemoRpcProvider, FallbackRpcProvider, keyOnAccount } from "./rpc.ts";
 import { MAINNET_RPC_URLS, TESTNET_RPC_URLS, type Config } from "./config.ts";
 
 const TGAS = 1_000_000_000_000n;
@@ -105,23 +105,13 @@ export async function getJob(
   return job;
 }
 
-/** Whether this key is on the account. A failed read counts as no, so it refuses. */
-export async function isAccessKey(
+/** Whether this key is on the account. A failed read throws, so the request is refused either way. */
+export const isAccessKey = (
   account: Account,
   accountId: string,
   publicKey: string,
-): Promise<boolean> {
-  try {
-    await account.provider.viewAccessKey({
-      accountId,
-      publicKey,
-      finalityQuery: { finality: "final" },
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
+): Promise<boolean> =>
+  keyOnAccount(account.provider as JsonRpcProvider, accountId, publicKey);
 
 export function secretsProfile(job: Job, jobId: number, kind: RunKind): string {
   return kind === "Challenge"

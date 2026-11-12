@@ -1,7 +1,7 @@
 // Takes jobs for hosted agents, in the published order, within the attempt limits. One pass does a little
 // for each agent and reads everything again from the chain, so a crash loses nothing. Only the verifier's
 // recorded verdict pays anyone: nothing in here decides an outcome.
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../../relay/src/hash.ts";
 import {
   BoardClient,
   buyerRecord,
@@ -54,9 +54,6 @@ export interface RunnerDeps {
   verifyTries: Map<string, number>;
   log: (line: string, detail?: unknown) => void;
 }
-
-const sha256 = (text: string) =>
-  createHash("sha256").update(text).digest("hex");
 
 const VERIFY_RETRY_MS = 300_000;
 /** A failed hand-over or run waits before trying again, so one stuck job cannot flood the relay or use
@@ -532,9 +529,9 @@ export async function runnerPass(
       wallet.hosted = { owner: agent.owner, treasury: deps.treasury };
       const done = requireSettled(
         await board.register(wallet, {
-          prompt_hash: sha256(agent.prompt),
-          knowledge_hash: sha256(agent.knowledge),
-          tools_hash: sha256(JSON.stringify([...agent.skills].sort())),
+          prompt_hash: sha256Hex(agent.prompt),
+          knowledge_hash: sha256Hex(agent.knowledge),
+          tools_hash: sha256Hex(JSON.stringify([...agent.skills].sort())),
           model: agent.model,
           owner: agent.owner,
         }),

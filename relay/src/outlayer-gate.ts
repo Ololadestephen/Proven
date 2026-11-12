@@ -3,7 +3,7 @@
 // wrong build hash, to see what OutLayer keeps. Measures the real cost of both. Works on testnet as a
 // rehearsal; on mainnet it needs NEAR_NETWORK=mainnet and PROVEN_STAGE2_APPROVED=yes.
 //   node --env-file=../.env src/outlayer-gate.ts [--dry-run]
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./hash.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { actions } from "near-api-js";
 import { loadConfig } from "./config.ts";
@@ -31,9 +31,8 @@ const onMainnet = base.outlayerContract === "outlayer.near";
 const account = relayAccount(base);
 // The secret may be read only by runs this account requests, since no escrow is involved here.
 const config = { ...base, escrowContract: account.accountId };
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const url = `https://${onMainnet ? "main" : "test"}.fastfs.io/${account.accountId}/${config.outlayerContract}/${verifier}.wasm`;
-const profile = `gate-${sha(reference).slice(0, 12)}`;
+const profile = `gate-${sha256Hex(reference).slice(0, 12)}`;
 const evidence: Record<string, unknown> = {
   at: new Date().toISOString(),
   network: onMainnet ? "mainnet" : "testnet",
@@ -57,8 +56,8 @@ const request = (hash: string) => ({
   source: { WasmUrl: { url, hash, build_target: "wasm32-wasip1" } },
   input_data: JSON.stringify({
     mode: "challenge",
-    check_hash: sha(check),
-    reference_hash: sha(reference),
+    check_hash: sha256Hex(check),
+    reference_hash: sha256Hex(reference),
   }),
   resource_limits: LIMITS,
   secrets_ref: { profile, account_id: account.accountId },

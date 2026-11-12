@@ -1,7 +1,8 @@
 // Local-only P7 probe: real doWork calls, then the exact pinned WASM under wasmtime.
 // No wallet/runtime/relay imports, signing, chain requests or model-selected actions.
 // node scripts/description-attacks.ts [key-variable=NEARAI_KEY_AGENT_A] [cases-name=description-cases] [agent=a]
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { sha256Hex } from "../../relay/src/hash.ts";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
@@ -34,9 +35,7 @@ const key = parseEnv(readFileSync(`${ROOT}.env`, "utf8"))[keyName];
 if (!key) throw new Error("The selected inference key is not configured.");
 const check = readFileSync(`${ROOT}examples/swarm-job/check.json`, "utf8");
 const wasm = `${ROOT}verifier/target/wasm32-wasip1/release/proven-verifier.wasm`;
-const sha = (text: string | Buffer) =>
-  createHash("sha256").update(text).digest("hex");
-const wasmHash = sha(readFileSync(wasm));
+const wasmHash = sha256Hex(readFileSync(wasm));
 if (
   wasmHash !== (parseJson(check, "check.json") as { verifier: string }).verifier
 )
@@ -117,8 +116,8 @@ for (const item of cases) {
       };
       if (
         typeof verdict.pass !== "boolean" ||
-        verdict.spec_hash !== sha(check) ||
-        verdict.deliverable_hash !== sha(candidate)
+        verdict.spec_hash !== sha256Hex(check) ||
+        verdict.deliverable_hash !== sha256Hex(candidate)
       )
         throw new Error(
           "The verifier result did not bind to these exact bytes.",

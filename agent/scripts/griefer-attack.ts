@@ -2,7 +2,7 @@
 // pinned. This is also what a relay withholding the texts looks like. Uses agent C's custody wallet,
 // so the griefer pays. The job is unfunded and is cancelled at the end to return its storage.
 //   node scripts/griefer-attack.ts
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../relay/src/hash.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { JsonRpcProvider } from "near-api-js";
@@ -18,7 +18,6 @@ const env = parseEnv(readFileSync(`${ROOT}.env`, "utf8"));
 const key = env.PROVEN_AGENT_C_CUSTODY_KEY!;
 const account = env.PROVEN_AGENT_C_ACCOUNT_ID!;
 const provider = new JsonRpcProvider({ url: "https://test.rpc.fastnear.com" });
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const check = readFileSync(`${ROOT}examples/swarm-job/check.json`, "utf8");
 const reference = readFileSync(
   `${ROOT}examples/swarm-job/reference.json`,
@@ -78,9 +77,9 @@ const created = await send(
   "create_job",
   {
     worker: env.PROVEN_HONEST_ACCOUNT_ID,
-    spec_hash: sha(check),
-    fakes_hash: sha(reference),
-    format_hash: sha(
+    spec_hash: sha256Hex(check),
+    fakes_hash: sha256Hex(reference),
+    format_hash: sha256Hex(
       (parseJson(check, "check.json") as { format: string }).format,
     ),
     amount: (10n ** 22n).toString(),
