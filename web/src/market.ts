@@ -532,7 +532,7 @@ export async function reviewRoute(
   if (!reviewsByBuyer.allow(bid.buyer))
     throw new ReadError("Too many reviews. Try again later.", 429);
   reviewing = true;
-  return new Promise((resolve, reject) => {
+  const run = new Promise((resolve, reject) => {
     execFile(
       process.execPath,
       ["scripts/swarm.ts", "review", String(bidId), "NEARAI_KEY_REVIEW"],
@@ -569,6 +569,30 @@ export async function reviewRoute(
         }
       },
     );
+  });
+  return reviewOutcome(bidId, run, () =>
+    view<Bid | null>(BOARD, "get_bid", { bid_id: bidId }),
+  );
+}
+
+/** The chain decides: if the review command failed after its decision landed (a lost wait for the
+ * transaction outcome, a failed read-back), this reports the decision the board recorded instead of
+ * an error. A bid still waiting for review, or a board that cannot be read, keeps the error. */
+export function reviewOutcome(
+  bidId: number,
+  run: Promise<unknown>,
+  readBid: () => Promise<{ state: string } | null>,
+): Promise<unknown> {
+  return run.catch(async (error: unknown) => {
+    const after = await readBid().catch(() => null);
+    if (after && after.state !== "Unreviewed")
+      return {
+        bid_id: bidId,
+        recorded: true,
+        state: after.state,
+        confirmed_from_chain: true,
+      };
+    throw error;
   });
 }
 

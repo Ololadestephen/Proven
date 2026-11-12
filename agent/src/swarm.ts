@@ -301,7 +301,8 @@ export async function runReview(bidId: number, keyName: string) {
     },
     gas: 30_000_000_000_000n,
   });
-  const after = await board.bid(bidId);
+  // The decision is already on chain; a failed read-back must not report the review as failed.
+  const after = await board.bid(bidId).catch(() => null);
   return {
     ...summary,
     recorded:
