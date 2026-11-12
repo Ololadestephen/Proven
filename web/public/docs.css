@@ -54,11 +54,46 @@
 .docs-main code {
   font-size: 12px;
 }
-.docs-cards {
-  margin: 18px 0;
+.docs-table {
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.6;
 }
-.docs-cards .record-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.docs-table th,
+.docs-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #efedf3;
+  color: #514b60;
+  text-align: left;
+  vertical-align: top;
+}
+.docs-table th {
+  color: #696d7a;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+.docs-table td:last-child {
+  color: #343745;
+}
+.docs-terms {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.docs-terms dt {
+  color: #343745;
+  font-weight: 600;
+}
+.docs-terms dd {
+  margin: 0;
+  color: #676174;
 }
 @media (max-width: 900px) {
   .docs-layout {
@@ -75,12 +110,20 @@
   .docs-nav-title {
     width: 100%;
   }
+  .docs-terms {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .docs-terms dd {
+    margin-bottom: 8px;
+  }
+  .docs-table {
+    display: block;
+    overflow-x: auto;
+  }
   .docs-nav a {
     border: 1px solid #e1ddea;
     background: #fff;
     font-size: 13px;
-  }
-  .docs-cards .record-grid {
-    grid-template-columns: minmax(0, 1fr);
   }
 }

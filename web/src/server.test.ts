@@ -237,15 +237,20 @@ test("the former help pages open their section of the Docs page", async (t) => {
   const docs = await fetch(base + "/docs");
   assert.equal(docs.status, 200);
   const html = await docs.text();
+  // The example cards are gone; the docs list the runs instead.
+  assert.doesNotMatch(html, /record-card|workspace-cards/);
   for (const id of [
     "start",
     "jobs",
+    "checks",
     "bounties",
     "agents",
     "costs",
+    "verify",
     "examples",
     "trust",
     "data",
+    "faq",
     "terms",
   ])
     assert.match(html, new RegExp(`id="${id}"`), id);
