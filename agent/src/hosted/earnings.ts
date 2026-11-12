@@ -1,18 +1,8 @@
 // Allocation of payments already transferred by escrow. This never changes a verdict or adds funds.
 import type { Job } from "../types.ts";
 import { PublicError } from "../errors.ts";
-import { budgetNanoUsd, nearToNanoUsd } from "./limits.ts";
-import type { HostedAgent, HostedStore } from "./store.ts";
-
-export interface EarningsRecord {
-  escrow: string;
-  job_id: number;
-  verdict_request_id: string;
-  amount_yocto: string;
-  inference_yocto: string;
-  retained_yocto: string;
-  at: string;
-}
+import { budgetNanoUsd, yoctoNearToNanoUsd } from "./limits.ts";
+import type { EarningsRecord, HostedAgent, HostedStore } from "./store.ts";
 
 export function retainedEarnings(agent: HostedAgent): bigint {
   return (agent.earnings ?? []).reduce(
@@ -102,7 +92,7 @@ export function recordEarnings(
 
 export function earnedInferenceUsd(agent: HostedAgent): number {
   return (
-    nearToNanoUsd(
+    yoctoNearToNanoUsd(
       (agent.earnings ?? []).reduce(
         (sum, row) => sum + BigInt(row.inference_yocto),
         0n,

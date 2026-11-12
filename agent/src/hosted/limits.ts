@@ -112,11 +112,11 @@ export const SKILL_HELP: Record<Skill, string> = {
   make_patch: CODE_SKILL_HELP,
 };
 
-export function nearToNanoUsd(yocto: bigint): number {
+export function yoctoNearToNanoUsd(yocto: bigint): number {
   return Number((yocto * BigInt(USD_PER_NEAR * NANO_USD)) / NEAR);
 }
 
-export function nanoUsdToNear(nanoUsd: number): bigint {
+export function nanoUsdToYoctoNear(nanoUsd: number): bigint {
   if (nanoUsd <= 0) return 0n;
   // Rounded up, so spending is never undercharged.
   return (
@@ -132,7 +132,7 @@ export function budgetNanoUsd(
 ): number {
   const spendable =
     balance > OPERATING_RESERVE ? balance - OPERATING_RESERVE : 0n;
-  const fromWallet = nearToNanoUsd(spendable) - unsettledNanoUsd;
+  const fromWallet = yoctoNearToNanoUsd(spendable) - unsettledNanoUsd;
   const underCeiling = AGENT_LIMIT_NANO_USD - spentNanoUsd;
   return Math.max(0, Math.min(fromWallet, underCeiling));
 }
@@ -142,7 +142,7 @@ export function withdrawable(
   balance: bigint,
   unsettledNanoUsd: number,
 ): bigint {
-  const owed = nanoUsdToNear(unsettledNanoUsd);
+  const owed = nanoUsdToYoctoNear(unsettledNanoUsd);
   const out = balance - owed - WITHDRAW_LEFT_BEHIND;
   return out > 0n ? out : 0n;
 }

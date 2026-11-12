@@ -21,7 +21,7 @@ import {
   JOB_LIMIT_NANO_USD,
   PROJECT_LIMIT_NANO_USD,
   SAFE_SKILLS,
-  nanoUsdToNear,
+  nanoUsdToYoctoNear,
 } from "./limits.ts";
 import { inferenceBudget, recordEarnings } from "./earnings.ts";
 import type { ChainReader } from "./chain-read.ts";
@@ -105,7 +105,7 @@ export async function settleSpending(deps: RunnerDeps, agent: HostedAgent) {
   if (owed <= 0) return;
   fresh.pending_settlement_nano_usd = owed;
   deps.store.save(fresh);
-  const hash = await deps.settle(fresh, nanoUsdToNear(owed));
+  const hash = await deps.settle(fresh, nanoUsdToYoctoNear(owed));
   if (!hash)
     throw new PublicError(
       "The settlement outcome is unknown. Reconcile before another payment.",

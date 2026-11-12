@@ -8,8 +8,8 @@ import {
   OPERATING_RESERVE,
   SKILL_USE_NANO_USD,
   budgetNanoUsd,
-  nanoUsdToNear,
-  nearToNanoUsd,
+  nanoUsdToYoctoNear,
+  yoctoNearToNanoUsd,
   withdrawable,
   WITHDRAW_LEFT_BEHIND,
 } from "./limits.ts";
@@ -95,13 +95,13 @@ test("a budget comes from the wallet above the reserve, less spending, under a h
 });
 
 test("spending is never undercharged, and a withdrawal leaves what is owed", () => {
-  const owed = nanoUsdToNear(1234);
-  assert.ok(nearToNanoUsd(owed) >= 1234);
-  assert.equal(nanoUsdToNear(0), 0n);
+  const owed = nanoUsdToYoctoNear(1234);
+  assert.ok(yoctoNearToNanoUsd(owed) >= 1234);
+  assert.equal(nanoUsdToYoctoNear(0), 0n);
   assert.equal(withdrawable(NEAR, 0), NEAR - WITHDRAW_LEFT_BEHIND);
   assert.equal(
     withdrawable(NEAR, NANO_USD),
-    NEAR - nanoUsdToNear(NANO_USD) - WITHDRAW_LEFT_BEHIND,
+    NEAR - nanoUsdToYoctoNear(NANO_USD) - WITHDRAW_LEFT_BEHIND,
   );
   assert.equal(withdrawable(WITHDRAW_LEFT_BEHIND, 0), 0n);
   assert.equal(withdrawable(0n, 5 * NANO_USD), 0n);
