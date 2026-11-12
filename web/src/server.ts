@@ -20,6 +20,7 @@ import {
   postingOutcome,
   revealRoute,
   readMarketCached,
+  readMarketSnapshot,
   relayRoute,
   reviewRoute,
   sample,
@@ -181,8 +182,11 @@ async function marketRoute(
   origin?: string,
 ): Promise<unknown> {
   if (req.method === "GET") {
-    if (path === "/api/market")
-      return readMarketCached().catch(() => {
+    // The page's reads may be a few seconds old; checks around a transaction always read fresh.
+    if (path === "/api/market" || path === "/api/market/fresh")
+      return (
+        path === "/api/market" ? readMarketSnapshot() : readMarketCached()
+      ).catch(() => {
         throw new ReadError(
           "We can’t reach the job board right now. Try again shortly.",
           503,

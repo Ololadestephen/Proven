@@ -169,6 +169,23 @@ export function readMarketCached(now = Date.now()): Promise<unknown> {
   return marketRead;
 }
 
+/** How old a snapshot the page may be shown while a newer one is read in the background. */
+const MARKET_SERVE_STALE_MS = 60_000;
+/** For page loads and polling: a recent snapshot at once, with a refresh started behind it, so a
+ * visitor never waits for the full chain read. Safety checks before or after a transaction use
+ * readMarketCached instead, which never answers from a snapshot older than its short window. */
+export function readMarketSnapshot(now = Date.now()): Promise<unknown> {
+  if (
+    cached &&
+    now - cached.at > MARKET_CACHE_MS &&
+    now - cached.at <= MARKET_SERVE_STALE_MS
+  ) {
+    void readMarketCached(now).catch(() => undefined);
+    return Promise.resolve(cached.value);
+  }
+  return readMarketCached(now);
+}
+
 export async function readMarket() {
   const config = await view<{
     verifier_hash: string;

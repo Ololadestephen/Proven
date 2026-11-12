@@ -17,8 +17,9 @@ import {
 import { useBountyActions } from "./use-bounty-actions.ts";
 import { useAutoResolve } from "./auto-resolve.ts";
 const readPending = () => readJournal(localStorage, PENDING_KEY);
+/** The board as of a few seconds ago at most, for the checks around a transaction. */
 async function readFreshMarket(): Promise<Market> {
-  const value = await api<Market>("/api/market");
+  const value = await api<Market>("/api/market/fresh");
   if (value.snapshot_stale)
     throw new Error(
       "Wait for the job board to reconnect before starting an action.",
