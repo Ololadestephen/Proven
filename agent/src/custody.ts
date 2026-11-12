@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { PublicError } from "./errors.ts";
+import { PublicError, safeCode } from "./errors.ts";
 import type { CallPlan } from "./types.ts";
 import { RELAY_RECIPIENT } from "../../shared/relay-auth.ts";
 
@@ -236,7 +236,7 @@ export async function custodyTransaction(
     } catch (error) {
       // Only repeat a status read. A transient read failure says nothing about admission.
       failedReads++;
-      lastFailure = error instanceof Error ? error.name : "unknown";
+      lastFailure = safeCode(error);
       continue;
     }
     if (response?.request_id !== id || response.type !== "call")
@@ -304,9 +304,10 @@ export async function custodyCall(
     body: JSON.stringify(plan),
     signal: AbortSignal.timeout(180000),
     redirect: "error",
-  }).catch(() => {
+  }).catch((error: unknown) => {
     throw new PublicError(
-      "Custody submission outcome is unknown. Inspect wallet history before retrying; no automatic retry was made.",
+      `Custody submission outcome is unknown (${safeCode(error)}). Inspect wallet history before retrying; no automatic retry was made.`,
+      { cause: error },
     );
   });
   let body: CustodyResponse = {};
