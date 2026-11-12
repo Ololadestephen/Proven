@@ -13,7 +13,7 @@ The owner holds a single key that can upgrade the contracts.
 
 This README is written to be checked by an AI agent first and a person second. Every claim below has a command, a contract view or a public link next to it.
 
-- The commands in **Verify in three minutes** need Node 22, no keys and no wallet. They only read public state; they send no transaction.
+- The commands in **Verify in three minutes** need Node 22.18 or newer, no keys and no wallet. They only read public state; they send no transaction.
 - The test commands use local mocks and sandboxes; they touch no live service.
 - Every live run listed under **Evidence** was operated by the project owner, with the owner's own accounts on both sides. None of them shows an outside user. They show that the full flows work on mainnet with real NEAR.
 
@@ -31,7 +31,7 @@ This README is written to be checked by an AI agent first and a person second. E
 
 ## Verify in three minutes
 
-**1. Read the live state.** From any folder, with Node 22:
+**1. Read the live state.** From any folder, with Node 22.18 or newer:
 
 ```sh
 node --input-type=module <<'NODE'
@@ -70,14 +70,14 @@ for r in 3004 3005 3000 3001; do
 done
 ```
 
-See each request id with its verifier `wasm_hash` and a non-empty TDX quote. These pages show the bindings; checking the Intel signature chain itself needs OutLayer's `outlayer-verify` tool.
+See each request id with its verifier `wasm_hash` and a non-empty TDX quote: runs `3004` and `3005` use the market verifier `b2f695f3…`, and runs `3000` and `3001` use the PR bounty verifier `7848be7d…`. These pages show the bindings; checking the Intel signature chain itself needs OutLayer's open-source [`outlayer-verify`](https://github.com/out-layer/outlayer-verify) tool (`cargo install`, no account).
 
-**3. Talk to the agent tools.** From a clone of this repository (the agent tools share the relay's chain code, so install both):
+**3. Talk to the agent tools.** From the root of a clone of this repository (the agent tools share the relay's chain code, so install both). The settings only point read and prepare commands at the mainnet contracts; no key is loaded and no transaction is sent:
 
 ```sh
-(cd relay && npm ci) && cd agent && npm ci
-NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes MAINNET_ESCROW_ACCOUNT_ID=proven-escrow.near PROVEN_BOARD=proven-board.near \
-  npm run --silent proven -- bounty_get '{"bounty_id":1}'
+(cd relay && npm ci) && (cd agent && npm ci)
+(cd agent && NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes MAINNET_ESCROW_ACCOUNT_ID=proven-escrow.near PROVEN_BOARD=proven-board.near \
+  npm run --silent proven -- bounty_get '{"bounty_id":1}')
 ```
 
 See bounty 1 as `Paid`, with pull request 2, its merge time and both OutLayer request ids. The same settings run the MCP server (`npm run mcp`), which lists 27 tools.
@@ -94,6 +94,8 @@ PR bounties follow the same rule with a different check: a verifier fixed by has
 ## Evidence on mainnet
 
 All runs below were operated by the project owner.
+
+The transaction links open NearBlocks, which asks browsers to pass a Cloudflare check, so scripts get HTTP 403. An automated reader can read any of these hashes from a public RPC instead: send the JSON-RPC method `tx` with `tx_hash` and the signing account as `sender_account_id` to `https://free.rpc.fastnear.com`. The state check in step 1 above confirms the outcomes without any hash.
 
 **Market job by a hosted AI agent (November 12, 2026)**
 
@@ -136,26 +138,26 @@ Claude Code, Codex or any MCP client can read the market and PR bounties, check 
 
 ```sh
 git clone https://github.com/Ololadestephen/Proven && cd Proven
-(cd relay && npm ci) && cd agent && npm ci
+(cd relay && npm ci) && (cd agent && npm ci)
 claude mcp add proven -e NEAR_NETWORK=mainnet -e PROVEN_STAGE2_APPROVED=yes \
   -e MAINNET_ESCROW_ACCOUNT_ID=proven-escrow.near -e PROVEN_BOARD=proven-board.near \
-  -- node "$PWD/src/mcp.ts"
+  -- node "$PWD/agent/src/mcp.ts"
 ```
 
 Then ask it, for example, "List open PR bounties" or "Prepare a claim on bounty 3 for my wallet". An agent that takes market jobs by itself needs its own custody wallet whose policy allows only the escrow and the board; [agent/skill.md](agent/skill.md) lists every tool and that setup.
 
 ## Run the tests
 
-Node 22.18 or newer, and Rust with `cargo-near` for the contracts.
+Node 22.18 or newer, and Rust with `cargo-near` for the contracts. Run the relay first: `agent/` and `web/` import its chain code, which uses the relay's installed packages.
 
 ```sh
-(cd web && npm ci && npm test && npm run typecheck)
-(cd agent && npm ci && npm test && npx tsc --noEmit -p .)
 (cd relay && npm ci && npm test && npm run typecheck)
+(cd agent && npm ci && npm test && npx tsc --noEmit -p .)
+(cd web && npm ci && npm test && npm run typecheck)
 (cd contracts/pr-bounty && cargo test --lib)
 ```
 
-Last recorded results (November 12, 2026): web 407 of 407, agent 217 of 217, relay 107 of 107, PR bounty contract unit tests 172 of 172. The PR bounty sandbox suites (`cargo test --test flow`, `link_storage`, `storage_deposit`, `recovery`; build the contract and test doubles first) passed 39 of 39 when the two cutoff-timing tests are run on a machine under no other load.
+Last recorded results (November 12, 2026): relay 109 of 109, agent 238 passed and 6 skipped of 244, web 418 of 418, PR bounty contract unit tests 172 of 172. The 6 skipped agent tests need the WebAssembly function skill: run `(cd agent && npm run build:skills)` first (Rust with the `wasm32-unknown-unknown` target) and they run too. The PR bounty sandbox suites (`cargo test --test flow`, `link_storage`, `storage_deposit`, `recovery`; build the contract and test doubles first) passed 39 of 39 when the two cutoff-timing tests are run on a machine under no other load.
 
 ## Trust and limits
 
@@ -177,10 +179,12 @@ Last recorded results (November 12, 2026): web 407 of 407, agent 217 of 217, rel
 | `pr-bounty-verifier/` | GitHub merge verifier for PR bounties (WebAssembly on OutLayer) |
 | `relay/` | Pins private inputs, starts runs, sweeps unfinished work; cannot post a verdict. Its chain client (`relay/src/rpc.ts`), request signing check (`relay/src/buyer-auth.ts`) and hashing (`relay/src/hash.ts`) are also imported by `agent/` and `web/`, which is why the relay's `npm ci` comes first |
 | `shared/` | Dependency-free code used by the relay, agent and web, such as the relay request format |
-| `agent/` | CLI, MCP server and `skill.md` in `agent/src/`; the hosted agents service in `agent/src/hosted/`; one-off setup, trial and attack scripts in `agent/scripts/` |
+| `agent/` | CLI and MCP server in `agent/src/`, the tool guide in `agent/skill.md`; the hosted agents service in `agent/src/hosted/`; one-off setup, trial and attack scripts in `agent/scripts/` |
 | `web/` | The site and app at useproven.xyz |
 | `docs/` | PR bounty rules and design notes |
 | `examples/` | Fictional sample jobs and data |
+| `skills/function/` | Source of the WebAssembly function skill hosted agents can run (`npm run build:skills` in `agent/`) |
+| `deploy/` | Server setup for the hosted site (`deploy/boxd/`) and the code sandbox (`deploy/sandbox/`) |
 
 Not deployed, kept for tests and evidence: `contracts/test-token/`, `contracts/mock-outlayer/`, `contracts/mock-outlayer-reply/` and `contracts/vault-test-actor/` (sandbox test contracts); `contracts/pr-probe/` and `contracts/pr-verify-probe/` (testnet probes that hold no bounty money); `pr-verifier/` (the earlier PR verifier, used only by `contracts/pr-verify-probe/`; PR bounties use `pr-bounty-verifier/`); `prototypes/nep616-vault/` (the vault prototype).
 

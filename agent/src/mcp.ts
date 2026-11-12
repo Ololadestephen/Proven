@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { once } from "node:events";
-import { pathToFileURL } from "node:url";
 import type { Writable } from "node:stream";
 import { unsettled, type ToolService } from "./cli.ts";
 import { publicMessage } from "./errors.ts";
@@ -221,10 +220,8 @@ export async function serveMcp(
   if (pending.length || oversized) await finishLine();
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+// The entry point, also when the path to it passes through a symlink.
+if (import.meta.main) {
   try {
     await serveMcp(process.stdin, process.stdout, await import("./service.ts"));
   } catch (error) {

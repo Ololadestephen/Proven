@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { createReadStream } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { publicMessage } from "./errors.ts";
 
 export const MAX_INPUT_BYTES = 512 * 1024;
@@ -175,10 +174,8 @@ export async function runCli(
   }
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+// The entry point, also when the path to it passes through a symlink.
+if (import.meta.main) {
   process.exitCode = await runCli(
     process.argv.slice(2),
     () => import("./service.ts"),

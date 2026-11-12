@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { pathToFileURL } from "node:url";
 import { runCli } from "./cli.ts";
 import { createOneClick } from "./oneclick.ts";
 import { PublicError } from "./errors.ts";
@@ -42,10 +41,8 @@ export function settlementService(client = createOneClick()) {
   };
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+// The entry point, also when the path to it passes through a symlink.
+if (import.meta.main) {
   process.exitCode = await runCli(
     process.argv.slice(2),
     async () => settlementService(),

@@ -8,7 +8,7 @@ import {
 import { createHash, randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { BrowserDemo } from "./demo.ts";
 import { launchFixedDemo } from "./demo-process.ts";
 import { demoRoute } from "./demo-routes.ts";
@@ -400,10 +400,8 @@ export function createApp(
   });
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+// The entry point, also when the path to it passes through a symlink.
+if (import.meta.main) {
   const args = process.argv.slice(2);
   if (
     args.some(
