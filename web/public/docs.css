@@ -1,0 +1,86 @@
+/* Docs: one page, a sticky section menu on the left, the guide's section cards on the right. */
+.docs-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 840px);
+  gap: 48px;
+  justify-content: center;
+  align-items: start;
+  padding-block: 56px 80px;
+}
+.docs-nav {
+  position: sticky;
+  /* Below the site's floating header. */
+  top: 96px;
+  display: grid;
+  gap: 2px;
+}
+.docs-nav-title {
+  margin: 0 0 10px;
+  color: #696d7a;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.docs-nav a {
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: #514b60;
+  font-size: 14px;
+  text-decoration: none;
+}
+.docs-nav a:hover {
+  background: #efedff;
+  color: #38308a;
+}
+.docs-main {
+  min-width: 0;
+}
+.docs-main .guide-section {
+  scroll-margin-top: 96px;
+}
+.docs-code {
+  margin: 12px 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  border: 1px solid #e6e3f2;
+  border-radius: 10px;
+  background: #f7f6fd;
+  color: #343745;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+}
+.docs-main code {
+  font-size: 12px;
+}
+.docs-cards {
+  margin: 18px 0;
+}
+.docs-cards .record-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 900px) {
+  .docs-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+    padding-block: 32px 60px;
+  }
+  .docs-nav {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .docs-nav-title {
+    width: 100%;
+  }
+  .docs-nav a {
+    border: 1px solid #e1ddea;
+    background: #fff;
+    font-size: 13px;
+  }
+  .docs-cards .record-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

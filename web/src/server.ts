@@ -34,6 +34,13 @@ import {
 import { startupMessage } from "../ui/network-status.ts";
 
 const PUBLIC = new URL("../public/", import.meta.url);
+/** The former help pages, each sent to its section of the Docs page. */
+export const DOCS_REDIRECTS: Record<string, string> = {
+  "/guide": "/docs#jobs",
+  "/examples": "/docs#examples",
+  "/trust": "/docs#trust",
+  "/about": "/docs#data",
+};
 const FILES: Record<string, [string, string]> = {
   "/favicon.svg": ["favicon.svg", "image/svg+xml"],
   "/": ["index.html", "text/html; charset=utf-8"],
@@ -41,12 +48,9 @@ const FILES: Record<string, [string, string]> = {
   "/app/": ["market.html", "text/html; charset=utf-8"],
   "/evidence": ["app.html", "text/html; charset=utf-8"],
   "/evidence/": ["app.html", "text/html; charset=utf-8"],
-  "/examples": ["examples.html", "text/html; charset=utf-8"],
-  "/examples/": ["examples.html", "text/html; charset=utf-8"],
-  "/trust": ["trust.html", "text/html; charset=utf-8"],
-  "/trust/": ["trust.html", "text/html; charset=utf-8"],
-  "/about": ["about.html", "text/html; charset=utf-8"],
-  "/about/": ["about.html", "text/html; charset=utf-8"],
+  "/docs": ["docs.html", "text/html; charset=utf-8"],
+  "/docs/": ["docs.html", "text/html; charset=utf-8"],
+  "/docs.css": ["docs.css", "text/css; charset=utf-8"],
   "/workspace-layout.css": ["workspace-layout.css", "text/css; charset=utf-8"],
   "/workspace-surfaces.css": [
     "workspace-surfaces.css",
@@ -61,8 +65,6 @@ const FILES: Record<string, [string, string]> = {
   "/market.css": ["market.css", "text/css; charset=utf-8"],
   "/build/market.css": ["../dist/market.css", "text/css; charset=utf-8"],
   "/build/market.js": ["../dist/market.js", "text/javascript; charset=utf-8"],
-  "/guide": ["guide.html", "text/html; charset=utf-8"],
-  "/guide/": ["guide.html", "text/html; charset=utf-8"],
   "/theme.css": ["theme.css", "text/css; charset=utf-8"],
   "/landing.css": ["landing.css", "text/css; charset=utf-8"],
   "/product-sections.css": ["product-sections.css", "text/css; charset=utf-8"],
@@ -333,6 +335,13 @@ export function createApp(
       // The market moved to /app. The old address keeps working.
       if (url.pathname === "/market" || url.pathname === "/market/") {
         res.writeHead(308, { Location: "/app/market" });
+        res.end();
+        return;
+      }
+      // The four help pages became one Docs page; each old address opens its section.
+      const docs = DOCS_REDIRECTS[url.pathname.replace(/\/$/, "")];
+      if (docs) {
+        res.writeHead(308, { Location: docs });
         res.end();
         return;
       }

@@ -339,7 +339,7 @@ export function JobWorkspace({
                   ))}
                 </dl>
               </details>
-              <a href="/trust">How verification is trusted</a>{" "}
+              <a href="/docs#trust">How verification is trusted</a>{" "}
               {/* The evidence reader reads recorded testnet jobs only. Mainnet links its attestation above. */}
               {IS_MAINNET ? null : (
                 <a

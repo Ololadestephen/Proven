@@ -105,14 +105,7 @@ test("static status uses same-origin config as plain text and refuses unavailabl
 });
 
 test("static pages have no stale caps, testnet app link or retired live-start control", async () => {
-  for (const name of [
-    "index.html",
-    "guide.html",
-    "trust.html",
-    "about.html",
-    "examples.html",
-    "app.html",
-  ]) {
+  for (const name of ["index.html", "docs.html", "app.html"]) {
     const html = await readFile(
       new URL(`../public/${name}`, import.meta.url),
       "utf8",
@@ -126,7 +119,7 @@ test("static pages have no stale caps, testnet app link or retired live-start co
     if (name !== "app.html") assert.ok(!/testnet/i.test(html), name);
     // Pages with the app sidebar read the network's name live; the landing page and guide name no
     // network status at all (owner, November 9).
-    if (["index.html", "guide.html"].includes(name))
+    if (["index.html", "docs.html"].includes(name))
       assert.ok(!/data-market-summary/.test(html), name);
     else {
       assert.match(html, /data-market-summary="network"/);
@@ -134,7 +127,7 @@ test("static pages have no stale caps, testnet app link or retired live-start co
     }
   }
   const examples = await readFile(
-    new URL("../public/examples.html", import.meta.url),
+    new URL("../public/docs.html", import.meta.url),
     "utf8",
   );
   assert.ok(!examples.includes('id="demo-start"'));
@@ -153,7 +146,7 @@ test("the status bundle is served locally under the static read-only CSP", async
   assert.equal(script.status, 200);
   assert.match(script.headers.get("content-type") ?? "", /text\/javascript/);
   // A page with the app sidebar loads it; the landing page names no network status.
-  const page = await fetch(base + "/trust");
+  const page = await fetch(base + "/evidence");
   assert.match(await page.text(), /src="\/build\/market-status\.js"/);
   const csp = page.headers.get("content-security-policy") ?? "";
   assert.match(csp, /script-src 'self';/);

@@ -23,10 +23,8 @@ export const APP_NAVIGATION: ReadonlyArray<NavigationItem> = [
   { id: "bounties", label: "PR bounties", href: "/app/bounties" },
 ];
 export const SUPPORT_NAVIGATION: ReadonlyArray<NavigationItem> = [
-  { id: "guide", label: "Guide", href: "/guide", icon: "lookup" },
-  { id: "demo", label: "Examples & demo", href: "/examples" },
-  { id: "trust", label: "Trust & limits", href: "/trust" },
-  { id: "about", label: "About this service", href: "/about", icon: "trust" },
+  // The former Guide, Examples, Trust and About pages are one Docs page.
+  { id: "guide", label: "Docs", href: "/docs", icon: "lookup" },
 ];
 export const MARKET_NAVIGATION = APP_NAVIGATION;
 export const EVIDENCE_NAVIGATION: ReadonlyArray<NavigationItem> = [

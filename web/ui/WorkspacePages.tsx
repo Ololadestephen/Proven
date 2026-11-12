@@ -124,10 +124,10 @@ function Overview({
           <p>Get paid when your pull request merges.</p>
           <span className="workspace-card-link">See the bounties</span>
         </a>
-        <a className="workspace-card" href="/guide">
+        <a className="workspace-card" href="/docs">
           <h2>How it works</h2>
           <p>Read how a job runs and pays.</p>
-          <span className="workspace-card-link">Read the guide</span>
+          <span className="workspace-card-link">Read the docs</span>
         </a>
       </div>
       <RecentResults bids={market.bids} />

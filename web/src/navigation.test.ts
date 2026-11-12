@@ -42,13 +42,13 @@ test("primary navigation is quiet and page destinations stay distinct", () => {
     MARKET_NAVIGATION.find((item) => item.id === "market")?.href,
     "/app/market",
   );
-  assert.equal(
-    EVIDENCE_NAVIGATION.find((item) => item.id === "demo")?.href,
-    "/examples",
+  // Guide, Examples, Trust and About are one Docs page.
+  const docs = EVIDENCE_NAVIGATION.filter((item) =>
+    ["guide", "demo", "trust", "about"].includes(item.id),
   );
-  assert.equal(
-    EVIDENCE_NAVIGATION.find((item) => item.id === "trust")?.href,
-    "/trust",
+  assert.deepEqual(
+    docs.map((item) => [item.label, item.href]),
+    [["Docs", "/docs"]],
   );
   assert.equal(
     sectionFromHash("#job-35", EVIDENCE_NAVIGATION, "lookup"),

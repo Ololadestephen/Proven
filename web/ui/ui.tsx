@@ -142,7 +142,7 @@ if (jobs) createRoot(jobs).render(<RecordedJobs />);
 const cta = document.getElementById("reactbits-cta");
 if (cta)
   createRoot(cta).render(
-    <StarBorder href="/examples">Explore the demo</StarBorder>,
+    <StarBorder href="/docs#examples">See the examples</StarBorder>,
   );
 
 const navigation = document.getElementById("workspace-navigation");

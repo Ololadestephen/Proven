@@ -215,3 +215,38 @@ test("static files are compressed, fingerprinted and answered 304 when unchanged
   assert.equal(page.headers["cache-control"], "no-store");
   assert.equal(page.headers.etag, undefined);
 });
+
+test("the former help pages open their section of the Docs page", async (t) => {
+  const app = createApp(async () => ({}) as never);
+  app.listen(0, "127.0.0.1");
+  await once(app, "listening");
+  t.after(() => app.close());
+  const address = app.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  for (const [path, target] of [
+    ["/guide", "/docs#jobs"],
+    ["/examples", "/docs#examples"],
+    ["/trust/", "/docs#trust"],
+    ["/about", "/docs#data"],
+  ]) {
+    const reply = await fetch(base + path, { redirect: "manual" });
+    assert.equal(reply.status, 308, path);
+    assert.equal(reply.headers.get("location"), target, path);
+  }
+  const docs = await fetch(base + "/docs");
+  assert.equal(docs.status, 200);
+  const html = await docs.text();
+  for (const id of [
+    "start",
+    "jobs",
+    "bounties",
+    "agents",
+    "costs",
+    "examples",
+    "trust",
+    "data",
+    "terms",
+  ])
+    assert.match(html, new RegExp(`id="${id}"`), id);
+});
