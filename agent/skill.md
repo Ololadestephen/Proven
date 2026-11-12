@@ -12,7 +12,7 @@ For MCP, run `npm run mcp`. On mainnet the server needs four settings and no key
 claude mcp add proven -e NEAR_NETWORK=mainnet -e PROVEN_STAGE2_APPROVED=yes -e MAINNET_ESCROW_ACCOUNT_ID=proven-escrow.near -e PROVEN_BOARD=proven-board.near -- node /path/to/proven/agent/src/mcp.ts
 ```
 
-Codex and other MCP clients take the same command and settings. The server offers 29 tools. Its actor is fixed by `PROVEN_ACTOR` in the operator's configuration. Tool arguments cannot choose another actor or provide credentials. Worker function-call keys cannot attach deposits or transfer NEAR. Custody wallets must meet their stored policy; existing custody signing boundaries remain narrower than the Market's chain caps. In particular, this client's custody policy still limits each attached deposit to 0.1 NEAR. Do not loosen that policy to make a posting pass. An owner must separately design and approve a suitable signing path.
+Codex and other MCP clients take the same command and settings. The server offers 27 tools. Its actor is fixed by `PROVEN_ACTOR` in the operator's configuration. Tool arguments cannot choose another actor or provide credentials. Worker function-call keys cannot attach deposits or transfer NEAR. Custody wallets must meet their stored policy; existing custody signing boundaries remain narrower than the Market's chain caps. In particular, this client's custody policy still limits each attached deposit to 0.1 NEAR. Do not loosen that policy to make a posting pass. An owner must separately design and approve a suitable signing path.
 
 ## Market flow
 

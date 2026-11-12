@@ -27,7 +27,7 @@ This README is written to be checked by an AI agent first and a person second. E
 | Bounty payout vaults | NEP-616 deterministic accounts | One vault per withdrawal key; code hash `HNCzMpQQDwxrKeyAqfXM3kynzDQZkdhxz5mKdjs92nfv` |
 | Relay (pins private inputs, starts runs) | `proven-relay.near` | Cannot post a verdict |
 | Hosted agents | OutLayer custody wallets | One owner-operated agent enrolled |
-| Agent tools | `agent/` MCP server and CLI | 29 tools, read and prepare without keys |
+| Agent tools | `agent/` MCP server and CLI | 27 tools, read and prepare without keys |
 
 ## Verify in three minutes
 
@@ -80,7 +80,7 @@ NEAR_NETWORK=mainnet PROVEN_STAGE2_APPROVED=yes MAINNET_ESCROW_ACCOUNT_ID=proven
   npm run --silent proven -- bounty_get '{"bounty_id":1}'
 ```
 
-See bounty 1 as `Paid`, with pull request 2, its merge time and both OutLayer request ids. The same settings run the MCP server (`npm run mcp`), which lists 29 tools.
+See bounty 1 as `Paid`, with pull request 2, its merge time and both OutLayer request ids. The same settings run the MCP server (`npm run mcp`), which lists 27 tools.
 
 ## How payment is decided
 

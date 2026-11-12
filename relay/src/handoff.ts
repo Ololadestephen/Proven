@@ -650,7 +650,19 @@ export async function createHandoffHandler(
           )
             .then(() => wallet(() => deps.trigger!(request.job_id, "Verify")))
             .then((hash) => ({ verification: hash }))
-            .catch(() => ({ verification: null }))
+            .catch((error: unknown) => {
+              // The delivery is kept either way; the keeper's sweep starts the run later.
+              console.error(
+                `relay: job ${request.job_id} verification did not start: ${failure(error)}`,
+              );
+              return {
+                verification: null,
+                verification_note:
+                  error instanceof Refused
+                    ? "Verification was refused for now. The relay's keeper tries again."
+                    : "Verification did not start. The relay's keeper tries again.",
+              };
+            })
         : {};
       return { deliverable_hash: job.deliverable_hash, ...started };
     }

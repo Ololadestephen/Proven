@@ -82,7 +82,9 @@ function outcomeFor(bid: MarketBid, viewer: string | null): Step | null {
     (job?.state === "Released" && viewer === job.worker) ||
     last?.outcome === "Paid"
   )
-    return wait(`Paid. ${showNear(job?.amount ?? bid.amount)} was sent to the worker.`);
+    return wait(
+      `Paid. ${showNear(job?.amount ?? bid.amount)} was sent to the worker.`,
+    );
   if (last?.outcome === "Failed")
     return wait(
       `Not paid: the work failed the rule “${last.failed_rule ?? "unknown"}”.`,

@@ -195,6 +195,9 @@ export async function custodyTransaction(
 ): Promise<string> {
   let body = initial;
   const id = initial.request_id;
+  // Status reads that failed, and the kind of the last failure, for the final message.
+  let failedReads = 0;
+  let lastFailure = "";
   for (let read = 0; read <= 30; read++) {
     if (
       body.result?.never_reached_chain ||
@@ -230,8 +233,10 @@ export async function custodyTransaction(
         key,
         `/wallet/v1/requests/${id}`,
       )) as CustodyResponse;
-    } catch {
+    } catch (error) {
       // Only repeat a status read. A transient read failure says nothing about admission.
+      failedReads++;
+      lastFailure = error instanceof Error ? error.name : "unknown";
       continue;
     }
     if (response?.request_id !== id || response.type !== "call")
@@ -241,7 +246,7 @@ export async function custodyTransaction(
     body = response;
   }
   throw new PublicError(
-    `Custody did not return a transaction hash${id && /^[a-f0-9-]{36}$/i.test(id) ? ` for request ${id}` : ""}. Check wallet history before retrying; no automatic retry was made.`,
+    `Custody did not return a transaction hash${id && /^[a-f0-9-]{36}$/i.test(id) ? ` for request ${id}` : ""}.${failedReads ? ` ${failedReads} status reads failed (last: ${lastFailure}).` : ""} Check wallet history before retrying; no automatic retry was made.`,
   );
 }
 

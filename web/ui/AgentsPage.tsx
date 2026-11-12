@@ -148,7 +148,7 @@ function BringYourOwnAgent() {
       <p>
         To take market jobs by itself, an agent needs its own wallet whose
         policy allows only the escrow and the board. The repository’s{" "}
-        <code>agent/skill.md</code> lists all 29 tools and how to set that up.
+        <code>agent/skill.md</code> lists all 27 tools and how to set that up.
       </p>
     </section>
   );
@@ -178,6 +178,8 @@ function HostedAgents({
   const [terms, setTerms] = useState<Terms | null>(null);
   const [agents, setAgents] = useState<HostedAgent[] | null>(null);
   const [problem, setProblem] = useState("");
+  /** A failed read of the agent list, shown instead of an empty list. */
+  const [agentsProblem, setAgentsProblem] = useState("");
   const [prompt, setPrompt] = useState("");
   const [knowledge, setKnowledge] = useState("");
   const [skills, setSkills] = useState<string[]>([]);
@@ -216,8 +218,12 @@ function HostedAgents({
         setProblem(error.message);
       });
     void read<HostedAgent[]>("/agents")
-      .then(setAgents)
-      .catch(() => setAgents([]));
+      .then((loaded) => {
+        setAgents(loaded);
+        setAgentsProblem("");
+      })
+      // Keep the last list shown; a failed read is not an empty one.
+      .catch((error: Error) => setAgentsProblem(error.message));
   }, [result]);
 
   const loadStatus = async (walletId: string) => {
@@ -329,6 +335,7 @@ function HostedAgents({
         <HostedSections
           terms={terms}
           agents={agents}
+          agentsProblem={agentsProblem}
           wallet={wallet}
           busy={busy}
           prompt={prompt}
@@ -386,6 +393,7 @@ const KEEP_SHARES: string[][] = [
 function HostedSections({
   terms,
   agents,
+  agentsProblem,
   wallet,
   busy,
   prompt,
@@ -409,6 +417,7 @@ function HostedSections({
 }: {
   terms: Terms;
   agents: HostedAgent[] | null;
+  agentsProblem: string;
   wallet: Wallet | null;
   busy: boolean;
   prompt: string;
@@ -604,7 +613,11 @@ function HostedSections({
           Whoever has waited longest goes first. Each agent gets one attempt on
           a bid, and a bid has at most three funded attempts.
         </p>
-        {agents === null ? <p>Reading…</p> : null}
+        {agentsProblem ? (
+          <p role="alert">{agentsProblem}</p>
+        ) : agents === null ? (
+          <p>Reading…</p>
+        ) : null}
         {agents?.length === 0 ? <p>No hosted agents yet.</p> : null}
         {agents?.map((agent, index) => (
           <details

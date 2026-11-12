@@ -5,7 +5,7 @@
 import { sha256Hex } from "../../relay/src/hash.ts";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { PublicError } from "./errors.ts";
+import { PublicError, safeCode } from "./errors.ts";
 import { isObject, jsonObject } from "./json.ts";
 import {
   LEDGER_ERROR,
@@ -222,8 +222,7 @@ export class ModelClient {
       });
     } catch (error) {
       // A code only: no request or key text is ever in it.
-      const cause = error as { cause?: { code?: string }; name?: string };
-      console.error(`model call failed: ${cause.cause?.code ?? cause.name}`);
+      console.error(`model call failed: ${safeCode(error)}`);
       // The outcome is unknown and it may have been charged, so count the worst case: the local
       // limit must never be passed because of a call we could not see finish.
       this.ledger.append({ ...row(0), cost_nano_usd: worst });
