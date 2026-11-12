@@ -54,7 +54,7 @@ export const TESTNET_RPC =
   process.env.PROVEN_TESTNET_RPC_URL || "https://test.rpc.fastnear.com";
 const RPC =
   process.env.NEAR_NETWORK === "mainnet"
-    ? process.env.PROVEN_MAINNET_RPC_URL || "https://rpc.mainnet.fastnear.com"
+    ? process.env.PROVEN_MAINNET_RPC_URL || "https://free.rpc.fastnear.com"
     : process.env.PROVEN_TESTNET_RPC_URL || "https://test.rpc.fastnear.com";
 export type RpcMethod = "block" | "query" | "EXPERIMENTAL_tx_status";
 /** The whole JSON-RPC answer, so a caller can tell a missing account from a failed read. */

@@ -36,9 +36,11 @@ export const NETWORK =
 export const BOARD = process.env.PROVEN_BOARD ?? "board-v4.proven.testnet";
 export const MARKET_ESCROW =
   process.env.PROVEN_MARKET_ESCROW ?? "escrow-v5.proven.testnet";
+// Mainnet reads start at free.rpc.fastnear.com: from the host, rpc.intea.rs answers in over a second
+// a call and rpc.mainnet.fastnear.com rate-limits (measured November 12).
 const RPC =
   NETWORK === "mainnet"
-    ? "https://rpc.intea.rs"
+    ? "https://free.rpc.fastnear.com"
     : "https://test.rpc.fastnear.com";
 const HOSTED_SERVICE = process.env.PROVEN_HOSTED_URL ?? "http://127.0.0.1:4175";
 const MAX_BODY = 512 * 1024;
@@ -53,11 +55,8 @@ const HANDOFF_ACTIONS = new Set([
 // A rate limit from one public RPC moves to the next approved one, so a busy page keeps working.
 const provider = new FallbackRpcProvider(
   NETWORK === "mainnet"
-    ? [
-        RPC,
-        "https://free.rpc.fastnear.com",
-        "https://archival-rpc.mainnet.near.org",
-      ]
+    ? // The archival endpoint is deprecated and refuses every call, so it is not a fallback.
+      [RPC, "https://rpc.intea.rs", "https://rpc.mainnet.near.org"]
     : [RPC, "https://near-testnet.drpc.org", "https://testnet-rpc.intea.rs"],
   NETWORK === "mainnet",
 );
