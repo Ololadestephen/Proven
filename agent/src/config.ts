@@ -17,7 +17,6 @@ export interface Config {
   account?: string;
   key?: string;
   demoSession?: string;
-  allowedWorkers: string[];
   /** A hosted relay's https address. Without it, the local socket is used. */
   relayUrl?: string;
   /** Set for a hosted agent's wallet, whose stored policy also allows its owner and the treasury. */
@@ -94,20 +93,5 @@ export function loadConfig(selected?: Actor): Config {
         : get(`${prefix}_PRIVATE_KEY`),
     demoSession: process.env.PROVEN_DEMO_SESSION,
     relayUrl: get("PROVEN_RELAY_URL"),
-    allowedWorkers: (
-      (mainnet ? undefined : get("PROVEN_BUYER_WORKERS")) ??
-      (mainnet
-        ? [
-            get("MAINNET_WORKER_A_ACCOUNT_ID"),
-            get("MAINNET_WORKER_B_ACCOUNT_ID"),
-          ]
-        : [get("PROVEN_HONEST_ACCOUNT_ID"), get("PROVEN_FAKE_ACCOUNT_ID")]
-      )
-        .filter(Boolean)
-        .join(",")
-    )
-      .split(",")
-      .map((worker) => worker.trim())
-      .filter(Boolean),
   };
 }

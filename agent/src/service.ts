@@ -10,25 +10,15 @@ import {
   isBountyTool,
 } from "./bounty-tools.ts";
 import {
-  accountId,
-  checkPostingCaps,
   fields,
   flag,
   integer,
   object,
   requestId,
   text,
-  yocto,
   type Args,
 } from "./validation.ts";
-import type {
-  Actor,
-  CallPlan,
-  ChainConfig,
-  Job,
-  RunKind,
-  Runtime,
-} from "./types.ts";
+import type { Actor, CallPlan, Job, RunKind, Runtime } from "./types.ts";
 
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -38,30 +28,10 @@ const boolean = { type: "boolean" };
 const definitions: Array<[string, string, Record<string, unknown>, string[]]> =
   [
     [
-      "post_job",
-      "Create a native-NEAR job with a named worker and committed private check/reference. Legacy direct-job interface, outside the Market flow. The worker must be on the operator's list. Use post_bid for a one-signature Market job. Live creation checks escrow's native limits before signing; custody policy can impose a lower limit.",
-      {
-        worker: string,
-        check: string,
-        reference: string,
-        amount_near: string,
-        deadline_seconds: { type: "integer", minimum: 2400 },
-        verdict_window_secs: { type: "integer", minimum: 1800 },
-        storage_deposit_near: string,
-      },
-      ["worker", "check", "reference", "amount_near"],
-    ],
-    [
       "challenge_check",
       "Legacy direct-job challenge. Market post_bid hands off its check automatically. Can pin only.",
       { job_id: id, check: string, reference: string, pin_only: boolean },
       ["job_id", "check", "reference"],
-    ],
-    [
-      "fund_job",
-      "Legacy direct-job funding through buyer custody. Market post_bid already prepays its job and needs no per-worker funding.",
-      { job_id: id },
-      ["job_id"],
     ],
     [
       "list_jobs",
@@ -232,60 +202,6 @@ export function createService(runtime: Runtime) {
         }),
         dry,
       );
-    if (name === "post_job") {
-      payable(dry);
-      const worker = accountId(text(args, "worker", 64));
-      // A tool argument may come from a model, so it only selects from what the operator or a board
-      // claim has already allowed. An empty list refuses everyone.
-      if (!runtime.allowedWorkers.includes(worker))
-        throw new PublicError(
-          "That worker is not allowed. A worker comes from a board claim or the operator's list.",
-        );
-      const check = text(args, "check"),
-        reference = text(args, "reference");
-      const cfg = await runtime.view<ChainConfig>("get_config", {});
-      checkedFiles(check, reference, {
-        spec_hash: hash(check),
-        fakes_hash: hash(reference),
-        verifier_hash: cfg.verifier_hash,
-      });
-      const format = (JSON.parse(check) as { format?: unknown }).format;
-      if (typeof format !== "string")
-        throw new PublicError(
-          "The check must carry its public format as text.",
-        );
-      const deadline =
-        (await runtime.now()) +
-        BigInt(integer(args, "deadline_seconds", 2400, 86400, 3600)) *
-          1000000000n;
-      const call = plan(
-        "create_job",
-        {
-          worker,
-          spec_hash: hash(check),
-          fakes_hash: hash(reference),
-          format_hash: hash(format),
-          amount: yocto(text(args, "amount_near", 30)),
-          token: null,
-          deadline: deadline.toString(),
-          verdict_window_secs: integer(
-            args,
-            "verdict_window_secs",
-            1800,
-            86400,
-            1800,
-          ),
-          verifier_hash: cfg.verifier_hash,
-        },
-        args.storage_deposit_near === undefined
-          ? "20000000000000000000000"
-          : yocto(text(args, "storage_deposit_near", 30)),
-      );
-      if (!dry) checkPostingCaps(cfg, call.args.amount as string);
-      if (BigInt(call.deposit) > 50000000000000000000000n)
-        throw new PublicError("Job storage deposit cannot exceed 0.05 NEAR.");
-      return submit(call, dry);
-    }
     const jobId = integer(args, "job_id", 0, Number.MAX_SAFE_INTEGER);
     const current = await job(jobId);
     if (name === "job_status") return status(current, runtime.escrow);
@@ -298,20 +214,6 @@ export function createService(runtime: Runtime) {
         throw new PublicError("Only the job's custody buyer can collect.");
       if (dry) return { dry_run: true, would_collect: jobId };
       return runtime.handoff({ action: "collect", job_id: jobId });
-    }
-    if (name === "fund_job") {
-      payable(dry);
-      if (current.state !== "Challenged" || current.token !== null)
-        throw new PublicError(
-          "Only challenged native-NEAR jobs can be funded by this custody policy. Token funding targets a different contract.",
-        );
-      if (!dry && current.buyer !== runtime.identity)
-        throw new PublicError("Only the job's custody buyer can fund it.");
-      if ((await runtime.now()) + 1860000000000n >= BigInt(current.deadline))
-        throw new PublicError(
-          "Leave at least 31 minutes before the delivery deadline when funding.",
-        );
-      return submit(plan("fund", { job_id: jobId }, current.amount), dry);
     }
     if (name === "challenge_check") {
       const check = text(args, "check"),

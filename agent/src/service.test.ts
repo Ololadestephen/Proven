@@ -45,7 +45,6 @@ function fixture(state = "Delivered", actor: Actor = "buyer") {
   let handoffFails = false;
   const runtime: Runtime = {
     actor,
-    allowedWorkers: ["honest.testnet"],
     identity: actor === "buyer" ? current.buyer : `${actor}.testnet`,
     escrow: "escrow-v2.proven.testnet",
     async view<T>(method: string): Promise<T> {
@@ -109,13 +108,7 @@ function fixture(state = "Delivered", actor: Actor = "buyer") {
 }
 test("every write tool dry-run avoids signing and private writes, returning hashes only", async () => {
   const requests = [
-    [
-      "post_job",
-      "Draft",
-      { worker: "honest.testnet", check, reference, amount_near: "0.01" },
-    ],
     ["challenge_check", "Draft", { job_id: 1, check, reference }],
-    ["fund_job", "Challenged", { job_id: 1 }],
     ["deliver", "Funded", { job_id: 1, deliverable: delivery }],
     ["request_verification", "Delivered", { job_id: 1 }],
     ["release_or_refund", "Passed", { job_id: 1 }],
@@ -140,49 +133,11 @@ test("bad commitments, unsupported fields, unsafe ids and verifier mismatch fail
   const f = fixture("Draft");
   for (const [name, args] of [
     ["challenge_check", { job_id: 1, check, reference: "tampered" }],
-    [
-      "post_job",
-      { worker: "honest.testnet", check: "{}", reference, amount_near: "0.01" },
-    ],
-    [
-      "post_job",
-      {
-        worker: "honest.testnet",
-        check,
-        reference,
-        amount_near: "0.01",
-        deadline_seconds: 60,
-      },
-    ],
-    [
-      "post_job",
-      {
-        worker: "honest.testnet",
-        check,
-        reference,
-        amount_near: "0.100000000000000000000001",
-      },
-    ],
     ["job_status", { job_id: Number.MAX_SAFE_INTEGER + 1 }],
     ["recover_outlayer_deposit", { request_id: "18446744073709551616" }],
-    ["fund_job", { job_id: 1, receiver_id: "attacker.testnet" }],
   ] as const)
     await assert.rejects(f.run(name, args));
   assert.equal(f.calls.length + f.handoffs.length, 0);
-});
-test("funding uses the recorded amount and buyer, rejects FT targets and short delivery windows", async () => {
-  const f = fixture("Challenged");
-  await f.run("fund_job", { job_id: 1 });
-  assert.deepEqual(f.calls[0].args, { job_id: 1 });
-  assert.equal(f.calls[0].deposit, f.current.amount);
-  f.current.token = "pusd.proven.testnet";
-  await assert.rejects(f.run("fund_job", { job_id: 1 }));
-  f.current.token = null;
-  f.current.buyer = "another.testnet";
-  await assert.rejects(f.run("fund_job", { job_id: 1 }));
-  f.current.buyer = "buyer.testnet";
-  f.advance(BigInt(f.current.deadline) - 600000000000n);
-  await assert.rejects(f.run("fund_job", { job_id: 1 }));
 });
 test("scoped worker never incurs a relay pin before a payable trigger is refused", async () => {
   const f = fixture("Draft", "honest");
@@ -260,43 +215,5 @@ test("settlement follows only the stored verdict or bounded expiry, never a call
   await f.run("release_or_refund", { job_id: 1 });
   await assert.rejects(
     f.run("release_or_refund", { job_id: 1, payee: "attacker.testnet" }),
-  );
-});
-
-test("explicit storage deposit reduces attachment without widening the custody cap", async () => {
-  const f = fixture("Draft");
-  const args = {
-    worker: "honest.testnet",
-    check,
-    reference,
-    amount_near: "0.01",
-  };
-  const custom = (await f.run(
-    "post_job",
-    { ...args, storage_deposit_near: "0.02" },
-    true,
-  )) as { call: CallPlan };
-  assert.equal(custom.call.deposit, "20000000000000000000000");
-  const defaults = (await f.run("post_job", args, true)) as { call: CallPlan };
-  assert.equal(defaults.call.deposit, "20000000000000000000000");
-  await assert.rejects(
-    f.run(
-      "post_job",
-      { ...args, storage_deposit_near: "0.050000000000000000000001" },
-      true,
-    ),
-  );
-  assert.equal(f.calls.length, 0);
-});
-
-test("a job can only name a worker the operator or a board claim allowed", async () => {
-  const f = fixture("Draft");
-  await assert.rejects(
-    f.run(
-      "post_job",
-      { worker: "attacker.testnet", check, reference, amount_near: "0.01" },
-      true,
-    ),
-    /not allowed/,
   );
 });

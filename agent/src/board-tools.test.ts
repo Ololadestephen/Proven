@@ -42,7 +42,7 @@ const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 test("board tools have schemas and are recognised", () => {
   assert.ok(boardTools.length >= 10);
   assert.ok(boardTools.every((tool) => isBoardTool(tool.name)));
-  assert.equal(isBoardTool("post_job"), false);
+  assert.equal(isBoardTool("job_status"), false);
 });
 
 test("a dry post_bid fixes the hashes and the verifier named in the check", async (t) => {

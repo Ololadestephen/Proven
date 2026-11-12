@@ -82,7 +82,6 @@ export function agentConfig(
     actor: "agent",
     custodyKey: agent.custody_key,
     account: agent.wallet,
-    allowedWorkers: [],
     hosted: { owner: agent.owner, treasury },
   };
 }

@@ -143,7 +143,6 @@ export function hostedSettings(
       custodyApi,
       socket: env.PROVEN_RELAY_SOCKET ?? "runs/private/relay.sock",
       relayUrl,
-      allowedWorkers: [],
     },
   };
 }

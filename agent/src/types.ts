@@ -55,8 +55,6 @@ export interface Runtime {
   actor: Actor;
   identity: string | null;
   escrow: string;
-  /** Who a job may name as worker. Set by the operator or read from a board claim, never by a model. */
-  allowedWorkers: readonly string[];
   view<T>(method: string, args: Record<string, unknown>): Promise<T>;
   now(): Promise<bigint>;
   submit(plan: CallPlan): Promise<CallResult>;
