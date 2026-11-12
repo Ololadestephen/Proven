@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { PublicError } from "./errors.ts";
 import type { CallPlan } from "./types.ts";
+import { RELAY_RECIPIENT } from "../../shared/relay-auth.ts";
 
 const CAPABILITIES = [
   "raw_sign",
@@ -97,7 +98,7 @@ export function assertPolicy(
 }
 
 /** The one thing signing may be open for: messages addressed to this project's relay. */
-export const RELAY_RECIPIENT = "proven-relay";
+export { RELAY_RECIPIENT };
 function relaySigning(
   name: string,
   policy: {

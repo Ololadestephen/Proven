@@ -4,7 +4,6 @@ import { randomBytes } from "node:crypto";
 // private text against the job's hashes, so this only passes requests along to its local socket. This
 // server never decides a verdict and holds no wallet, except for the opt-in dev signer below.
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { parseEnv } from "node:util";
@@ -16,6 +15,7 @@ import {
   actions,
 } from "near-api-js";
 import {
+  nep413Digest,
   relayPayload,
   RelayVerifier,
   type RelayAuth,
@@ -712,25 +712,11 @@ export function createDevWallet() {
     }) {
       const { key } = signer(body.as);
       const pair = KeyPair.fromString(key as `ed25519:${string}`);
-      const text = (value: string) => {
-        const bytes = Buffer.from(value);
-        const length = Buffer.alloc(4);
-        length.writeUInt32LE(bytes.length);
-        return Buffer.concat([length, bytes]);
-      };
-      const tag = Buffer.alloc(4);
-      tag.writeUInt32LE(2147484061);
-      const digest = createHash("sha256")
-        .update(
-          Buffer.concat([
-            tag,
-            text(body.message),
-            Buffer.from(body.nonce_base64, "base64"),
-            text(body.recipient),
-            Buffer.from([0]),
-          ]),
-        )
-        .digest();
+      const digest = nep413Digest(
+        body.message,
+        Buffer.from(body.nonce_base64, "base64"),
+        body.recipient,
+      );
       return {
         public_key: pair.getPublicKey().toString(),
         signature_base64: Buffer.from(pair.sign(digest).signature).toString(

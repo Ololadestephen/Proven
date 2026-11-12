@@ -1,6 +1,12 @@
 import { Buffer } from "buffer";
 import type { Wallet } from "./market-types.ts";
-export const RELAY_RECIPIENT = "proven-relay";
+import {
+  RELAY_RECIPIENT,
+  relayMessage,
+  relayPayloadText,
+} from "../../shared/relay-auth.ts";
+
+export { RELAY_RECIPIENT };
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
@@ -43,21 +49,19 @@ export const recall = (hash: string) => {
 };
 
 /** Matches the relay's check: a signature covers the action, the job and the exact texts. */
-export async function relayPayload(request: Record<string, unknown>) {
-  const text =
-    request.action === "challenge"
-      ? `${String(request.check)}\0${String(request.reference)}`
-      : request.action === "deliver"
-        ? String(request.deliverable)
-        : "";
-  return sha256(text);
-}
+export const relayPayload = (request: Record<string, unknown>) =>
+  sha256(relayPayloadText(request));
 export async function signed(
   wallet: Wallet,
   request: Record<string, unknown>,
   id: number,
 ) {
-  const message = `proven-relay:${String(request.action)}:${id}:${await relayPayload(request)}:${Date.now()}`;
+  const message = relayMessage(
+    String(request.action),
+    id,
+    await relayPayload(request),
+    Date.now(),
+  );
   return {
     ...request,
     auth: { ...(await wallet.signForRelay(message)), message },

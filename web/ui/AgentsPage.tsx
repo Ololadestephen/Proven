@@ -3,6 +3,7 @@ import type { Run, Wallet } from "./market-types.ts";
 import { api, sha256, short } from "./market-client.ts";
 import { COIN, IS_MAINNET } from "./network.ts";
 import { enrollmentText } from "../../shared/hosted-enrollment.ts";
+import { relayMessage } from "../../shared/relay-auth.ts";
 
 const PATH = "/api/market/hosted";
 const PAYMENT_HASH = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
@@ -107,7 +108,7 @@ async function read<T>(path: string): Promise<T> {
 
 /** The same message the service checks: which action, for what, signed by the owner's wallet. */
 async function signedFor(wallet: Wallet, action: string, payload: string) {
-  const message = `proven-relay:${action}:0:${payload}:${Date.now()}`;
+  const message = relayMessage(action, 0, payload, Date.now());
   return { ...(await wallet.signForRelay(message)), message };
 }
 

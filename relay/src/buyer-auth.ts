@@ -7,9 +7,14 @@ import {
   verify as verifySignature,
 } from "node:crypto";
 
-/** The recipient the buyer's wallet policy allows it to sign for, and nothing else. */
-export const RELAY_RECIPIENT = "proven-relay";
-const NEP413_TAG = 2147484061;
+import {
+  NEP413_TAG,
+  RELAY_RECIPIENT,
+  relayMessage,
+  relayPayloadText,
+} from "../../shared/relay-auth.ts";
+
+export { RELAY_RECIPIENT, relayMessage };
 const MAX_AGE_MS = 300_000;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -63,24 +68,8 @@ export function nep413Digest(
 }
 
 /** Binds a signature to the exact texts, so a signed request cannot carry different ones. */
-export function relayPayload(request: Record<string, unknown>): string {
-  const text =
-    request.action === "challenge"
-      ? `${String(request.check)}\0${String(request.reference)}`
-      : request.action === "deliver"
-        ? String(request.deliverable)
-        : request.action === "cleanup"
-          ? String(request.kind)
-          : "";
-  return createHash("sha256").update(text).digest("hex");
-}
-
-export const relayMessage = (
-  action: string,
-  id: number,
-  payload: string,
-  atMs: number,
-) => `proven-relay:${action}:${id}:${payload}:${atMs}`;
+export const relayPayload = (request: Record<string, unknown>): string =>
+  createHash("sha256").update(relayPayloadText(request)).digest("hex");
 
 /** An implicit account's id is its key. A named account's key must be on chain. */
 export async function keyBelongsTo(
