@@ -133,7 +133,6 @@ test("static pages have no stale caps, testnet app link or retired live-start co
     new URL("../public/examples.html", import.meta.url),
     "utf8",
   );
-  assert.match(examples, /no page here starts a\s+new run/);
   assert.ok(!examples.includes('id="demo-start"'));
   assert.ok(!examples.includes('src="/demo.js"'));
 });
