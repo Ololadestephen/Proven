@@ -40,7 +40,8 @@ export interface CallRequest {
   spender: string;
   stage: string;
   run: string;
-  key: string;
+  /** The model key. A key pool fills it in, so pooled callers leave it out. */
+  key?: string;
   messages: Message[];
   maxOutputTokens: number;
   model?: string;
@@ -163,6 +164,7 @@ export class ModelClient {
   }
 
   async call(request: CallRequest): Promise<CallResult> {
+    if (!request.key) throw new PublicError("No model key is configured.");
     const model = request.model ?? DEFAULT_MODEL;
     const price = this.prices.get(model);
     if (!price) throw new PublicError(`Model ${model} has no listed price.`);

@@ -14,7 +14,7 @@ import {
   WITHDRAW_LEFT_BEHIND,
 } from "./limits.ts";
 import { doHostedWork, parseSkillRequest } from "./work.ts";
-import { claimRefusal } from "./runner.ts";
+import { claimRefusal, takeVerifyTry } from "./runner.ts";
 import { stuckReason, telegramNotifier } from "./health.ts";
 import type { CallResult } from "../inference.ts";
 import type { Bid } from "../board.ts";
@@ -124,7 +124,6 @@ const profile = {
   prompt: "p",
   knowledge: "alpha beta",
   skills: ["calculator" as const],
-  key: "k",
 };
 const task = {
   description: "d",
@@ -355,4 +354,21 @@ test("a function job's format has no rows to compare, so it goes through as it i
   );
   assert.equal(work.deliverable, '{"wasm_base64":"AAAA"}');
   assert.equal(work.calls.length, 1);
+});
+
+test("each runner keeps its own verify cooldown, keyed by escrow and job", () => {
+  const runner = (escrow: string) => ({
+    config: { escrow } as Parameters<typeof takeVerifyTry>[0]["config"],
+    verifyTries: new Map<string, number>(),
+  });
+  const NOW = 1_800_000_000_000;
+  const one = runner("escrow.near");
+  const two = runner("escrow.near");
+  const other = runner("other-escrow.near");
+  assert.equal(takeVerifyTry(one, 7, NOW), true);
+  assert.equal(takeVerifyTry(one, 7, NOW + 299_999), false);
+  assert.equal(takeVerifyTry(two, 7, NOW + 1), true);
+  assert.equal(takeVerifyTry(other, 7, NOW + 1), true);
+  assert.equal(takeVerifyTry(one, 8, NOW + 1), true);
+  assert.equal(takeVerifyTry(one, 7, NOW + 300_000), true);
 });

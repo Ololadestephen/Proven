@@ -50,7 +50,6 @@ export interface ApiDeps {
   store: HostedStore;
   ledger: Ledger;
   client: Pick<ModelClient, "call">;
-  key: string;
   treasury: Account;
   codeSkills?: boolean;
   earningsCapYocto?: string;
@@ -239,7 +238,6 @@ async function screenEnrollment(
   save();
   const { answer, call } = await reviewAgent(
     deps.client,
-    deps.key,
     { prompt: settings.prompt, knowledge: settings.knowledge },
     `add-${hash}`,
     REVIEW_LIMIT_NANO_USD,

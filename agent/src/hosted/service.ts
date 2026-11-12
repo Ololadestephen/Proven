@@ -107,7 +107,6 @@ export async function buildDeps(
     store,
     ledger,
     client,
-    key: keys[0]!.key,
     treasury,
     earningsCapYocto: settings.earningsCapYocto,
     enrollmentOwners: settings.enrollmentOwners,
@@ -145,11 +144,11 @@ export async function buildDeps(
     },
   };
   const runner: RunnerDeps = {
+    verifyTries: new Map(),
     config,
     store,
     ledger,
     client,
-    key: keys[0]!.key,
     balance,
     treasury: treasuryId,
     // Free endpoints only. The archival node is severely rate limited, so it stays off unless the

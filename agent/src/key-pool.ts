@@ -100,7 +100,7 @@ export class KeyPool {
     );
   }
 
-  /** `request.key` is ignored: the pool chooses the key. */
+  /** The pool chooses the key, so a request carries none. */
   /** Model requests and local skill billing share the same budget queue. */
   account<T>(operation: () => T | Promise<T>): Promise<T> {
     const result = this.pending.then(operation);

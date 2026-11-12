@@ -24,7 +24,6 @@ export interface HostedProfile {
   knowledge: string;
   skills: Skill[];
   model?: string;
-  key: string;
 }
 
 export interface SkillUse {
@@ -127,7 +126,6 @@ export async function doHostedWork(
       spender: agent.id,
       stage: "hosted-work",
       run,
-      key: agent.key,
       model: agent.model,
       limitNanoUsd: limitNanoUsd(),
       maxOutputTokens: MAX_OUTPUT_TOKENS,

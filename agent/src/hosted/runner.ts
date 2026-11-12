@@ -42,7 +42,6 @@ export interface RunnerDeps {
   client: Pick<ModelClient, "call"> & {
     account?: <T>(operation: () => T | Promise<T>) => Promise<T>;
   };
-  key: string;
   balance: (account: string) => Promise<bigint>;
   /** Moves spent NEAR to the treasury. Returns the transaction hash. */
   settle: (agent: HostedAgent, yocto: bigint) => Promise<string>;
@@ -51,6 +50,8 @@ export interface RunnerDeps {
   /** Read-only NEAR access for chain_read. Without it, chain_read is refused. */
   chain?: ChainReader;
   earningsCapYocto?: string;
+  /** When each job's verification was last tried, by escrow and job id. */
+  verifyTries: Map<string, number>;
   log: (line: string, detail?: unknown) => void;
 }
 
@@ -58,7 +59,19 @@ const sha256 = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 
 const VERIFY_RETRY_MS = 300_000;
-const lastVerifyTry = new Map<number, number>();
+/** A failed hand-over or run waits before trying again, so one stuck job cannot flood the relay or use
+ * up its signing allowance. The tries belong to one runner and are keyed by escrow and job. Returns true
+ * when a try may start now, and records it. */
+export function takeVerifyTry(
+  deps: Pick<RunnerDeps, "config" | "verifyTries">,
+  jobId: number,
+  now: number,
+): boolean {
+  const key = `${deps.config.escrow}:${jobId}`;
+  if (now - (deps.verifyTries.get(key) ?? 0) < VERIFY_RETRY_MS) return false;
+  deps.verifyTries.set(key, now);
+  return true;
+}
 
 export const spenderOf = (wallet: string) => `hosted:${wallet}`;
 
@@ -288,7 +301,6 @@ async function work(
       knowledge: agent.knowledge,
       skills: agent.skills,
       model: agent.model,
-      key: deps.key,
     },
     { description: bid.description, format: bid.format },
     `bid-${bidId}`,
@@ -395,11 +407,7 @@ async function advance(
     case "Funded":
       return work(deps, agent, bid, bidId, jobId, job);
     case "Delivered": {
-      // A failed hand-over or run waits before trying again, so one stuck job cannot flood the relay
-      // or use up its signing allowance.
-      const now = Date.now();
-      if (now - (lastVerifyTry.get(jobId) ?? 0) < VERIFY_RETRY_MS) return;
-      lastVerifyTry.set(jobId, now);
+      if (!takeVerifyTry(deps, jobId, Date.now())) return;
       // A delivery the relay does not have yet goes first, or the run would have nothing to check.
       await handOver(deps, agent, jobId);
       const run = (await tool("request_verification", { job_id: jobId })) as {
@@ -423,6 +431,7 @@ async function advance(
     }
     case "Released":
     case "Refunded": {
+      deps.verifyTries.delete(`${deps.config.escrow}:${jobId}`);
       // The sync settles this attempt's fee by its recorded outcome.
       requireSettled(await board.sync(wallet, bidId), "sync");
       await settleSpending(deps, agent);
