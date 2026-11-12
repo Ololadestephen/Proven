@@ -15,7 +15,7 @@ const NEAR = 10n ** 24n;
 const CONTRACT_DEFAULT = "proven-bounties.near";
 const WEB_DEFAULT = "https://useproven.xyz";
 const RPC_DEFAULT = {
-  mainnet: "https://rpc.mainnet.fastnear.com",
+  mainnet: "https://free.rpc.fastnear.com",
   testnet: "https://test.rpc.fastnear.com",
 } as const;
 const GITHUB_API = "https://api.github.com";

@@ -17,7 +17,11 @@ const NETWORKS = {
   },
   mainnet: {
     suffix: ".near",
-    rpcs: ["https://rpc.mainnet.fastnear.com", "https://rpc.mainnet.near.org"],
+    rpcs: [
+      "https://free.rpc.fastnear.com",
+      "https://rpc.mainnet.fastnear.com",
+      "https://rpc.mainnet.near.org",
+    ],
     custodyApi: "https://api.outlayer.ai",
   },
 } as const;

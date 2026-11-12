@@ -2,6 +2,7 @@
 import { FallbackRpcProvider } from "../../relay/src/rpc.ts";
 
 const MAINNET = [
+  "https://free.rpc.fastnear.com",
   "https://rpc.mainnet.fastnear.com",
   "https://rpc.mainnet.near.org",
 ];

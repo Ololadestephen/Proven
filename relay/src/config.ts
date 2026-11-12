@@ -28,7 +28,10 @@ function required(name: string, fallback?: string): string {
   return value;
 }
 
+// free.rpc.fastnear.com first: rpc.mainnet.fastnear.com rate-limits the host (measured November 12).
+// A rate-limited call was not processed, so moving to the next endpoint never repeats a write.
 export const MAINNET_RPC_URLS: readonly string[] = [
+  "https://free.rpc.fastnear.com",
   "https://rpc.mainnet.fastnear.com",
   "https://rpc.mainnet.near.org",
 ];

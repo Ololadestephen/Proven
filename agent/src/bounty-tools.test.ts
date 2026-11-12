@@ -111,7 +111,7 @@ test("environment defaults to mainnet and configures contract, rpc and web", () 
   const env = bountyEnv({});
   assert.equal(env.contract, "proven-bounties.near");
   assert.equal(env.network, "mainnet");
-  assert.match(env.rpc, /mainnet/);
+  assert.equal(env.rpc, "https://free.rpc.fastnear.com");
   assert.equal(env.webUrl, "https://useproven.xyz");
   const custom = bountyEnv({
     NEAR_NETWORK: "testnet",
