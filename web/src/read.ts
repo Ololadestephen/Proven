@@ -56,28 +56,38 @@ const RPC =
   process.env.NEAR_NETWORK === "mainnet"
     ? process.env.PROVEN_MAINNET_RPC_URL || "https://free.rpc.fastnear.com"
     : process.env.PROVEN_TESTNET_RPC_URL || "https://test.rpc.fastnear.com";
+/** The same public endpoints the market reads fall back to, in order. */
+const RPC_ENDPOINTS =
+  process.env.NEAR_NETWORK === "mainnet"
+    ? [RPC, "https://rpc.intea.rs", "https://rpc.mainnet.near.org"]
+    : [RPC, "https://near-testnet.drpc.org", "https://testnet-rpc.intea.rs"];
 export type RpcMethod = "block" | "query" | "EXPERIMENTAL_tx_status";
-/** The whole JSON-RPC answer, so a caller can tell a missing account from a failed read. */
+/** The whole JSON-RPC answer, so a caller can tell a missing account from a failed read. Without a
+ * fixed url, a failed request (a rate limit, an outage, unreadable data) moves to the next public
+ * endpoint; an answer from the chain, including an error answer, is returned as it is. */
 export async function rpcAnswer(
   method: RpcMethod,
   params: unknown,
   transport: typeof fetch,
-  url: string = RPC,
+  url?: string,
 ) {
-  return object(
-    await readJson(url, transport, {
-      jsonrpc: "2.0",
-      id: "proven-read",
-      method,
-      params,
-    }),
-  );
+  const body = { jsonrpc: "2.0", id: "proven-read", method, params };
+  const endpoints = url ? [url] : RPC_ENDPOINTS;
+  let failure: unknown;
+  for (const endpoint of endpoints) {
+    try {
+      return object(await readJson(endpoint, transport, body));
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw failure;
 }
 export async function rpc(
   method: RpcMethod,
   params: unknown,
   transport: typeof fetch,
-  url: string = RPC,
+  url?: string,
 ) {
   const response = await rpcAnswer(method, params, transport, url);
   if (response.error || !("result" in response))
