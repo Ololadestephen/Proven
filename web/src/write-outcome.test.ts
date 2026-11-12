@@ -2,29 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { once } from "node:events";
 import { Account, KeyPair } from "near-api-js";
-import { BOARD, createDevWallet } from "./market.ts";
+import { createDevWallet } from "./dev-wallet.ts";
+import { BOARD } from "./market.ts";
 import { ReadError } from "./model.ts";
 import { createApp } from "./server.ts";
 
-test("dev submission errors remain unknown, while preflight refusals keep their definite error", async (t) => {
-  const state = globalThis as {
-    __provenEnv?: string;
-    __provenOutsider?: { account: string; key: string };
-  };
-  const priorEnv = state.__provenEnv;
-  const priorOutsider = state.__provenOutsider;
-  state.__provenEnv = "";
-  // Synthetic, unused signing material: both submission methods are replaced before use.
-  state.__provenOutsider = {
+// Synthetic, unused signing material: the submission methods are replaced before use.
+const SYNTHETIC = {
+  envText: `WORKER_HONEST_ACCOUNT_ID=synthetic-buyer.testnet\nWORKER_HONEST_PRIVATE_KEY=${KeyPair.fromRandom("ed25519").toString()}\n`,
+  outsider: {
     account: "synthetic-worker.testnet",
     key: KeyPair.fromRandom("ed25519").toString(),
-  };
-  t.after(() => {
-    if (priorEnv === undefined) delete state.__provenEnv;
-    else state.__provenEnv = priorEnv;
-    if (priorOutsider === undefined) delete state.__provenOutsider;
-    else state.__provenOutsider = priorOutsider;
-  });
+  },
+};
+
+test("dev submission errors remain unknown, while preflight refusals keep their definite error", async (t) => {
   let calls = 0;
   const uncertain = async () => {
     calls++;
@@ -32,7 +24,7 @@ test("dev submission errors remain unknown, while preflight refusals keep their 
   };
   t.mock.method(Account.prototype, "callFunctionRaw", uncertain);
   t.mock.method(Account.prototype, "signAndSendTransaction", uncertain);
-  const wallet = createDevWallet();
+  const wallet = createDevWallet(SYNTHETIC);
   const call = {
     as: "worker",
     receiver: BOARD,
@@ -136,23 +128,6 @@ test("unexpected HTTP write errors warn about an unknown outcome without leaking
 });
 
 test("dev calls preserve the confirmed return value with the transaction hash, without guessing malformed output", async (t) => {
-  const state = globalThis as {
-    __provenEnv?: string;
-    __provenOutsider?: { account: string; key: string };
-  };
-  const priorEnv = state.__provenEnv;
-  const priorOutsider = state.__provenOutsider;
-  state.__provenEnv = "";
-  state.__provenOutsider = {
-    account: "synthetic-worker.testnet",
-    key: KeyPair.fromRandom("ed25519").toString(),
-  };
-  t.after(() => {
-    if (priorEnv === undefined) delete state.__provenEnv;
-    else state.__provenEnv = priorEnv;
-    if (priorOutsider === undefined) delete state.__provenOutsider;
-    else state.__provenOutsider = priorOutsider;
-  });
   let returnedText = "0";
   let posted = false;
   t.mock.method(
@@ -190,7 +165,7 @@ test("dev calls preserve the confirmed return value with the transaction hash, w
           : [],
       }) as Awaited<ReturnType<Account["callFunctionRaw"]>>,
   );
-  const wallet = createDevWallet();
+  const wallet = createDevWallet(SYNTHETIC);
   const call = {
     as: "worker",
     receiver: BOARD,

@@ -6,34 +6,30 @@ import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { parseEnv } from "node:util";
+import { JsonRpcProvider } from "near-api-js";
 import {
-  Account,
-  JsonRpcProvider,
-  KeyPair,
-  KeyPairSigner,
-  actions,
-} from "near-api-js";
-import {
-  nep413Digest,
   relayPayload,
   RelayVerifier,
   type RelayAuth,
 } from "../../relay/src/buyer-auth.ts";
 import { FallbackRpcProvider } from "../../relay/src/rpc.ts";
-import { postedBidFromOutcome } from "../../shared/post-result.ts";
 import {
   buyerAllowed,
   configuredBoard,
   legacyAccess,
+  missingView,
   readBoardAccess,
 } from "../../relay/src/market-access.ts";
 import { ReadError } from "./model.ts";
+import { RateLimiter } from "./rate-limiter.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
 export const NETWORK =
   process.env.NEAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
-export const BOARD = process.env.PROVEN_BOARD ?? "board-v4.proven.testnet";
+// Mainnet has no default board, so a missing setting fails rather than reading the testnet one.
+export const BOARD =
+  process.env.PROVEN_BOARD ??
+  (NETWORK === "mainnet" ? "" : "board-v4.proven.testnet");
 export const MARKET_ESCROW =
   process.env.PROVEN_MARKET_ESCROW ?? "escrow-v5.proven.testnet";
 // Mainnet reads start at free.rpc.fastnear.com: from the host, rpc.intea.rs answers in over a second
@@ -53,7 +49,7 @@ const HANDOFF_ACTIONS = new Set([
 ]);
 
 // A rate limit from one public RPC moves to the next approved one, so a busy page keeps working.
-const provider = new FallbackRpcProvider(
+export const provider = new FallbackRpcProvider(
   NETWORK === "mainnet"
     ? // The archival endpoint is deprecated and refuses every call, so it is not a fallback.
       [RPC, "https://rpc.intea.rs", "https://rpc.mainnet.near.org"]
@@ -177,33 +173,6 @@ export function readMarketCached(now = Date.now()): Promise<unknown> {
   return marketRead;
 }
 
-/** A fixed number of writes per client per minute. Reads are shared through the cache above. */
-export class RateLimiter {
-  private readonly hits = new Map<string, number[]>();
-  private readonly limit: number;
-  private readonly windowMs: number;
-  constructor(limit: number, windowMs = 60_000) {
-    this.limit = limit;
-    this.windowMs = windowMs;
-  }
-  allow(client: string, now = Date.now()): boolean {
-    const recent = (this.hits.get(client) ?? []).filter(
-      (at) => now - at < this.windowMs,
-    );
-    if (recent.length >= this.limit) {
-      this.hits.set(client, recent);
-      return false;
-    }
-    recent.push(now);
-    this.hits.delete(client);
-    this.hits.set(client, recent);
-    // Full: forget the longest-quiet client, never everyone's counts at once.
-    if (this.hits.size > 10_000)
-      this.hits.delete(this.hits.keys().next().value as string);
-    return true;
-  }
-}
-
 export async function readMarket() {
   const config = await view<{
     verifier_hash: string;
@@ -232,7 +201,10 @@ export async function readMarket() {
             agent.wallet,
             await view<AgentRecord>(BOARD, "get_agent_record", {
               wallet: agent.wallet,
-            }).catch(() => null),
+            }).catch((error) => {
+              if (missingView(error)) return null;
+              throw error;
+            }),
           ] as const,
       ),
     ),
@@ -306,36 +278,11 @@ function countJob(
   }
 }
 
-/** What the page and the agent tools need in order to reach the right network and wallets. */
-/** The same setting the relay obeys. Mainnet has no default, so forgetting it leaves the market closed. */
-export function marketOpenTo(
-  buyer: string,
-  setting = process.env.PROVEN_MARKET_ACCESS,
-  network: string = NETWORK,
-): boolean {
-  return buyerAllowed(legacyAccess(setting, network), buyer);
-}
-
-/** Legacy settings are used only when the board confirms get_access is not implemented. */
-export function marketConfig(setting = process.env.PROVEN_MARKET_ACCESS) {
-  const access = legacyAccess(setting, NETWORK);
-  return {
-    network: NETWORK,
-    open: access.open,
-    ...(access.open ? {} : { buyers: access.buyers }),
-  };
-}
-
-export function boardAccess() {
+export async function boardAccess() {
+  // Checked first, so a missing board is reported as such rather than as a failed read.
+  const board = configuredBoard(BOARD);
   return readBoardAccess(
-    () =>
-      view(
-        configuredBoard(
-          NETWORK === "mainnet" ? process.env.PROVEN_BOARD : BOARD,
-        ),
-        "get_access",
-        {},
-      ),
+    () => view(board, "get_access", {}),
     () => legacyAccess(process.env.PROVEN_MARKET_ACCESS, NETWORK),
   );
 }
@@ -426,9 +373,19 @@ export async function hostedRoute(
   }).catch(() => {
     throw new ReadError("The hosted agents service is not reachable.", 503);
   });
-  const reply = (await response.json().catch(() => ({}))) as {
-    error?: string;
-  };
+  const text = await response.text();
+  let reply: { error?: string } = {};
+  try {
+    reply = JSON.parse(text) as { error?: string };
+  } catch {
+    if (response.ok)
+      throw new ReadError(
+        method === "POST"
+          ? "The hosted agents service sent an unreadable reply. Check the agent or withdrawal before retrying."
+          : "The hosted agents service sent an unreadable reply.",
+        502,
+      );
+  }
   if (!response.ok)
     throw new ReadError(
       reply.error ?? "The hosted agents service refused this.",
@@ -594,135 +551,4 @@ export function reviewOutcome(
       };
     throw error;
   });
-}
-
-/** The dev signer: for testing this page without a wallet app. It needs the --dev-wallet flag, signs only
- * with two testnet keys on this machine, and can reach only the board and the escrow. */
-export function createDevWallet() {
-  const env = parseEnv(
-    // Loaded once at startup; this flag is never used on a hosted server.
-    (globalThis as { __provenEnv?: string }).__provenEnv ?? "",
-  );
-  const accounts: Record<string, { id: string; key: string }> = {};
-  if (env.WORKER_HONEST_ACCOUNT_ID && env.WORKER_HONEST_PRIVATE_KEY)
-    accounts.buyer = {
-      id: env.WORKER_HONEST_ACCOUNT_ID,
-      key: env.WORKER_HONEST_PRIVATE_KEY,
-    };
-  const outsider = (
-    globalThis as { __provenOutsider?: { account: string; key: string } }
-  ).__provenOutsider;
-  if (outsider) accounts.worker = { id: outsider.account, key: outsider.key };
-  for (const account of Object.values(accounts))
-    if (!account.id.endsWith(".testnet") && !/^[a-f0-9]{64}$/.test(account.id))
-      throw new Error("The dev signer is for testnet accounts only.");
-  const signer = (as: string) => {
-    const account = accounts[as];
-    if (!account) throw new ReadError("No such dev account.", 400);
-    return account;
-  };
-  return {
-    list: () =>
-      Object.fromEntries(
-        Object.entries(accounts).map(([role, account]) => [role, account.id]),
-      ),
-    async call(body: {
-      as: string;
-      receiver: string;
-      method: string;
-      args: Record<string, unknown>;
-      deposit: string;
-      gas: string;
-    }) {
-      if (body.receiver !== BOARD && body.receiver !== MARKET_ESCROW)
-        throw new ReadError(
-          "The dev signer reaches only these contracts.",
-          403,
-        );
-      const { id, key } = signer(body.as);
-      const account = new Account(
-        id,
-        provider,
-        new KeyPairSigner(KeyPair.fromString(key as `ed25519:${string}`)),
-      );
-      try {
-        const outcome = await account.callFunctionRaw({
-          contractId: body.receiver,
-          methodName: body.method,
-          args: body.args,
-          deposit: body.deposit,
-          gas: BigInt(body.gas),
-        });
-        let result: unknown = null;
-        if (
-          typeof outcome.status === "object" &&
-          "SuccessValue" in outcome.status
-        ) {
-          try {
-            result = JSON.parse(
-              Buffer.from(outcome.status.SuccessValue, "base64").toString(
-                "utf8",
-              ),
-            );
-          } catch {
-            // Non-JSON results cannot identify a posted bid. Preserve the transaction for reconciliation.
-          }
-        }
-        const postedBid =
-          body.method === "post_bid"
-            ? postedBidFromOutcome(outcome, body.receiver, id)
-            : null;
-        return {
-          transaction_hash: outcome.transaction.hash,
-          result,
-          ...(postedBid === null ? {} : { posted_bid_id: postedBid }),
-        };
-      } catch {
-        throw new ReadError(
-          "The transaction outcome is unknown. Reconcile wallet history and the chain before retrying.",
-          502,
-        );
-      }
-    },
-    async transfer(body: { as: string; receiver: string; yocto: string }) {
-      const { id, key } = signer(body.as);
-      const account = new Account(
-        id,
-        provider,
-        new KeyPairSigner(KeyPair.fromString(key as `ed25519:${string}`)),
-      );
-      try {
-        const outcome = await account.signAndSendTransaction({
-          receiverId: body.receiver,
-          actions: [actions.transfer(BigInt(body.yocto))],
-        });
-        return { transaction_hash: outcome.transaction.hash };
-      } catch {
-        throw new ReadError(
-          "The transaction outcome is unknown. Reconcile wallet history and the chain before retrying.",
-          502,
-        );
-      }
-    },
-    sign(body: {
-      as: string;
-      message: string;
-      nonce_base64: string;
-      recipient: string;
-    }) {
-      const { key } = signer(body.as);
-      const pair = KeyPair.fromString(key as `ed25519:${string}`);
-      const digest = nep413Digest(
-        body.message,
-        Buffer.from(body.nonce_base64, "base64"),
-        body.recipient,
-      );
-      return {
-        public_key: pair.getPublicKey().toString(),
-        signature_base64: Buffer.from(pair.sign(digest).signature).toString(
-          "base64",
-        ),
-      };
-    },
-  };
 }
