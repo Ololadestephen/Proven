@@ -2,7 +2,7 @@
 import { once } from "node:events";
 import { pathToFileURL } from "node:url";
 import type { Writable } from "node:stream";
-import type { ToolService } from "./cli.ts";
+import { unsettled, type ToolService } from "./cli.ts";
 import { publicMessage } from "./errors.ts";
 
 export const MAX_LINE_BYTES = 512 * 1024;
@@ -151,7 +151,7 @@ export function createMcpHandler(
         params.name,
         params.arguments ?? {},
       );
-      return resultResponse(id, toolResult(value));
+      return resultResponse(id, toolResult(value, unsettled(value)));
     } catch (error) {
       return resultResponse(
         id,

@@ -11,6 +11,8 @@ export interface ToolService {
     description: string;
     inputSchema: Record<string, unknown>;
   }[];
+  /** Signed tools resolve to a CallResult. `pending` or `failed` means the transaction exists but did
+   * not succeed, so reconcile it before acting again. A throw means nothing was submitted. */
   executeTool(
     name: string,
     args: unknown,
@@ -131,6 +133,13 @@ async function readArguments(
   return args;
 }
 
+/** A submitted transaction that failed or whose outcome is unknown. */
+export function unsettled(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false;
+  const { failed, pending } = result as { failed?: unknown; pending?: unknown };
+  return failed === true || pending === true;
+}
+
 export async function runCli(
   argv: readonly string[],
   loadService: () => Promise<ToolService>,
@@ -157,7 +166,7 @@ export async function runCli(
     if (output === undefined)
       throw new Error("Tool returned no serializable result.");
     io.output(`${output}\n`);
-    return 0;
+    return unsettled(result) ? 1 : 0;
   } catch (error) {
     io.diagnostic(
       `${error instanceof InputError ? error.message : publicMessage(error)}\n`,

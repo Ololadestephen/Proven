@@ -9,7 +9,27 @@ import {
 } from "./board-tools.ts";
 import type { Config } from "./config.ts";
 import { BOARD } from "./custody.ts";
-import { BoardClient } from "./board.ts";
+import {
+  BoardClient,
+  CLAIM_DEPOSIT,
+  CLAIM_GAS,
+  POST_GAS,
+  postingDeposit,
+  READ_GAS,
+} from "./board.ts";
+
+/** The escrow's public config, as a dry post reads it before planning the attachment. */
+const ESCROW_CONFIG = {
+  run_deposit: "10000000000000000000000",
+  caps: [
+    {
+      token: null,
+      max_job: "5000000000000000000000000",
+      max_held: "10000000000000000000000000",
+      max_held_per_buyer: "5000000000000000000000000",
+    },
+  ],
+};
 
 const config = {
   actor: "buyer",
@@ -27,6 +47,7 @@ test("board tools have schemas and are recognised", () => {
 
 test("a dry post_bid fixes the hashes and the verifier named in the check", async (t) => {
   t.mock.method(BoardClient.prototype, "now", async () => 1_000_000_000_000n);
+  t.mock.method(BoardClient.prototype, "view", async () => ESCROW_CONFIG);
   const check = JSON.stringify({ verifier: "a".repeat(64), format: "{}" });
   const result = (await executeBoardTool(
     "post_bid",
@@ -39,8 +60,20 @@ test("a dry post_bid fixes the hashes and the verifier named in the check", asyn
     },
     config,
     true,
-  )) as { call: { receiver_id: string; args: Record<string, unknown> } };
+  )) as {
+    call: {
+      receiver_id: string;
+      args: Record<string, unknown>;
+      deposit: string;
+      gas: string;
+    };
+  };
   assert.equal(result.call.receiver_id, BOARD);
+  assert.equal(
+    result.call.deposit,
+    postingDeposit(10n ** 22n, 3, BigInt(ESCROW_CONFIG.run_deposit)).toString(),
+  );
+  assert.equal(result.call.gas, POST_GAS);
   assert.equal(result.call.args.check_hash, sha(check));
   assert.equal(result.call.args.reference_hash, sha("r"));
   assert.equal(result.call.args.verifier_hash, "a".repeat(64));
@@ -91,6 +124,7 @@ test("amounts convert exactly for the job tool", () => {
 
 test("a mainnet dry post plans the exact 5 NEAR amount without a wallet or write", async (t) => {
   t.mock.method(BoardClient.prototype, "now", async () => 1_000_000_000_000n);
+  t.mock.method(BoardClient.prototype, "view", async () => ESCROW_CONFIG);
   t.mock.method(BoardClient.prototype, "postBid", async () => {
     throw new Error("Dry-run must not write");
   });
@@ -258,4 +292,67 @@ test("post_bid follows only its confirmed returned ID and preserves unknown crea
   };
   assert.match(mismatched.note, /Reconcile/);
   assert.deepEqual(read, [150, 0]);
+});
+
+test("dry board calls carry the same deposit and gas a signed call attaches", async () => {
+  const claim = (await executeBoardTool(
+    "claim_bid",
+    { bid_id: 4 },
+    config,
+    true,
+  )) as {
+    call: { method_name: string; deposit: string; gas: string };
+  };
+  assert.deepEqual(
+    [claim.call.method_name, claim.call.deposit, claim.call.gas],
+    ["claim", CLAIM_DEPOSIT.toString(), CLAIM_GAS],
+  );
+  const sync = (await executeBoardTool(
+    "sync_bid",
+    { bid_id: 4 },
+    config,
+    true,
+  )) as {
+    call: { deposit: string; gas: string };
+  };
+  assert.deepEqual([sync.call.deposit, sync.call.gas], ["0", READ_GAS]);
+});
+
+test("a failed or unknown board call is returned as it is, not thrown or followed", async (t) => {
+  const buyer = {
+    ...config,
+    account: "buyer.testnet",
+    custodyKey: "test-placeholder",
+  };
+  t.mock.method(BoardClient.prototype, "claim", async () => ({
+    transaction_hash: "failed-tx",
+    failed: true,
+  }));
+  assert.deepEqual(await executeBoardTool("claim_bid", { bid_id: 4 }, buyer), {
+    transaction_hash: "failed-tx",
+    failed: true,
+  });
+  t.mock.method(BoardClient.prototype, "now", async () => 1n);
+  t.mock.method(BoardClient.prototype, "view", async () => ESCROW_CONFIG);
+  t.mock.method(BoardClient.prototype, "postBid", async () => ({
+    transaction_hash: "pending-tx",
+    pending: true,
+    posted_bid_id: 9,
+  }));
+  t.mock.method(BoardClient.prototype, "bid", async () => {
+    throw new Error("must not read a bid after an unknown outcome");
+  });
+  const posted = (await executeBoardTool(
+    "post_bid",
+    {
+      description: "Unknown outcome",
+      check: JSON.stringify({ verifier: "a".repeat(64), format: "{}" }),
+      reference: "r",
+      amount_near: "0.01",
+      reveal_agreed: true,
+    },
+    buyer,
+  )) as { pending?: boolean; note?: string };
+  assert.equal(posted.pending, true);
+  assert.match(posted.note ?? "", /Reconcile this transaction/);
 });

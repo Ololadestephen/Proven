@@ -2,7 +2,13 @@
 // for each agent and reads everything again from the chain, so a crash loses nothing. Only the verifier's
 // recorded verdict pays anyone: nothing in here decides an outcome.
 import { createHash } from "node:crypto";
-import { BoardClient, buyerRecord, type Bid, type Wallet } from "../board.ts";
+import {
+  BoardClient,
+  buyerRecord,
+  requireSettled,
+  type Bid,
+  type Wallet,
+} from "../board.ts";
 import type { Config } from "../config.ts";
 import { PublicError } from "../errors.ts";
 import {
@@ -371,7 +377,7 @@ async function advance(
     job.worker !== agent.wallet &&
     !["Released", "Refunded"].includes(job.state)
   ) {
-    await board.sync(wallet, bidId);
+    requireSettled(await board.sync(wallet, bidId), "sync");
     await settleSpending(deps, agent);
     const mine = (job.history ?? [])
       .filter((a) => a.worker === agent.wallet)
@@ -419,7 +425,7 @@ async function advance(
     case "Released":
     case "Refunded": {
       // The sync settles this attempt's fee by its recorded outcome.
-      await board.sync(wallet, bidId);
+      requireSettled(await board.sync(wallet, bidId), "sync");
       await settleSpending(deps, agent);
       return log("finished", {
         state: job.state,
@@ -516,13 +522,16 @@ export async function runnerPass(
       deps.store.save(latest);
       const wallet = walletOf(agent, deps.config);
       wallet.hosted = { owner: agent.owner, treasury: deps.treasury };
-      const done = await board.register(wallet, {
-        prompt_hash: sha256(agent.prompt),
-        knowledge_hash: sha256(agent.knowledge),
-        tools_hash: sha256(JSON.stringify([...agent.skills].sort())),
-        model: agent.model,
-        owner: agent.owner,
-      });
+      const done = requireSettled(
+        await board.register(wallet, {
+          prompt_hash: sha256(agent.prompt),
+          knowledge_hash: sha256(agent.knowledge),
+          tools_hash: sha256(JSON.stringify([...agent.skills].sort())),
+          model: agent.model,
+          owner: agent.owner,
+        }),
+        "register_agent",
+      );
       const registered = deps.store.get(agent.wallet);
       if (!registered?.pending_registration)
         throw new PublicError(
@@ -577,7 +586,10 @@ export async function runnerPass(
           continue;
         beforeClaim.pending_claim_bid = bidId;
         deps.store.save(beforeClaim);
-        const claimed = await board.claim(wallet, bidId);
+        const claimed = requireSettled(
+          await board.claim(wallet, bidId),
+          "claim",
+        );
         const fresh = deps.store.get(agent.wallet) ?? agent;
         delete fresh.pending_claim_bid;
         fresh.last_claim_at = new Date().toISOString();

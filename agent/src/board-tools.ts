@@ -5,9 +5,16 @@ import { createHash } from "node:crypto";
 import {
   BoardClient,
   buyerRecord,
+  CLAIM_DEPOSIT,
+  CLAIM_GAS,
+  POST_GAS,
   postingDeposit,
+  READ_GAS,
+  REGISTER_DEPOSIT,
+  SHORT_GAS,
   type Wallet,
 } from "./board.ts";
+import type { CallPlan } from "./types.ts";
 import { handoff, handoffOverWeb } from "./handoff.ts";
 import type { Config } from "./config.ts";
 import { BOARD } from "./custody.ts";
@@ -185,9 +192,21 @@ export async function executeBoardTool(
     if (!bid) throw new PublicError("Bid was not found.");
     return bid;
   }
-  const planned = (method_name: string, call: Record<string, unknown>) => ({
+  /** The exact call a signed run would send: the same receiver, deposit and gas. */
+  const planned = (
+    method_name: string,
+    call: Record<string, unknown>,
+    deposit: bigint,
+    gas: string,
+  ): { dry_run: true; call: CallPlan } => ({
     dry_run: true,
-    call: { receiver_id: BOARD, method_name, args: call },
+    call: {
+      receiver_id: BOARD,
+      method_name,
+      args: call,
+      deposit: deposit.toString(),
+      gas,
+    },
   });
 
   if (name === "post_bid") {
@@ -226,7 +245,6 @@ export async function executeBoardTool(
         ? args.allowed_workers.map((worker) => accountId(String(worker)))
         : null,
     };
-    if (dry) return planned("post_bid", call);
     const escrowConfig = await board.view<{ run_deposit: string }>(
       "get_config",
       {},
@@ -238,12 +256,15 @@ export async function executeBoardTool(
       call.max_attempts,
       BigInt(escrowConfig.run_deposit),
     );
+    // The config read above is public and unsigned, so a dry run carries the full attachment.
+    if (dry) return planned("post_bid", call, deposit, POST_GAS);
     const buyerWallet = wallet(config);
     const posted = await board.postBid(buyerWallet, call, deposit);
     const bidId = postedBidId(posted.posted_bid_id);
     const reconcile =
       "Posting has completed. Reconcile this transaction and its exact bid before any further action; do not post again.";
-    if (bidId === null) return { ...posted, note: reconcile };
+    if (bidId === null || posted.failed || posted.pending)
+      return { ...posted, note: reconcile };
     let bid;
     try {
       bid = await board.bid(bidId);
@@ -310,20 +331,20 @@ export async function executeBoardTool(
       owner: null,
     };
     return dry
-      ? planned("register_agent", call)
+      ? planned("register_agent", call, REGISTER_DEPOSIT, SHORT_GAS)
       : board.register(wallet(config), call);
   }
   if (name === "claim_bid")
     return dry
-      ? planned("claim", { bid_id: bidId() })
+      ? planned("claim", { bid_id: bidId() }, CLAIM_DEPOSIT, CLAIM_GAS)
       : board.claim(wallet(config), bidId());
   if (name === "sync_bid")
     return dry
-      ? planned("sync", { bid_id: bidId() })
+      ? planned("sync", { bid_id: bidId() }, 0n, READ_GAS)
       : board.sync(wallet(config), bidId());
   if (name === "close_bid")
     return dry
-      ? planned("close_bid", { bid_id: bidId() })
+      ? planned("close_bid", { bid_id: bidId() }, 0n, POST_GAS)
       : board.close(wallet(config), bidId());
 
   throw new PublicError("Unknown tool.");

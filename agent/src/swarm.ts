@@ -10,7 +10,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { Account, KeyPair, KeyPairSigner } from "near-api-js";
-import { BoardClient, postingDeposit, type Bid, type Wallet } from "./board.ts";
+import {
+  BoardClient,
+  postingDeposit,
+  requireSettled,
+  type Bid,
+  type Wallet,
+} from "./board.ts";
 import { handoff, handoffOverWeb } from "./handoff.ts";
 import { keysFrom, KeyPool } from "./key-pool.ts";
 import { attestationUrl } from "./network.ts";
@@ -198,10 +204,13 @@ export async function postBid(
     // A test can keep a bid to named workers, so hosted agents do not take it.
     allowed_workers: process.env.PROVEN_BID_WORKERS?.split(",") ?? null,
   };
-  const result = await board.postBid(
-    wallet,
-    call,
-    postingDeposit(amount, call.max_attempts, BigInt(run_deposit)),
+  const result = requireSettled(
+    await board.postBid(
+      wallet,
+      call,
+      postingDeposit(amount, call.max_attempts, BigInt(run_deposit)),
+    ),
+    "post_bid",
   );
   // The bid and its job, then the check to the relay, which tests it. No signature is needed.
   const found = (await board.bids(0, 50)).find(
@@ -365,20 +374,27 @@ export async function attempt(
   };
 
   if (!(await board.agent(account))) {
-    const registered = await board.register(agent.wallet, {
-      prompt_hash: sha256(agent.prompt),
-      knowledge_hash: sha256(agent.knowledge),
-      tools_hash: sha256(AGENT_TOOLS),
-      model: DEFAULT_MODEL,
-      owner: null,
-    });
+    const registered = requireSettled(
+      await board.register(agent.wallet, {
+        prompt_hash: sha256(agent.prompt),
+        knowledge_hash: sha256(agent.knowledge),
+        tools_hash: sha256(AGENT_TOOLS),
+        model: DEFAULT_MODEL,
+        owner: null,
+      }),
+      "register_agent",
+    );
     log("register_agent", registered.transaction_hash);
   }
 
   let bid = await readBid();
   if (bid.state === "Open") {
     // The money is already held: the claim gives this agent the job straight away.
-    log("claim", (await board.claim(agent.wallet, bidId)).transaction_hash);
+    log(
+      "claim",
+      requireSettled(await board.claim(agent.wallet, bidId), "claim")
+        .transaction_hash,
+    );
     bid = await readBid();
   }
   if (
@@ -515,7 +531,7 @@ export async function attempt(
         break;
       case "Open":
         // The escrow ended this agent's attempt and reopened the job for the next worker.
-        await board.sync(agent.wallet, bidId);
+        requireSettled(await board.sync(agent.wallet, bidId), "sync");
         return {
           bid_id: bidId,
           job_id: jobId,
@@ -523,7 +539,7 @@ export async function attempt(
           history: job.history,
         };
       default: {
-        await board.sync(agent.wallet, bidId);
+        requireSettled(await board.sync(agent.wallet, bidId), "sync");
         const after = await readBid();
         const final = await readJob();
         return {

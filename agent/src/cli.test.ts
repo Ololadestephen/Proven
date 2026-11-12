@@ -200,3 +200,19 @@ test("stdin accepts the exact byte limit and rejects invalid UTF-8", async () =>
   assert.equal(code, 1);
   assert.equal(diagnostics, "Input must be valid UTF-8 JSON.\n");
 });
+
+test("a submitted call that failed or is unknown prints its JSON and exits 1", async () => {
+  for (const [reply, code] of [
+    [{ transaction_hash: "t", failed: true }, 1],
+    [{ transaction_hash: "t", pending: true }, 1],
+    [{ transaction_hash: "t" }, 0],
+  ] as const) {
+    const service: ToolService = {
+      tools: [{ name: "claim_bid", description: "Claim", inputSchema: {} }],
+      executeTool: async () => reply,
+    };
+    const result = await invoke(["claim_bid", "{}"], "{}", service);
+    assert.equal(result.code, code);
+    assert.deepEqual(JSON.parse(result.stdout), reply);
+  }
+});

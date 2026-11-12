@@ -15,10 +15,10 @@ export const FEE_PER_ATTEMPT = (NEAR / 1000n) * 17n;
 const POST_RESERVE = NEAR / 100n;
 /** Storage for the bid and the escrow job at their largest. The unused part comes back. */
 const STORAGE_MARGIN = (NEAR / 100n) * 7n;
-const READ_GAS = "200000000000000";
-const POST_GAS = "150000000000000";
-const CLAIM_GAS = "100000000000000";
-const SHORT_GAS = "30000000000000";
+export const READ_GAS = "200000000000000";
+export const POST_GAS = "150000000000000";
+export const CLAIM_GAS = "100000000000000";
+export const SHORT_GAS = "30000000000000";
 
 /** Everything one posting attaches: the payment, the escrow's compute budget, the attempt fees and
  * storage. The escrow and board return what they do not use. */
@@ -85,6 +85,19 @@ export interface Wallet {
   escrow: string;
 }
 
+/** For callers that go on to act: a failed or unknown board call stops them, naming the transaction. */
+export function requireSettled(result: CallResult, method: string): CallResult {
+  if (result.failed)
+    throw new PublicError(
+      `Board call ${method} failed on chain: ${result.transaction_hash}`,
+    );
+  if (result.pending)
+    throw new PublicError(
+      `Board call ${method} has an unknown outcome: ${result.transaction_hash}. Read the bid before doing anything else.`,
+    );
+  return result;
+}
+
 export class BoardClient {
   private readonly provider: JsonRpcProvider;
   constructor(rpc: string) {
@@ -147,12 +160,6 @@ export class BoardClient {
       undefined,
       method_name === "post_bid" ? BOARD : undefined,
     );
-    if (result.failed)
-      throw new PublicError(`Board call ${method_name} failed on chain: ${tx}`);
-    if (result.pending)
-      throw new PublicError(
-        `Board call ${method_name} has an unknown outcome: ${tx}. Read the bid before doing anything else.`,
-      );
     return result;
   }
 
