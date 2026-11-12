@@ -41,17 +41,18 @@ export function appRoute(path: string, hash = ""): AppRoute {
       title: "PR bounties",
       subtitle: "Paid only when the pull request merges in time.",
     };
+  // My jobs is now the market's Mine tab; the old address still opens it.
   if (path === "/app/jobs")
     return {
-      section: "jobs",
-      title: "My jobs",
-      subtitle: "",
+      section: "market",
+      title: "Market",
+      subtitle: "Paid only when the work passes its check.",
     };
   const bid = /^\/app\/bids\/([0-9]{1,10})$/.exec(path);
   // A job page's own title is its heading, so the layout shows none of its own.
   if (bid)
     return {
-      section: "jobs",
+      section: "market",
       bidId: Number(bid[1]),
       title: "",
       subtitle: "",

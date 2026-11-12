@@ -787,3 +787,12 @@ details.bounty-section > summary {
   background: none;
   box-shadow: none;
 }
+/* Overview's three shortcuts sit side by side, then stack on narrow screens. */
+.workspace-app .workspace-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 900px) {
+  .workspace-app .workspace-grid-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AgentsPage } from "./AgentsPage.tsx";
 import { PrBounties } from "./PrBounties.tsx";
 import type { BountyActions } from "./use-bounty-actions.ts";
@@ -6,7 +6,10 @@ import { JobWorkspace } from "./JobWorkspace.tsx";
 import { PostJob } from "./PostJob.tsx";
 import type { Market, Wallet, Run } from "./market-types.ts";
 import { nextStep, showNear, type MarketBid } from "./market-steps.ts";
-import { short } from "./market-client.ts";
+import { api, short } from "./market-client.ts";
+import type { Bounty, Listing } from "./bounty-types.ts";
+import { bountyNextStep } from "./bounty-board.ts";
+import { near } from "./bounty-text.ts";
 import { TileToolbar, WorkTile } from "./WorkTile.tsx";
 import { bidTitle, completed, ownBids, type AppRoute } from "./app-route.ts";
 function JobRow({ bid, detail }: { bid: MarketBid; detail?: string }) {
@@ -23,6 +26,39 @@ function JobRow({ bid, detail }: { bid: MarketBid; detail?: string }) {
     </a>
   );
 }
+function BountyRow(props: { id: number; bounty: Bounty; detail: string }) {
+  const { id, bounty } = props;
+  return (
+    <a href={`/app/bounties/${id}`} className="workspace-list-row">
+      <div>
+        <span className="workspace-list-meta">
+          Bounty {id} · {bounty.repo}#{bounty.issue}
+        </span>
+        <h3>{props.detail}</h3>
+        <p>{bounty.status}</p>
+      </div>
+      <strong>{near(bounty.reward)}</strong>
+    </a>
+  );
+}
+
+/** The PR bounties that need this wallet now. Empty while loading or when bounties are off. */
+function useBountyAttention(account: string | null, clock: number) {
+  const [listing, setListing] = useState<Listing | null>(null);
+  useEffect(() => {
+    if (!account) return;
+    api<Listing>("/api/market/bounties")
+      .then(setListing)
+      .catch(() => setListing(null));
+  }, [account]);
+  if (!account || !listing?.configured) return [];
+  const now = Math.floor(clock / 1000);
+  return listing.bounties.flatMap(([id, bounty]) => {
+    const label = bountyNextStep(bounty, account, now, listing.config);
+    return label ? [{ id, bounty, label }] : [];
+  });
+}
+
 function Overview({
   market,
   wallet,
@@ -46,6 +82,7 @@ function Overview({
           return step && step.id !== "wait" ? [{ bid, label: step.label }] : [];
         })
     : [];
+  const bounties = useBountyAttention(account ?? null, clock);
   return (
     <>
       <section className="workspace-card">
@@ -58,21 +95,34 @@ function Overview({
             Connect a wallet from the sidebar to see your jobs and what each one
             needs next.
           </p>
-        ) : attention.length ? (
+        ) : attention.length || bounties.length ? (
           <div className="workspace-queue">
             {attention.map(({ bid, label }) => (
               <JobRow key={bid.id} bid={bid} detail={label} />
+            ))}
+            {bounties.map(({ id, bounty, label }) => (
+              <BountyRow
+                key={`bounty-${id}`}
+                id={id}
+                bounty={bounty}
+                detail={label}
+              />
             ))}
           </div>
         ) : (
           <p>Nothing needs you right now.</p>
         )}
       </section>
-      <div className="workspace-grid">
+      <div className="workspace-grid workspace-grid-3">
         <a className="workspace-card" href="/app/market">
           <h2>Find work</h2>
           <p>Browse open tasks.</p>
           <span className="workspace-card-link">Open the market</span>
+        </a>
+        <a className="workspace-card" href="/app/bounties">
+          <h2>PR bounties</h2>
+          <p>Get paid when your pull request merges.</p>
+          <span className="workspace-card-link">See the bounties</span>
         </a>
         <a className="workspace-card" href="/guide">
           <h2>How it works</h2>
@@ -115,7 +165,7 @@ function outcome(bid: MarketBid) {
   if (job?.state === "Refunded") return "Refunded to the buyer";
   return bid.state === "Done" ? "Done" : "Closed";
 }
-type JobTab = "all" | "open" | "progress" | "paid" | "closed";
+type JobTab = "all" | "open" | "progress" | "paid" | "closed" | "mine";
 const JOB_TABS: [JobTab, string][] = [
   ["all", "All"],
   ["open", "Open"],
@@ -124,7 +174,7 @@ const JOB_TABS: [JobTab, string][] = [
   ["closed", "Closed"],
 ];
 /** Which tab a job belongs to. A refund is never shown as paid. */
-export function jobTab(bid: MarketBid): Exclude<JobTab, "all"> {
+export function jobTab(bid: MarketBid): Exclude<JobTab, "all" | "mine"> {
   const job = bid.job ?? bid.last_job;
   if (completed(bid)) return job?.state === "Released" ? "paid" : "closed";
   return bid.claim || bid.job ? "progress" : "open";
@@ -183,17 +233,28 @@ function JobGrid({
 }) {
   const [tab, setTab] = useState<JobTab>(initial);
   const newest = bids.slice().sort((a, b) => b.id - a.id);
+  // Jobs this wallet buys or delivers, the way "Needs action" works on the bounty list.
+  const mine = new Set(
+    [
+      ...ownBids(newest, viewer, "buying"),
+      ...ownBids(newest, viewer, "delivering"),
+    ].map((bid) => bid.id),
+  );
+  const inTab = (t: JobTab, bid: MarketBid) =>
+    t === "all" || (t === "mine" ? mine.has(bid.id) : jobTab(bid) === t);
+  // Mine shows with a wallet, and on /app/jobs so the tab it opens on is always visible.
+  const tabs: [JobTab, string][] =
+    viewer || initial === "mine" ? [...JOB_TABS, ["mine", "Mine"]] : JOB_TABS;
   const counts = Object.fromEntries(
-    JOB_TABS.map(([t]) => [
-      t,
-      newest.filter((bid) => t === "all" || jobTab(bid) === t).length,
-    ]),
+    tabs.map(([t]) => [t, newest.filter((bid) => inTab(t, bid)).length]),
   ) as Record<JobTab, number>;
-  const shown = newest.filter((bid) => tab === "all" || jobTab(bid) === tab);
+  const shown = newest.filter((bid) => inTab(tab, bid));
   return (
     <section className="bounty-board">
-      <TileToolbar tabs={JOB_TABS} counts={counts} tab={tab} onTab={setTab} />
-      {shown.length ? (
+      <TileToolbar tabs={tabs} counts={counts} tab={tab} onTab={setTab} />
+      {tab === "mine" && !viewer ? (
+        <p className="workspace-empty">Connect a wallet to see your jobs.</p>
+      ) : shown.length ? (
         <div className="bounty-grid">
           {shown.map((bid) => (
             <JobTile key={bid.id} bid={bid} viewer={viewer} />
@@ -215,7 +276,13 @@ function MarketList({
   viewer: string | null;
 }) {
   // The server serves no query strings, so the completed view is chosen by the hash.
-  const initial = location.hash === "#completed" ? "paid" : "open";
+  // /app/jobs, the old My jobs address, opens on the Mine tab.
+  const initial: JobTab =
+    location.pathname === "/app/jobs"
+      ? "mine"
+      : location.hash === "#completed"
+        ? "paid"
+        : "open";
   return (
     <JobGrid
       bids={bids}
@@ -223,37 +290,6 @@ function MarketList({
       initial={initial}
       empty="No jobs on this board yet."
     />
-  );
-}
-function MyJobs({ market, wallet }: { market: Market; wallet: Wallet | null }) {
-  const [role, setRole] = useState<"buying" | "delivering">("buying");
-  const viewer = wallet?.accountId ?? null;
-  const selected = ownBids(market.bids, viewer, role);
-  if (!wallet)
-    return (
-      <p className="workspace-empty">Connect a wallet to see your jobs.</p>
-    );
-  return (
-    <>
-      <div className="workspace-tabs" aria-label="Your role">
-        {(["buying", "delivering"] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={role === value}
-            onClick={() => setRole(value)}
-          >
-            {value === "buying" ? "Buying" : "Delivering"}
-          </button>
-        ))}
-      </div>
-      <JobGrid
-        key={role}
-        bids={selected}
-        viewer={viewer}
-        empty="No jobs for this account in this view yet."
-      />
-    </>
   );
 }
 export function WorkspacePages({
@@ -277,6 +313,15 @@ export function WorkspacePages({
   /** An action is running. The bounty page does not wait on the job board. */
   bountyBusy: boolean;
 }) {
+  // PR bounties read their own contract, so they do not wait for the job board.
+  if (route.section === "bounties")
+    return (
+      <PrBounties
+        actions={bounty}
+        busy={bountyBusy}
+        bountyId={route.bountyId}
+      />
+    );
   if (!market) return <p role="status">Reading the board…</p>;
   if (route.bidId !== undefined) {
     const bid = market.bids.find((item) => item.id === route.bidId);
@@ -300,17 +345,7 @@ export function WorkspacePages({
     return <PostJob market={market} wallet={wallet} run={run} busy={busy} />;
   if (route.section === "agents")
     return <AgentsPage wallet={wallet} run={run} busy={busy} />;
-  if (route.section === "bounties")
-    return (
-      <PrBounties
-        actions={bounty}
-        busy={bountyBusy}
-        bountyId={route.bountyId}
-      />
-    );
   if (route.section === "market")
     return <MarketList bids={market.bids} viewer={wallet?.accountId ?? null} />;
-  if (route.section === "jobs")
-    return <MyJobs market={market} wallet={wallet} />;
   return <Overview market={market} wallet={wallet} clock={clock} />;
 }

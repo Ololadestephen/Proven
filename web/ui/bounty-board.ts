@@ -30,6 +30,26 @@ export function tabOf(b: Bounty): Exclude<Tab, "all" | "action"> {
   }
 }
 
+/** What the connected wallet still has to do on this bounty now, in a few words, or null. */
+export function bountyNextStep(
+  b: Bounty,
+  me: string | null,
+  now: number,
+  config: Pick<Config, "refund_cap_secs">,
+): string | null {
+  if (!me) return null;
+  const settling = [b.payout, b.refund].some((s) => s && s.state !== "Done");
+  const isBuyer = me === b.buyer;
+  const isClaimant = me === b.claim?.wallet;
+  if ((isBuyer || isClaimant) && settling) return "Finish the settlement";
+  if (isBuyer && refundDue(b, now, config.refund_cap_secs))
+    return "Your refund is due";
+  // A claimant still has to submit a pull request while the claim runs.
+  if (isClaimant && b.status === "Claimed" && !liveCheck(b, now))
+    return "Submit your pull request";
+  return null;
+}
+
 /** Whether the connected wallet has something to do on this bounty now. */
 export function needsAction(
   b: Bounty,
@@ -37,15 +57,7 @@ export function needsAction(
   now: number,
   config: Pick<Config, "refund_cap_secs">,
 ): boolean {
-  if (!me) return false;
-  const settling = [b.payout, b.refund].some((s) => s && s.state !== "Done");
-  const isBuyer = me === b.buyer;
-  const isClaimant = me === b.claim?.wallet;
-  if ((isBuyer || isClaimant) && settling) return true;
-  if (isBuyer && refundDue(b, now, config.refund_cap_secs)) return true;
-  // A claimant still has to submit a pull request while the claim runs.
-  if (isClaimant && b.status === "Claimed" && !liveCheck(b, now)) return true;
-  return false;
+  return bountyNextStep(b, me, now, config) !== null;
 }
 
 export function inTab(

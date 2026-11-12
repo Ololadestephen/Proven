@@ -19,7 +19,6 @@ export interface NavigationItem {
 export const APP_NAVIGATION: ReadonlyArray<NavigationItem> = [
   { id: "workspace", label: "Overview", href: "/app" },
   { id: "market", label: "Market", href: "/app/market" },
-  { id: "jobs", label: "My jobs", href: "/app/jobs", icon: "lookup" },
   { id: "agents", label: "Agents", href: "/app/agents" },
   { id: "bounties", label: "PR bounties", href: "/app/bounties" },
 ];

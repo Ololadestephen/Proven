@@ -63,6 +63,10 @@ test("routes separate overview, browse, role views, post and bid IDs", () => {
   assert.equal(appRoute("/app/post").section, "post");
   assert.equal(appRoute("/app", "#post-job").section, "post");
   assert.equal(appRoute("/app/bids/12").bidId, 12);
+  // My jobs is the market's Mine tab now; its old address and job pages sit under Market.
+  assert.equal(appRoute("/app/jobs").section, "market");
+  assert.equal(appRoute("/app/jobs").title, "Market");
+  assert.equal(appRoute("/app/bids/12").section, "market");
   assert.equal(ownBids([bid], null, "buying").length, 0);
   assert.equal(ownBids([bid], bid.buyer, "buying").length, 1);
   assert.equal(ownBids([bid], "stranger.testnet", "buying").length, 0);

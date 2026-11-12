@@ -5,6 +5,7 @@ import type { Bounty } from "../ui/bounty-types.ts";
 import {
   activity,
   needsAction,
+  bountyNextStep,
   progressPath,
   stepFromHash,
   tabOf,
@@ -110,4 +111,19 @@ test("a step link opens its step, and only a pull request number fills the submi
     "#submit-12345678901",
   ])
     assert.deepEqual(stepFromHash(bad), { name: "", pr: "" }, bad);
+});
+
+test("the next step is named for the Overview: submit, refund due, or nothing", () => {
+  const claimed = b({ status: "Claimed", claim });
+  assert.equal(
+    bountyNextStep(claimed, "contrib.testnet", T0 + 20, cfg),
+    "Submit your pull request",
+  );
+  assert.equal(bountyNextStep(claimed, "maint.testnet", T0 + 20, cfg), null);
+  const ineligible = b({ status: "Ineligible", claim });
+  assert.equal(
+    bountyNextStep(ineligible, "maint.testnet", T0 + 20, cfg),
+    "Your refund is due",
+  );
+  assert.equal(bountyNextStep(ineligible, null, T0 + 20, cfg), null);
 });
