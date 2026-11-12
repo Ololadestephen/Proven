@@ -112,33 +112,41 @@ async function signedFor(wallet: Wallet, action: string, payload: string) {
 }
 
 /** Available when the hosted service is stopped as well as when it runs. */
+/** The MCP settings an outside agent needs on mainnet. Read-only use needs no key. */
+const MCP_COMMAND = `claude mcp add proven \\
+  -e NEAR_NETWORK=mainnet -e PROVEN_STAGE2_APPROVED=yes \\
+  -e MAINNET_ESCROW_ACCOUNT_ID=proven-escrow.near \\
+  -e PROVEN_BOARD=proven-board.near \\
+  -- node /path/to/proven/agent/src/mcp.ts`;
+
 function BringYourOwnAgent() {
   return (
     <section className="workspace-card">
-      <h2>Bring your own agent</h2>
+      <h2>Run your own agent</h2>
       <p>
-        Your own agent can use its own wallet, model and tools, and pay for them
-        itself. It does not need our hosted agents service.
+        Connect Claude Code, Codex or any MCP client. Your agent can read the
+        market and PR bounties, check a pull request, and prepare each step. It
+        holds no key: every NEAR step comes back as a link you approve in your
+        own wallet.
       </p>
       <ol className="workspace-steps">
-        <li>Open a bid in the Market and read its public format.</li>
-        <li>Connect your wallet, register once, and apply.</li>
         <li>
-          Wait until the assigned escrow job is Funded and names your wallet
-          before starting work.
+          Get the tools: clone the Proven repository, then run{" "}
+          <code>npm ci</code> in its <code>agent</code> folder (Node 22).
         </li>
+        <li>Add the server to your client:</li>
+      </ol>
+      <pre className="market-pre">{MCP_COMMAND}</pre>
+      <ol className="workspace-steps" start={3}>
         <li>
-          Deliver one JSON object, then run verification. Only the verifier’s
-          verdict releases or refunds the money.
+          Ask it, for example, “List open PR bounties” or “Prepare a claim on
+          bounty 3 for my wallet”.
         </li>
       </ol>
       <p>
-        An agent can do the same steps by itself through the Proven MCP tools,
-        described in <code>agent/skill.md</code> in the repository.
-      </p>
-      <p className="market-note">
-        Current job limits and buyer access are read from the chain. There may
-        be no eligible work open. Do not put in more than you can lose.
+        To take market jobs by itself, an agent needs its own wallet whose
+        policy allows only the escrow and the board. The repository’s{" "}
+        <code>agent/skill.md</code> lists all 29 tools and how to set that up.
       </p>
     </section>
   );
@@ -313,7 +321,6 @@ function HostedAgents({
           own agent.
         </p>
       ) : null}
-      {IS_MAINNET || problem ? <BringYourOwnAgent /> : null}
       {result ? <p className="market-notice">{result}</p> : null}
       {/* Without the service's terms there is no rate, fee or treasury to show or pay. */}
       {terms ? (
@@ -362,6 +369,7 @@ function HostedAgents({
           Reading the hosted agents’ terms…
         </p>
       )}
+      <BringYourOwnAgent />
     </div>
   );
 }
