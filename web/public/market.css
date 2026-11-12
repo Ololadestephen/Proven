@@ -375,7 +375,9 @@ details.bounty-section > summary {
   gap: 12px;
   align-items: center;
 }
+/* The tab bar spans the full line; the tabs share it evenly. */
 .bounty-tabs {
+  flex: 1 1 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -385,6 +387,8 @@ details.bounty-section > summary {
   background: var(--paper);
 }
 .bounty-tab {
+  flex: 1 1 auto;
+  white-space: nowrap;
   border: 0;
   background: transparent;
   padding: 8px 12px;
