@@ -14,7 +14,7 @@ test("parseJson names the source and never echoes the text", () => {
   assert.throws(
     () => parseJson(text, "runs/stage2-setup.json"),
     (error: unknown) => {
-      assert.ok(error instanceof Error);
+      assert.ok(error instanceof PublicError);
       assert.equal(error.message, "runs/stage2-setup.json is not valid JSON.");
       assert.ok(!error.message.includes("not-a-real-secret"));
       assert.equal(error.cause, undefined);

@@ -6,13 +6,14 @@ export function isObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * Parse local JSON (a fixture, journal, policy file or tool output) and name its source on failure.
- * The message never includes the text itself, which may hold a key or a private response.
+ * The message never includes the text itself, which may hold a key or a private response. It is a
+ * PublicError so the scripts' publicMessage handlers print it instead of a generic failure.
  */
 export function parseJson(text: string, source: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`${source} is not valid JSON.`);
+    throw new PublicError(`${source} is not valid JSON.`);
   }
 }
 

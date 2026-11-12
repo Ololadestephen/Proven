@@ -1,12 +1,6 @@
 // Owner-only setup. This file is never imported by the agent/MCP server.
 // Registration/funding require the explicit owner approval recorded in TASKS.md.
-import {
-  readFileSync,
-  writeFileSync,
-  renameSync,
-  mkdirSync,
-  existsSync,
-} from "node:fs";
+import { readFileSync, mkdirSync, existsSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
@@ -19,6 +13,7 @@ import {
 import { assertPolicy, custodyRead } from "../src/custody.ts";
 import { PublicError, publicMessage } from "../src/errors.ts";
 import { parseJson } from "../src/json.ts";
+import { saveEnv, writeJournal } from "./setup-common.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const envPath = `${root}.env`;
@@ -30,23 +25,9 @@ const evidencePath = `${root}runs/p4-custody-setup.json`;
 const evidence: Record<string, unknown> = {};
 function record() {
   mkdirSync(`${root}runs`, { recursive: true });
-  writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + "\n", {
-    mode: 0o600,
-  });
+  writeJournal(evidencePath, evidence);
 }
-function save(values: Record<string, string>) {
-  let content = readFileSync(envPath, "utf8");
-  for (const [name, value] of Object.entries(values)) {
-    if (!/^[A-Z_]+$/.test(name) || /[\r\n]/.test(value))
-      throw new PublicError("Invalid setup credential format.");
-    content = content.replace(new RegExp(`^${name}=.*$`, "m"), "").trimEnd();
-    content += `\n${name}=${value}\n`;
-    env[name] = value;
-  }
-  const temp = `${envPath}.proven-setup-${process.pid}`;
-  writeFileSync(temp, content, { mode: 0o600, flag: "wx" });
-  renameSync(temp, envPath);
-}
+const save = (values: Record<string, string>) => saveEnv(envPath, env, values);
 function owner(prefix: string): Account {
   const id = env[`${prefix}_ACCOUNT_ID`],
     key = env[`${prefix}_PRIVATE_KEY`];
