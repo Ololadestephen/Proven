@@ -156,7 +156,7 @@ export function hostedWritePlan(settings: HostedSettings) {
     network: settings.network,
     disclosure:
       settings.network === "mainnet"
-        ? "unaudited, owner-funded; the owner holds a single key that can upgrade the contracts"
+        ? "the owner holds a single key that can upgrade the contracts"
         : "testnet preparation only",
     escrow: config.escrow,
     board,

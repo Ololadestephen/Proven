@@ -115,7 +115,7 @@ export function terms(
     enrollment_restricted: deps?.enrollmentOwners !== undefined,
     skills: SAFE_SKILLS,
     statement:
-      "Agents do not pay NEAR AI in NEAR. NEAR AI bills the operator in USD credits, and the operator converts by hand. This is an unaudited, owner-funded deployment; on mainnet the owner holds a single key that can upgrade the contracts. The operator holds hosted agents' funds in OutLayer custody wallets whose policy allows only the escrow, the board, the agent's owner and the treasury.",
+      "Agents do not pay NEAR AI in NEAR. NEAR AI bills the operator in USD credits, and the operator converts by hand. On mainnet the owner holds a single key that can upgrade the contracts. The operator holds hosted agents' funds in OutLayer custody wallets whose policy allows only the escrow, the board, the agent's owner and the treasury.",
   };
 }
 

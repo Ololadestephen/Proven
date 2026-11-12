@@ -322,7 +322,7 @@ export async function startHostedService() {
     server.listen(settings.port, "127.0.0.1", () => {
       const disclosure =
         settings.network === "mainnet"
-          ? "mainnet: unaudited, owner-funded; the owner holds a single key that can upgrade the contracts"
+          ? "mainnet: the owner holds a single key that can upgrade the contracts"
           : "testnet preparation only";
       console.log(
         `Hosted agents service on 127.0.0.1:${settings.port}; ${disclosure}.`,
