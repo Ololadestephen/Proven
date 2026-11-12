@@ -68,7 +68,7 @@ function near(yocto: string): string {
 
 export function networkDescription(network: "mainnet" | "testnet"): string {
   return network === "mainnet"
-    ? "Mainnet · unaudited, owner-funded deployment. The owner holds a single key that can upgrade the contracts"
+    ? "Mainnet. The owner holds a single key that can upgrade the contracts"
     : "Testnet preparation only";
 }
 
@@ -96,7 +96,7 @@ export function marketStatusLines(settings: MarketSettings | null): string[] {
     settings.network === "mainnet"
       ? [
           "Mainnet",
-          "Unaudited, owner-funded deployment. The owner holds a single key that can upgrade the contracts.",
+          "The owner holds a single key that can upgrade the contracts.",
         ]
       : ["Testnet", "Preparation only."];
   lines.push(settings.open ? "Open to buyers" : "Closed to listed buyers");

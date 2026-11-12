@@ -26,7 +26,11 @@ const closed = {
 
 test("mainnet descriptions name risk, board access, and the supplied chain limits", () => {
   const label = marketDescription(parseMarketSettings(closed));
-  assert.match(label, /Mainnet · unaudited, owner-funded deployment/);
+  assert.match(
+    label,
+    /Mainnet\. The owner holds a single key that can upgrade/,
+  );
+  assert.doesNotMatch(label, /unaudited|owner-funded/i);
   assert.match(label, /closed to listed buyers/);
   assert.match(
     label,
@@ -66,7 +70,7 @@ test("missing settings or malformed caps cannot invent access or fallback numeri
 test("testnet is preparation only and startup logs always name the configured network", () => {
   assert.equal(networkDescription("testnet"), "Testnet preparation only");
   const mainnet = startupMessage(4176, "mainnet");
-  assert.match(mainnet, /unaudited, owner-funded deployment/);
+  assert.match(mainnet, /single key that can upgrade the contracts/);
   assert.ok(!mainnet.toLowerCase().includes("testnet"));
   const preparation = startupMessage(4173, "testnet");
   assert.match(preparation, /Testnet preparation only/);

@@ -17,7 +17,7 @@ export const canPost = (account: string | undefined) =>
 export const MAX_JOB: bigint | null = config?.caps
   ? BigInt(config.caps.max_job)
   : null;
-/** The sidebar's status lines. Mainnet is always labelled unaudited and owner-funded; limits come
+/** The sidebar's status lines. Mainnet always names the owner's single upgrade key; limits come
  * only from the escrow. */
 export const NETWORK_LINES = marketStatusLines(config);
 export const COIN = IS_MAINNET ? "NEAR" : "testnet NEAR";

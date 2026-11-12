@@ -304,8 +304,7 @@ function HostedAgents({
     <div className="workspace-queue">
       {IS_MAINNET ? (
         <p className="market-note">
-          Unaudited, owner-funded; the owner holds a single key that can upgrade
-          the contracts.
+          The owner holds a single key that can upgrade the contracts.
         </p>
       ) : null}
       {problem ? (

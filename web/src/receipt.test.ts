@@ -139,7 +139,7 @@ test("non-JSON work stays unchanged in the receipt and uses a .txt exact-file na
   assert.ok(receipt.includes("downloaded .txt file"));
 });
 
-test("mainnet receipt always includes unaudited owner-funded wording and the mainnet API", async () => {
+test("mainnet receipt names the single upgrade key and the mainnet API", async () => {
   const receipt = buildReceipt(
     bid,
     await paidJob(),
@@ -148,7 +148,9 @@ test("mainnet receipt always includes unaudited owner-funded wording and the mai
     madeAt,
   );
   assert.ok(
-    receipt.includes("Network: mainnet — unaudited, owner-funded deployment"),
+    receipt.includes(
+      "Network: mainnet. The owner holds a single key that can upgrade the contracts",
+    ),
   );
   assert.ok(
     receipt.includes("https://api.outlayer.ai/attestations/by-request/11001"),
