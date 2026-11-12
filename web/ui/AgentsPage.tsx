@@ -132,7 +132,8 @@ function BringYourOwnAgent() {
       <ol className="workspace-steps">
         <li>
           Get the tools: clone the Proven repository, then run{" "}
-          <code>npm ci</code> in its <code>agent</code> folder (Node 22).
+          <code>npm ci</code> in its <code>relay</code> and <code>agent</code>{" "}
+          folders (Node 22).
         </li>
         <li>Add the server to your client:</li>
       </ol>
