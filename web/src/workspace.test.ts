@@ -67,6 +67,14 @@ test("routes separate overview, browse, role views, post and bid IDs", () => {
   assert.equal(appRoute("/app/jobs").section, "market");
   assert.equal(appRoute("/app/jobs").title, "Market");
   assert.equal(appRoute("/app/bids/12").section, "market");
+  // Posting a bounty has its own page; the list and a bounty's page do not post.
+  const posting = appRoute("/app/bounties/new");
+  assert.equal(posting.section, "bounties");
+  assert.equal(posting.postBounty, true);
+  assert.equal(posting.bountyId, undefined);
+  assert.equal(posting.title, "Post a bounty");
+  assert.equal(appRoute("/app/bounties").postBounty, undefined);
+  assert.equal(appRoute("/app/bounties/2").bountyId, 2);
   assert.equal(ownBids([bid], null, "buying").length, 0);
   assert.equal(ownBids([bid], bid.buyer, "buying").length, 1);
   assert.equal(ownBids([bid], "stranger.testnet", "buying").length, 0);

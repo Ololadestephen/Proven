@@ -979,10 +979,24 @@ test("the same page with signing on has buttons that work, so the switch is the 
   assert.equal(button(page, /^Release claim/).disabled, false);
 });
 
+test("the posting page shows the form and a way back, and not the list", () => {
+  const html = renderPage({ link: linkReady("583231"), posting: true });
+  assert.match(html, /aria-label="Post a bounty"/);
+  assert.match(html, /href="\/app\/bounties">← Back to bounties/);
+  assert.doesNotMatch(html, /href="\/app\/bounties\/\d+"/);
+  assert.doesNotMatch(html, /How a bounty works/);
+  // Without a wallet the form still shows and says what is missing.
+  assert.match(
+    renderPage({ wallet: null, posting: true }),
+    /aria-label="Post a bounty"/,
+  );
+});
+
 test("the list opens on the Open tab and counts every status", () => {
   const html = renderPage({ link: linkReady("583231") });
   assert.match(html, /<h2>Your GitHub account<\/h2>/);
-  assert.match(html, /<h2>Post a bounty<\/h2>/);
+  // Posting lives on its own page, not under the list.
+  assert.doesNotMatch(html, /aria-label="Post a bounty"/);
   const order = [...html.matchAll(/href="\/app\/bounties\/(\d+)"/g)].map(
     (m) => m[1],
   );
@@ -1086,7 +1100,13 @@ test("the page reads its own states", () => {
     listing: { ...listing([]), config: { ...config, paused: true } },
   });
   assert.match(paused, /Posting is paused\./);
-  assert.doesNotMatch(paused, /<h2>Post a bounty<\/h2>/);
+  const pausedPosting = renderPage({
+    listing: { ...listing([]), config: { ...config, paused: true } },
+    posting: true,
+  });
+  assert.match(pausedPosting, /Posting is paused\./);
+  assert.doesNotMatch(pausedPosting, /aria-label="Post a bounty"/);
+  assert.doesNotMatch(paused, /aria-label="Post a bounty"/);
 });
 
 test("the sponsor note carries no maintainer budget and names the sponsor account", () => {

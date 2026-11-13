@@ -306,3 +306,10 @@
   color: var(--muted);
   font-size: 13px;
 }
+.workspace-app .bounty-back {
+  justify-self: start;
+  margin-top: 0;
+}
+.workspace-app .workspace-card > .bounty-form:first-child {
+  margin-top: 0;
+}

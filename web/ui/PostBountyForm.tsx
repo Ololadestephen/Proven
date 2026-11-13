@@ -186,9 +186,7 @@ export function PostFormView(props: FormViewProps) {
   const review = outcome?.ok ? outcome.review : null;
   const idle = !block && !props.busy;
   return (
-    <section className="workspace-card">
-      <h2>Post a bounty</h2>
-      <p>Paste a GitHub issue and set the reward.</p>
+    <section className="workspace-card" aria-label="Post a bounty">
       <div className="bounty-form">
         <label>
           GitHub issue link

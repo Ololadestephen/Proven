@@ -4,6 +4,8 @@ export interface AppRoute {
   section: WorkspaceSection;
   bidId?: number;
   bountyId?: number;
+  /** The PR bounty posting page (/app/bounties/new). */
+  postBounty?: boolean;
   title: string;
   subtitle: string;
 }
@@ -25,6 +27,13 @@ export function appRoute(path: string, hash = ""): AppRoute {
       section: "agents",
       title: "Agents",
       subtitle: "",
+    };
+  if (path === "/app/bounties/new")
+    return {
+      section: "bounties",
+      postBounty: true,
+      title: "Post a bounty",
+      subtitle: "Paste a GitHub issue and set the reward.",
     };
   const bountyPage = /^\/app\/bounties\/([0-9]{1,10})$/.exec(path);
   // A bounty's page has its own heading, so the layout shows none of its own.

@@ -320,6 +320,7 @@ export function WorkspacePages({
         actions={bounty}
         busy={bountyBusy}
         bountyId={route.bountyId}
+        posting={!!route.postBounty}
       />
     );
   if (!market) return <p role="status">Reading the board…</p>;

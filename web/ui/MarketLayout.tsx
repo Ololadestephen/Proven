@@ -11,6 +11,7 @@ export function MarketLayout({
   subtitle,
   active,
   canPostJob,
+  canPostBounty = false,
 }: {
   walletControls: ReactNode;
   children: ReactNode;
@@ -19,6 +20,8 @@ export function MarketLayout({
   active: WorkspaceSection;
   /** The board would accept a post from this visitor: the market is open, or they are a listed buyer. */
   canPostJob: boolean;
+  /** The bounty list is showing, so its heading offers the posting page. */
+  canPostBounty?: boolean;
 }) {
   // Posting a job belongs to the market's own pages, not PR bounties or agents.
   const showPost = ["market", "jobs"].includes(active) && canPostJob;
@@ -52,13 +55,18 @@ export function MarketLayout({
       </aside>
       <div className="app-area">
         <main className="shell main-content market" id="workspace-content">
-          {title || showPost ? (
+          {title || showPost || canPostBounty ? (
             <header className="workspace-heading">
               <div className="workspace-heading-row">
                 {title ? <h1>{title}</h1> : <span />}
                 {showPost ? (
                   <a className="button button-primary" href="/app/post">
                     Post a job
+                  </a>
+                ) : null}
+                {canPostBounty ? (
+                  <a className="button button-primary" href="/app/bounties/new">
+                    Post a bounty
                   </a>
                 ) : null}
               </div>

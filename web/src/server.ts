@@ -309,7 +309,7 @@ async function serveRead(
 }
 
 export function isAppPath(path: string) {
-  return /^\/app(?:\/|\/(?:market|jobs|post|agents|bounties)|\/(?:bids|bounties)\/[0-9]{1,10})?$/.test(
+  return /^\/app(?:\/|\/(?:market|jobs|post|agents|bounties|bounties\/new)|\/(?:bids|bounties)\/[0-9]{1,10})?$/.test(
     path,
   );
 }

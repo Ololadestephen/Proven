@@ -204,6 +204,8 @@ export interface PageProps {
   onReleasePending: () => void;
   /** Set on a bounty's own page (/app/bounties/:id). */
   bountyId?: number;
+  /** The posting page (/app/bounties/new): the form only, not the list. */
+  posting?: boolean;
   /** The issue's title when GitHub has given it; the page shows "owner/repo#12" otherwise. */
   titleOf?: (repo: string, issue: number) => string | undefined;
 }
@@ -274,23 +276,34 @@ export function PrBountiesView(props: PageProps) {
       </>
     );
   }
+  if (props.posting)
+    return (
+      <>
+        {pendingNotice}
+        <a className="workspace-card-link bounty-back" href="/app/bounties">
+          ← Back to bounties
+        </a>
+        {config.paused ? (
+          <p className="workspace-empty">Posting is paused.</p>
+        ) : (
+          <PostPreview
+            contract={contract}
+            config={config}
+            wallet={props.wallet}
+            run={props.run}
+            chain={props.chain}
+            approved={props.approved}
+            busy={props.busy}
+            poster={props.poster}
+            done={props.done}
+          />
+        )}
+      </>
+    );
   return (
     <>
       {pendingNotice}
       <BountyList bounties={bounties} ctx={ctx} titleOf={titleOf} />
-      {!config.paused && props.poster ? (
-        <PostPreview
-          contract={contract}
-          config={config}
-          wallet={props.wallet}
-          run={props.run}
-          chain={props.chain}
-          approved={props.approved}
-          busy={props.busy}
-          poster={props.poster}
-          done={props.done}
-        />
-      ) : null}
       {/* Anyone may post now, so the list shows the link only to manage one; a new link is made
           on a bounty's page, under its claim step. */}
       {!props.wallet ||
@@ -342,10 +355,12 @@ export function PrBounties({
   actions,
   busy,
   bountyId,
+  posting = false,
 }: {
   actions: BountyActions;
   busy: boolean;
   bountyId?: number;
+  posting?: boolean;
 }) {
   const { wallet, run, pending } = actions;
   const chain = useMemo(() => bountyChain(api), []);
@@ -399,10 +414,18 @@ export function PrBounties({
       now={now}
       approved={FEES_APPROVED}
       chain={chain}
-      done={() => setVersion((v) => v + 1)}
+      done={() => {
+        setVersion((v) => v + 1);
+        // A posted bounty belongs on the list, so the posting page hands back to it.
+        if (posting) {
+          history.pushState(null, "", "/app/bounties");
+          dispatchEvent(new PopStateEvent("popstate"));
+        }
+      }}
       onCheckPending={() => void actions.check().catch(() => undefined)}
       onReleasePending={() => void actions.release()}
       bountyId={bountyId}
+      posting={posting}
       titleOf={titleOf}
     />
   );

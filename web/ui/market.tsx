@@ -98,6 +98,11 @@ function App() {
       subtitle={route.subtitle}
       active={route.section}
       canPostJob={canPost(wallet?.accountId)}
+      canPostBounty={
+        route.section === "bounties" &&
+        route.bountyId === undefined &&
+        !route.postBounty
+      }
       walletControls={
         <WalletControls
           wallet={wallet}
