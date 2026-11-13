@@ -211,8 +211,6 @@ Planned work after the hackathon. None of it is built yet, and none of it has a 
 - **Upgrade key.** Decide how upgrades are governed: a multisig, a time delay, or locking upgrades once the contracts settle.
 - **Higher limits.** Raise the per-job, per-buyer and total caps only after an outside review of the contracts.
 - **Monitoring.** Alerts for stuck jobs and bounties, on top of the existing timeouts and refunds.
-- **Mainnet checks.** Automated read-only checks against the live contracts.
-- **Relay availability.** A second relay, or a documented path that works without it.
 - **Cross-chain payout.** Pay workers on other chains.
 
 ## Repository layout
