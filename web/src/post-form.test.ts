@@ -207,7 +207,9 @@ test("a repository outside the pilot is refused before any review", () => {
 });
 
 test("a missing reward or one over the cap is explained and nothing is previewed", () => {
-  assert.match(render({ meta: ready, rewardText: "" }), /role="alert"/);
+  const empty = render({ meta: ready, rewardText: "" });
+  assert.doesNotMatch(empty, /role="alert"/);
+  assert.match(empty, /Enter an issue link and a reward\./);
   assert.match(
     render({ meta: ready, rewardText: "9" }),
     /The payment can be at most 2 NEAR/,

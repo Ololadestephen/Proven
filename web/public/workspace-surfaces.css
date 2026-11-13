@@ -256,6 +256,7 @@
 .workspace-app .bounty-form label,
 .workspace-app .bounty-action label {
   display: grid;
+  align-content: start;
   gap: 6px;
   color: var(--muted);
   font-size: 13px;

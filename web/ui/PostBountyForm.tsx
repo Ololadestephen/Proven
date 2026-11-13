@@ -208,7 +208,9 @@ export function PostFormView(props: FormViewProps) {
             inputMode="decimal"
             onChange={(e) => props.onReward(e.target.value)}
           />
-          <FieldError problems={problems} field="reward" />
+          {props.rewardText.trim() ? (
+            <FieldError problems={problems} field="reward" />
+          ) : null}
         </label>
       </div>
       <FieldError problems={problems} field="repository" />

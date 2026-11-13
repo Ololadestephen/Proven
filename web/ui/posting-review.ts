@@ -197,14 +197,18 @@ export function reviewPosting(input: {
       message: `This pilot only pays for issues in ${pilot.repo}. The link is for ${meta.repo}.`,
     });
   let reward = 0n;
-  try {
-    reward = parseNearAmount(input.rewardText.trim(), limits.max_reward);
-  } catch (error) {
-    problems.push({
-      field: "reward",
-      message: error instanceof Error ? error.message : "Enter a reward.",
-    });
-  }
+  const rewardText = input.rewardText.trim();
+  if (!rewardText)
+    problems.push({ field: "reward", message: "Enter a reward." });
+  else
+    try {
+      reward = parseNearAmount(rewardText, limits.max_reward);
+    } catch (error) {
+      problems.push({
+        field: "reward",
+        message: error instanceof Error ? error.message : "Enter a reward.",
+      });
+    }
   if (reward > 0n && limits.min_reward && reward < limits.min_reward)
     problems.push({
       field: "reward",
