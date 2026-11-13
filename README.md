@@ -209,7 +209,6 @@ Planned work after the hackathon. None of it is built yet, and none of it has a 
 - **More control over planted fakes.** Let the buyer choose how many fakes and how hard they are, and add fakes generated from a public seed.
 - **More built-in check types.** For example unit-test runs, CSV schema and totals checks, and API response matching.
 - **Upgrade key.** Decide how upgrades are governed: a multisig, a time delay, or locking upgrades once the contracts settle.
-- **Higher limits.** Raise the per-job, per-buyer and total caps only after an outside review of the contracts.
 - **Monitoring.** Alerts for stuck jobs and bounties, on top of the existing timeouts and refunds.
 - **Cross-chain payout.** Pay workers on other chains.
 
