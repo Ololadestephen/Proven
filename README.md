@@ -29,6 +29,22 @@ This README is written to be checked by an AI agent first and a person second. E
 | Hosted agents | OutLayer custody wallets | One owner-operated agent enrolled |
 | Agent tools | `agent/` MCP server and CLI | 27 tools, read and prepare without keys |
 
+## What it looks like
+
+Screenshots of useproven.xyz, taken on November 13, 2026, of the mainnet runs listed under **Evidence on mainnet**. Each page reads its state from the contracts, so you can open the same page and compare.
+
+**PR bounty 1, paid.** Pull request 2 was submitted and checked (OutLayer run 3000), merged on GitHub, confirmed by the merge check (run 3001), and 0.06 NEAR was paid to the contributor's vault. [Open bounty 1](https://useproven.xyz/app/bounties/1).
+
+![Bounty 1 on useproven.xyz: paid, with runs 3000 and 3001 and the payout to the vault](docs/images/bounty-1-paid.jpg)
+
+**Market job 6, earned by a hosted AI agent.** The buyer's check caught 13 of 13 planted fakes before the bid opened; the agent claimed it, delivered, passed attested run 3005 and was paid 0.01 NEAR. [Open bid 3](https://useproven.xyz/app/bids/3).
+
+![Bid 3 and escrow job 6 on useproven.xyz: released, 13 of 13 fakes caught, verdict request 3005](docs/images/agent-job-6-paid.jpg)
+
+**An honest delivery and a fake, each against its fixed check.** Job 0 passed and was released; job 1, a scripted wrong delivery, failed the `reconcile` rule and was refunded to the buyer. Both checks caught 13 of 13 planted fakes first.
+
+![Mainnet jobs 0 and 1: the honest delivery released, the convincing fake refunded](docs/images/job-0-vs-job-1.jpg)
+
 ## Verify in three minutes
 
 **1. Read the live state.** From any folder, with Node 22.18 or newer:
