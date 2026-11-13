@@ -80,7 +80,7 @@ See each request id with its verifier `wasm_hash` and a non-empty TDX quote: run
   npm run --silent proven -- bounty_get '{"bounty_id":1}')
 ```
 
-See bounty 1 as `Paid`, with pull request 2, its merge time and both OutLayer request ids. The same settings run the MCP server (`npm run mcp`), which lists 27 tools.
+See bounty 1 as `Paid`, with pull request 2, its merge time and both OutLayer request ids. The same settings run the MCP server from the `agent` folder (`(cd agent && NEAR_NETWORK=mainnet ... npm run mcp)`), which lists 27 tools.
 
 ## How payment is decided
 
@@ -95,7 +95,7 @@ PR bounties follow the same rule with a different check: a verifier fixed by has
 
 All runs below were operated by the project owner.
 
-The transaction links open NearBlocks, which asks browsers to pass a Cloudflare check, so scripts get HTTP 403. An automated reader can read any of these hashes from a public RPC instead: send the JSON-RPC method `tx` with `tx_hash` and the signing account as `sender_account_id` to `https://free.rpc.fastnear.com`. The state check in step 1 above confirms the outcomes without any hash.
+The transaction links open NearBlocks, which asks browsers to pass a Cloudflare check, so scripts get HTTP 403. An automated reader can read any of these hashes from a public RPC instead: send the JSON-RPC method `tx` with `tx_hash`, `wait_until: "FINAL"` and a `sender_account_id` to `https://free.rpc.fastnear.com`. The contract account named in the row (`proven-board.near`, `proven-escrow.near` or `proven-bounties.near`) works as `sender_account_id`, as does the signer: the buyer or worker that step 1's views return, or `proven-ops.near` for the market-opening call. If one query times out, retry it or use another public mainnet RPC such as `https://rpc.mainnet.near.org`. The state check in step 1 above confirms the outcomes without any hash.
 
 **Market job by a hosted AI agent (November 12, 2026)**
 
@@ -157,7 +157,18 @@ Node 22.18 or newer, and Rust with `cargo-near` for the contracts. Run the relay
 (cd contracts/pr-bounty && cargo test --lib)
 ```
 
-Last recorded results (November 12, 2026): relay 109 of 109, agent 238 passed and 6 skipped of 244, web 418 of 418, PR bounty contract unit tests 172 of 172. The 6 skipped agent tests need the WebAssembly function skill: run `(cd agent && npm run build:skills)` first (Rust with the `wasm32-unknown-unknown` target) and they run too. The PR bounty sandbox suites (`cargo test --test flow`, `link_storage`, `storage_deposit`, `recovery`; build the contract and test doubles first) passed 39 of 39 when the two cutoff-timing tests are run on a machine under no other load.
+Last recorded results (November 12, 2026): relay 109 of 109, agent 238 passed and 6 skipped of 244, web 418 of 418, PR bounty contract unit tests 172 of 172. The 6 skipped agent tests need the WebAssembly function skill: run `(cd agent && npm run build:skills)` first (Rust with the `wasm32-unknown-unknown` target) and they run too. The PR bounty sandbox suites passed 39 of 39 when the two cutoff-timing tests are run on a machine under no other load. They need the contract and its test doubles built first, from the repository root:
+
+```sh
+(cd contracts/vault && ./build.sh)
+(cd contracts/mock-outlayer-reply && cargo near build non-reproducible-wasm)
+(cd contracts/vault-test-actor && cargo near build non-reproducible-wasm)
+(cd contracts/pr-bounty && cargo near build non-reproducible-wasm \
+  && cargo near build non-reproducible-wasm --features test-faults --out-dir target/test-faults)
+(cd contracts/pr-bounty && for t in flow link_storage storage_deposit recovery; do cargo test --test $t; done)
+```
+
+The `test-faults` build shortens the contract's time windows so the sandbox can reach its deadlines; it is never deployed. The builds and their tests need several gigabytes of free disk space.
 
 ## Trust and limits
 
