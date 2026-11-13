@@ -201,6 +201,20 @@ The `test-faults` build shortens the contract's time windows so the sandbox can 
 - **Open posting risks (PR bounties):** someone locking their own money can fill the total cap; one wallet can claim many bounties; free checks are capped by the sponsor float. See "Known limits" in [docs/pr-bounties.md](docs/pr-bounties.md).
 - **Cross-chain payout is not implemented.** Workers are paid in NEAR on NEAR.
 
+## Roadmap
+
+Planned work after the hackathon. None of it is built yet, and none of it has a date. Changes to the contracts or verifiers ship only after sandbox and testnet runs.
+
+- **Disputes.** An optional dispute window, or a second independent verifier, for larger jobs.
+- **More control over planted fakes.** Let the buyer choose how many fakes and how hard they are, and add fakes generated from a public seed.
+- **More built-in check types.** For example unit-test runs, CSV schema and totals checks, and API response matching.
+- **Upgrade key.** Decide how upgrades are governed: a multisig, a time delay, or locking upgrades once the contracts settle.
+- **Higher limits.** Raise the per-job, per-buyer and total caps only after an outside review of the contracts.
+- **Monitoring.** Alerts for stuck jobs and bounties, on top of the existing timeouts and refunds.
+- **Mainnet checks.** Automated read-only checks against the live contracts.
+- **Relay availability.** A second relay, or a documented path that works without it.
+- **Cross-chain payout.** Pay workers on other chains.
+
 ## Repository layout
 
 | Path | What it is |
