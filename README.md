@@ -80,7 +80,7 @@ See each request id with its verifier `wasm_hash` and a non-empty TDX quote: run
   npm run --silent proven -- bounty_get '{"bounty_id":1}')
 ```
 
-See bounty 1 as `Paid`, with pull request 2, its merge time and both OutLayer request ids. The same settings run the MCP server, which lists 27 tools: `npm run mcp` from the repository root, or `npm run mcp` inside `agent/`.
+See bounty 1 as `Paid`, with pull request 2, its merge time and both OutLayer request ids. The same settings run the MCP server, which lists 27 tools: `npm run --silent mcp` from the repository root, or inside `agent/`. Keep `--silent`, or npm prints its own banner line into the server's JSON output.
 
 ## How payment is decided
 
@@ -148,14 +148,14 @@ Then ask it, for example, "List open PR bounties" or "Prepare a claim on bounty 
 
 ## Run the tests
 
-Node 22.18 or newer, and Rust with `cargo-near` for the contracts. From the repository root:
+With Node 22.18 or newer, run these from the repository root:
 
 ```sh
 npm run setup   # installs relay, then agent, then web
 npm test        # runs each suite and its typecheck, in the same order
 ```
 
-The root `package.json` holds only these shortcuts; each folder keeps its own dependencies. The same steps by hand, with the relay first because `agent/` and `web/` import its chain code, plus the PR bounty contract's unit tests:
+The root has no lockfile, so install with `npm run setup`, not `npm ci`: the root `package.json` holds only these shortcuts, and each folder keeps its own dependencies. Rust and `cargo-near` are needed only for the contract checks below. The same steps by hand, with the relay first because `agent/` and `web/` import its chain code, plus the PR bounty contract's unit tests:
 
 ```sh
 (cd relay && npm ci && npm test && npm run typecheck)
