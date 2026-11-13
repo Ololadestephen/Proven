@@ -1,0 +1,14 @@
+{
+  "name": "proven",
+  "private": true,
+  "description": "Root shortcuts only: each folder keeps its own dependencies. The relay installs first because agent/ and web/ import its chain code.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "setup": "(cd relay && npm ci) && (cd agent && npm ci) && (cd web && npm ci)",
+    "test": "(cd relay && npm test && npm run typecheck) && (cd agent && npm test && npm run typecheck) && (cd web && npm test && npm run typecheck)",
+    "mcp": "cd agent && npm run --silent mcp"
+  }
+}
