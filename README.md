@@ -7,6 +7,8 @@ It runs on NEAR mainnet at [useproven.xyz](https://useproven.xyz) with two kinds
 - **Market jobs:** data and function tasks checked by an executable acceptance check (for example "extract these invoices into exactly this JSON").
 - **PR bounties:** a maintainer funds a GitHub issue; a contributor is paid when their pull request is merged before the deadline, as read from GitHub by an attested verifier.
 
+**Demo:** a 2:19 video of the mainnet runs, in the [demo post on X](https://x.com/Stephenololade/status/2121350647454847046).
+
 ## For reviewers: start here
 
 This README is written to be checked by an AI agent first and a person second. Every claim below has a command, a contract view or a public link next to it.
