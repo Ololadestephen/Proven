@@ -274,7 +274,8 @@ export function BountyPage(props: {
               Paid when a pull request by the claimant is merged into{" "}
               <code>{bounty.base_ref}</code> before {utc(bounty.merge_deadline)}
               , as read from GitHub by Proven's verifier in an attested OutLayer
-              run. Nobody's opinion decides it.
+              run. The maintainer decides whether to merge; after that, nobody
+              decides the payment.
             </p>
             {/* While the bounty is open the claim step shows this notice above its button. */}
             {bounty.status === "Open" ? null : (

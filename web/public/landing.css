@@ -158,8 +158,25 @@
   gap: 12px;
   margin-top: 30px;
 }
+.lp-hero-links {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 18px 0 0 !important;
+  color: #b9b4dc;
+  font-size: 13px;
+}
+.lp-hero-links a {
+  color: #e1def6;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.lp-hero-links a:hover {
+  color: #fff;
+}
 .lp-preview-frame {
-  margin-top: 70px;
+  margin-top: 56px;
   padding: 26px 26px 0;
   border: 1px solid #ffffff55;
   border-bottom: 0;
@@ -214,7 +231,8 @@
 }
 .lp-footer nav {
   display: flex;
-  gap: 25px;
+  flex-wrap: wrap;
+  gap: 8px 25px;
 }
 .lp-footer nav a {
   color: #6d6878;

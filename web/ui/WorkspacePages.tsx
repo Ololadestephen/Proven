@@ -220,7 +220,7 @@ function JobTile({ bid, viewer }: { bid: MarketBid; viewer: string | null }) {
   );
 }
 /** Tabs with counts, a search box and a grid of jobs. */
-function JobGrid({
+export function JobGrid({
   bids,
   viewer,
   initial = "open",
@@ -260,10 +260,35 @@ function JobGrid({
             <JobTile key={bid.id} bid={bid} viewer={viewer} />
           ))}
         </div>
+      ) : bids.length ? (
+        // An empty tab points somewhere: to finished work when there is some, and to posting.
+        <div className="workspace-empty">
+          <p>{tab === "open" ? "No open jobs right now." : "No jobs here."}</p>
+          <div className="workspace-empty-actions">
+            {tab !== "paid" && counts.paid > 0 ? (
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setTab("paid")}
+              >
+                See paid jobs
+              </button>
+            ) : tab !== "all" ? (
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setTab("all")}
+              >
+                See all jobs
+              </button>
+            ) : null}
+            <a className="workspace-card-link" href="/app/post">
+              Post a job
+            </a>
+          </div>
+        </div>
       ) : (
-        <p className="workspace-empty">
-          {bids.length ? "No jobs here." : empty}
-        </p>
+        <p className="workspace-empty">{empty}</p>
       )}
     </section>
   );

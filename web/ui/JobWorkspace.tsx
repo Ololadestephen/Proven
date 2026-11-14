@@ -79,6 +79,7 @@ export function JobWorkspace({
     (bid.recorded_attempts ?? 0) <
     Math.max(bid.funded_attempts, job?.history?.length ?? 0);
   const ended = ["Done", "Closed", "Cancelled"].includes(bid.state);
+  const deliveredAt = (bid.job ?? bid.last_job)?.delivered_at ?? null;
   const jobDot = job?.state === "Released" ? "paid" : ended ? "closed" : "open";
   const revealed = ended ? (
     <p className="job-check-link">
@@ -403,12 +404,29 @@ export function JobWorkspace({
           <dl>
             <dt>Payment</dt>
             <dd>{showNear(bid.amount)}</dd>
-            <dt>{ended ? "Ended" : "Ends"}</dt>
-            <dd>
-              {new Date(
-                Number(BigInt(bid.expires_at) / 1_000_000n),
-              ).toUTCString()}
-            </dd>
+            {/* The bid's expiry is a deadline, not when a finished job ended; a finished job shows
+                its delivery time instead, when the chain recorded one. */}
+            {ended ? (
+              deliveredAt ? (
+                <>
+                  <dt>Delivered</dt>
+                  <dd>
+                    {new Date(
+                      Number(BigInt(deliveredAt) / 1_000_000n),
+                    ).toUTCString()}
+                  </dd>
+                </>
+              ) : null
+            ) : (
+              <>
+                <dt>Open until</dt>
+                <dd>
+                  {new Date(
+                    Number(BigInt(bid.expires_at) / 1_000_000n),
+                  ).toUTCString()}
+                </dd>
+              </>
+            )}
             <dt>Attempts used</dt>
             <dd>
               {bid.funded_attempts} of {bid.max_attempts ?? 3}

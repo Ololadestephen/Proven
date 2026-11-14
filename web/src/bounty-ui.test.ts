@@ -1048,7 +1048,7 @@ test("a bounty's page shows the path, the next step, parties, terms, records and
   assert.match(html, /Merged on GitHub/);
   assert.match(
     html,
-    /Nobody&#x27;s opinion decides it|Nobody's opinion decides it/,
+    /The maintainer decides whether to merge; after that, nobody\s+decides the payment\./,
   );
   const open = renderPage({ bountyId: 1 });
   assert.match(
