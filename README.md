@@ -178,7 +178,7 @@ The root has no lockfile, so install with `npm run setup`, not `npm ci`: the roo
 (cd contracts/pr-bounty && cargo test --lib)
 ```
 
-Last recorded results (November 12, 2026): relay 109 of 109, agent 238 passed and 6 skipped of 244, web 418 of 418, PR bounty contract unit tests 172 of 172. The 6 skipped agent tests need the WebAssembly function skill: run `(cd agent && npm run build:skills)` first (Rust with the `wasm32-unknown-unknown` target) and they run too. The PR bounty sandbox suites passed 39 of 39 when the two cutoff-timing tests are run on a machine under no other load. They need the contract and its test doubles built first, from the repository root:
+Last recorded results (November 14, 2026): relay 109 of 109, agent 238 passed and 6 skipped of 244, web 420 of 420, PR bounty contract unit tests 172 of 172. The 6 skipped agent tests need the WebAssembly function skill: run `(cd agent && npm run build:skills)` first (Rust with the `wasm32-unknown-unknown` target) and they run too. The PR bounty sandbox suites passed 39 of 39 when the two cutoff-timing tests are run on a machine under no other load. They need the contract and its test doubles built first, from the repository root:
 
 ```sh
 (cd contracts/vault && ./build.sh)

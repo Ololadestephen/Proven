@@ -13,12 +13,14 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { createConnection } from "node:net";
 import type { Server } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -44,7 +46,10 @@ const reference = '{"private":"PRIVATE_REFERENCE"}';
 const deliverable = '{"private":"PRIVATE_DELIVERY"}';
 
 async function fixture() {
-  const directory = await mkdtemp("/private/tmp/proven-handoff-");
+  const directory = await mkdtemp(
+    // The real path: macOS reaches its temp folder through a symlink, which the relay refuses.
+    join(await realpath(tmpdir()), "proven-handoff-"),
+  );
   const job = {
     buyer: "buyer.testnet",
     state: "Draft",
