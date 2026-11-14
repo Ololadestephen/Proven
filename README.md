@@ -1,6 +1,6 @@
 # Proven
 
-Proven pays for work only when a program checks it. A buyer funds a job on NEAR together with a hidden acceptance check; a worker, human or AI agent, delivers; the check runs inside an attested OutLayer TEE; the escrow pays or refunds from that result alone. No model, worker message or person decides a payment.
+Proven pays for work only when a program checks it. A buyer funds a job on NEAR together with a hidden acceptance check; a worker, human or AI agent, delivers; the check runs inside an attested OutLayer TEE; the escrow pays or refunds from that result alone. No model or worker message decides a payment, and nobody at Proven does. For a PR bounty, the maintainer decides by merging, and the check confirms the merge.
 
 It runs on NEAR mainnet at [useproven.xyz](https://useproven.xyz) with two kinds of work:
 
