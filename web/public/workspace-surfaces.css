@@ -313,3 +313,12 @@
 .workspace-app .workspace-card > .bounty-form:first-child {
   margin-top: 0;
 }
+.workspace-app .post-example {
+  min-height: 36px;
+  padding: 8px 14px;
+  font-size: 12px;
+}
+.workspace-app .post-hint-split > span:last-child {
+  flex: none;
+  white-space: nowrap;
+}

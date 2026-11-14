@@ -106,6 +106,35 @@ export function postingCost(
     total: amount + budget + fees + storage,
   };
 }
+/** The brief is public and stored on chain, so it holds at most this many bytes. */
+export const BRIEF_BYTES = 2048;
+export const BRIEF_FILES =
+  ".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json";
+
+/** Adds an imported text file to the brief: it replaces an empty brief and goes under an existing one,
+ * after a blank line. Nothing is cut: a file that would not fit, or is not text, is refused. */
+export function importIntoBrief(
+  current: string,
+  name: string,
+  text: string,
+): { text: string } | { error: string } {
+  if (text.includes("\u0000"))
+    return {
+      error: `${name} is not a text file. Import a .txt, .md, .csv or .json file.`,
+    };
+  const body = text.replace(/\r\n/g, "\n").replace(/\s+$/, "");
+  if (!body.trim()) return { error: `${name} is empty.` };
+  const joined = current.trim()
+    ? `${current.replace(/\s+$/, "")}\n\n${body}`
+    : body;
+  const size = new TextEncoder().encode(joined).length;
+  if (size > BRIEF_BYTES)
+    return {
+      error: `${name} does not fit: the brief would be ${size.toLocaleString("en")} bytes, and it can hold ${BRIEF_BYTES.toLocaleString("en")}. Shorten the file, or import only the part a worker needs.`,
+    };
+  return { text: joined };
+}
+
 const jsonState = (text: string) => {
   if (!text.trim()) return "empty";
   try {
@@ -362,6 +391,19 @@ export function PostJob({
     setError("");
   };
 
+  async function importBrief(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const result = importIntoBrief(
+      draft.description,
+      file.name,
+      await file.text(),
+    );
+    if ("error" in result) setError(result.error);
+    else update("description", result.text);
+  }
+
   async function useSample() {
     if (samplePending.current || locked) return;
     samplePending.current = true;
@@ -537,11 +579,11 @@ export function PostJob({
         {stage === 0 && (
           <button
             type="button"
-            className="post-link"
-            disabled={locked}
+            className="button button-secondary post-example"
+            disabled={locked || loaded}
             onClick={() => void useSample()}
           >
-            {loaded ? "Example loaded" : "Use an example"}
+            {loaded ? "Example loaded" : "Start from an example"}
           </button>
         )}
       </div>
@@ -562,17 +604,30 @@ export function PostJob({
         {stage === 0 && (
           <>
             <div className="post-field">
-              <label htmlFor="post-brief">What needs doing?</label>
+              <div className="post-field-head">
+                <label htmlFor="post-brief">What needs doing?</label>
+                <label className="post-file">
+                  Import file
+                  <input
+                    type="file"
+                    accept={BRIEF_FILES}
+                    onChange={(event) => void importBrief(event)}
+                  />
+                </label>
+              </div>
               <textarea
                 id="post-brief"
                 rows={7}
                 value={draft.description}
-                maxLength={2048}
+                maxLength={BRIEF_BYTES}
                 placeholder="Describe work a program can check. This is public."
                 onChange={(event) => update("description", event.target.value)}
               />
               <span className="post-hint post-hint-split">
-                <span>Public. Leave out anything private.</span>
+                <span>
+                  Public. Leave out anything private. Import a .txt, .md, .csv
+                  or .json file.
+                </span>
                 <span>{bytes} / 2,048</span>
               </span>
             </div>

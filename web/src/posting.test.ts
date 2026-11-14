@@ -20,6 +20,11 @@ const postingCost = module.postingCost as (
   runDeposit: bigint,
 ) => Record<"amount" | "budget" | "fees" | "storage" | "total", bigint>;
 const terms = module.terms as (draft: Record<string, unknown>) => unknown;
+const importIntoBrief = module.importIntoBrief as (
+  current: string,
+  name: string,
+  text: string,
+) => { text: string } | { error: string };
 
 const NEAR = 10n ** 24n;
 const RUN = NEAR / 100n;
@@ -83,4 +88,29 @@ test("an invalid draft is refused before anything is signed", () => {
   ];
   for (const [change, message] of cases)
     assert.throws(() => terms({ ...draft, ...change }), message);
+});
+
+test("an imported file fills an empty brief, or goes under the existing text", () => {
+  assert.deepEqual(importIntoBrief("", "rows.csv", "id,total\r\n1,5\r\n\n"), {
+    text: "id,total\n1,5",
+  });
+  assert.deepEqual(
+    importIntoBrief("Convert this to JSON:  \n", "rows.csv", "id,total\n1,5"),
+    { text: "Convert this to JSON:\n\nid,total\n1,5" },
+  );
+});
+
+test("a file that would not fit, is empty, or is not text is refused and nothing is cut", () => {
+  const big = importIntoBrief("", "big.csv", "x".repeat(2049));
+  assert.ok("error" in big && /2,049 bytes/.test(big.error));
+  // The limit counts bytes, so multi-byte text is refused on its byte size.
+  const wide = importIntoBrief("", "naira.txt", "₦".repeat(700));
+  assert.ok("error" in wide && /2,100 bytes/.test(wide.error));
+  const joined = importIntoBrief("a".repeat(2000), "rows.csv", "b".repeat(100));
+  assert.ok("error" in joined);
+  const exact = importIntoBrief("", "fit.txt", "y".repeat(2048));
+  assert.ok("text" in exact && exact.text.length === 2048);
+  assert.ok("error" in importIntoBrief("", "blank.txt", "  \n "));
+  const binary = importIntoBrief("", "scan.pdf", "%PDF\u0000\u0001");
+  assert.ok("error" in binary && /not a text file/.test(binary.error));
 });
