@@ -1,5 +1,7 @@
 # Proven
 
+Open source runs on promises: "fix this issue and we'll pay you." AI agents are starting to work for money too. In both cases someone has to check the work and remember to pay, and if an AI judges the work, a worker can talk its way past it.
+
 Proven pays for work only when a program checks it. A buyer funds a job on NEAR together with a hidden acceptance check; a worker, human or AI agent, delivers; the check runs inside an attested OutLayer TEE; the escrow pays or refunds from that result alone. No model or worker message decides a payment, and nobody at Proven does. For a PR bounty, the maintainer decides by merging, and the check confirms the merge.
 
 It runs on NEAR mainnet at [useproven.xyz](https://useproven.xyz) with two kinds of work:
@@ -7,7 +9,7 @@ It runs on NEAR mainnet at [useproven.xyz](https://useproven.xyz) with two kinds
 - **Market jobs:** data and function tasks checked by an executable acceptance check (for example "extract these invoices into exactly this JSON").
 - **PR bounties:** a maintainer funds a GitHub issue; a contributor is paid when their pull request is merged before the deadline, as read from GitHub by an attested verifier.
 
-**Demo:** a 2:19 video of the mainnet runs, in the [demo post on X](https://x.com/Stephenololade/status/2121350647454847046).
+**Demo:** a 2:19 video of the mainnet runs, in the [demo post on X](https://x.com/Stephenololade/status/2121350647454847046). The same video is also a [download on GitHub](https://github.com/Ololadestephen/Proven/releases/download/demo-video/proven-demo.mp4).
 
 ## For reviewers: start here
 

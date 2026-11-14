@@ -44,6 +44,7 @@ export const DOCS_REDIRECTS: Record<string, string> = {
 };
 const FILES: Record<string, [string, string]> = {
   "/favicon.svg": ["favicon.svg", "image/svg+xml"],
+  "/og.jpg": ["og.jpg", "image/jpeg"],
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app": ["market.html", "text/html; charset=utf-8"],
   "/app/": ["market.html", "text/html; charset=utf-8"],

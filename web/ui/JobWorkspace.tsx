@@ -178,7 +178,8 @@ export function JobWorkspace({
         <div className="bounty-page-main">
           <p className="bounty-page-status">
             <i className={`bounty-dot ${jobDot}`} aria-hidden="true" />
-            {bid.job?.state ?? bid.state} · job {bid.id}
+            {bid.job?.state ?? bid.state} · bid {bid.id}
+            {bid.job_id != null ? ` · escrow job ${bid.job_id}` : ""}
           </p>
           <h2 className="bounty-page-title">{bidTitle(bid)}</h2>
           <p className="bounty-page-reward">{showNear(bid.amount)}</p>
