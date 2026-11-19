@@ -84,6 +84,35 @@ test("stale, retry and expiry boundaries mirror contract strict inequalities", (
   assert.match(progress(fixture("Draft"), start).retry, /unavailable/);
 });
 
+test("market escrow jobs hold payment from creation and allow a challenge until expires_at", () => {
+  const expires = "2000000000000";
+  for (const state of ["Open", "Draft", "Challenging", "CheckRejected"])
+    assert.match(
+      progress(parseJob({ ...fixture(state), expires_at: expires }), 100n)
+        .funds,
+      /locked in escrow/,
+    );
+  const draft = parseJob({
+    ...fixture("Draft"),
+    deadline: "0",
+    expires_at: expires,
+  });
+  assert.match(progress(draft, 100n).retry, /may be triggered/);
+  assert.match(progress(draft, BigInt(expires)).retry, /unavailable/);
+  const start = 1_000_000_000_000n;
+  const stale = parseJob({
+    ...fixture("Challenging"),
+    deadline: "0",
+    expires_at: expires,
+    run_started_at: String(start),
+  });
+  assert.match(
+    progress(stale, start + RUN_TIMEOUT_NS + 1n).retry,
+    /may be triggered/,
+  );
+  assert.equal(parseJob(fixture("Draft")).expires_at, null);
+});
+
 test("unsafe ids, malformed fields and unknown states fail closed", () => {
   for (const id of ["-1", "01", "1.2", "9007199254740992", "1e3", "../1"])
     assert.throws(() => jobNumber(id));
