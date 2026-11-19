@@ -103,6 +103,8 @@ export function parseJob(value: unknown) {
     verdict_request_id: nullable(j.verdict_request_id, decimal),
     report_hash: nullable(j.report_hash, hash),
     failed_rule: j.failed_rule as string | null,
+    // Jobs made before the public format was added have none.
+    format_hash: j.format_hash == null ? null : hash(j.format_hash),
   };
 }
 export type Job = ReturnType<typeof parseJob>;

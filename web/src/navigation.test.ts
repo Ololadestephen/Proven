@@ -15,6 +15,8 @@ test("workspace fragments select sections and recorded jobs select evidence with
     ["#trust", "trust"],
     ["#job-35", "lookup"],
     ["#job-36", "lookup"],
+    ["#market-job-21", "lookup"],
+    ["#market-job-", "workspace"],
     ["#job-99999999999999999", "workspace"],
     ["#javascript:alert(1)", "workspace"],
     ["#api/demo/start", "workspace"],

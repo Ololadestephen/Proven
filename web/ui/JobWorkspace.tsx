@@ -343,12 +343,12 @@ export function JobWorkspace({
                 </dl>
               </details>
               <a href="/docs#trust">How verification is trusted</a>{" "}
-              {/* The evidence reader reads recorded testnet jobs only. Mainnet links its attestation above. */}
+              {/* The evidence reader reads testnet jobs only, here from the market escrow. Mainnet links its attestation above. */}
               {IS_MAINNET ? null : (
                 <a
                   href={
                     job?.id !== undefined
-                      ? `/evidence#job-${job.id}`
+                      ? `/evidence#market-job-${job.id}`
                       : "/evidence"
                   }
                 >

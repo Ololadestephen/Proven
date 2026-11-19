@@ -15,6 +15,7 @@ import { demoRoute } from "./demo-routes.ts";
 import { loadJob } from "./evidence.ts";
 import {
   hostedRoute,
+  MARKET_ESCROW,
   NETWORK,
   marketSettings,
   postingOutcome,
@@ -294,8 +295,10 @@ async function serveRead(
     res.end(zipped ? gzip : bytes);
     return;
   }
-  const job = /^\/api\/jobs\/([0-9]+)$/.exec(path);
-  if (!job) throw new ReadError("Route not found.", 404);
+  // /api/jobs/market/N reads the market's escrow; the evidence reader reads testnet only.
+  const job = /^\/api\/jobs\/(market\/)?([0-9]+)$/.exec(path);
+  if (!job || (job[1] && NETWORK === "mainnet"))
+    throw new ReadError("Route not found.", 404);
   if (reads.active >= 4)
     throw new ReadError(
       "Too many active reads. Try again after the current lookup.",
@@ -303,7 +306,13 @@ async function serveRead(
     );
   reads.active++;
   try {
-    json(res, 200, await getJob(job[1]!));
+    json(
+      res,
+      200,
+      await (job[1]
+        ? getJob(job[2]!, undefined, MARKET_ESCROW)
+        : getJob(job[2]!)),
+    );
   } finally {
     reads.active--;
   }

@@ -42,13 +42,13 @@ export function sectionFromHash(
     const selected = items.find((item) => item.href === hash);
     if (selected) return selected.id;
     if (
-      /^#job-[0-9]{1,16}$/.test(hash) &&
+      /^#(?:market-)?job-[0-9]{1,16}$/.test(hash) &&
       items.some((item) => item.href === "#lookup")
     )
       return "lookup";
     return defaultSection;
   }
-  if (/^#job-[0-9]{1,16}$/.test(hash)) return "lookup";
+  if (/^#(?:market-)?job-[0-9]{1,16}$/.test(hash)) return "lookup";
   const value = hash.slice(1);
   return value === "lookup" || value === "demo" || value === "trust"
     ? value

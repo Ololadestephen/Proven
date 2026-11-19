@@ -12,6 +12,7 @@ const controls = [
   ),
 ];
 let loadedId = null;
+let loadedMarket = false;
 let activeRequest = null;
 
 function element(tag, text, className) {
@@ -291,7 +292,7 @@ function clearResults() {
   document.getElementById("snapshot-meta").textContent = "";
 }
 
-async function loadJob(rawId) {
+async function loadJob(rawId, market = false) {
   const id = String(rawId).trim();
   activeRequest?.abort();
   activeRequest = null;
@@ -301,6 +302,7 @@ async function loadJob(rawId) {
     button.disabled = false;
   });
   loadedId = null;
+  loadedMarket = false;
   if (!/^\d{1,16}$/.test(id) || BigInt(id) > 9_007_199_254_740_991n) {
     empty.hidden = false;
     setFeedback(
@@ -324,14 +326,17 @@ async function loadJob(rawId) {
     "loading",
   );
   try {
-    const response = await fetch(`/api/jobs/${canonicalId}`, {
-      method: "GET",
-      credentials: "same-origin",
-      cache: "no-store",
-      redirect: "error",
-      signal: request.signal,
-      headers: { Accept: "application/json" },
-    });
+    const response = await fetch(
+      `/api/jobs/${market ? "market/" : ""}${canonicalId}`,
+      {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "error",
+        signal: request.signal,
+        headers: { Accept: "application/json" },
+      },
+    );
     const data = await response.json();
     if (activeRequest !== request) return;
     if (!response.ok) {
@@ -348,6 +353,7 @@ async function loadJob(rawId) {
       throw new Error("Wrong job response");
     render(data);
     loadedId = canonicalId;
+    loadedMarket = market;
     results.hidden = false;
     setFeedback(
       `Loaded job #${canonicalId}. This snapshot will not refresh automatically.`,
@@ -384,7 +390,7 @@ document.querySelectorAll("[data-job-id]").forEach((button) => {
   });
 });
 document.getElementById("refresh-button").addEventListener("click", () => {
-  if (loadedId !== null) void loadJob(loadedId);
+  if (loadedId !== null) void loadJob(loadedId, loadedMarket);
 });
 
 // Demo controls own their request state; job reads must not enable a new demo.
@@ -394,9 +400,10 @@ document.addEventListener("proven-job", (event) => {
 });
 
 // A recorded-job link requests public evidence only; it never arms or starts a demo.
+// #job-N reads the recorded jobs' escrow; #market-job-N reads the market's escrow.
 function openLinkedJob() {
-  const match = /^#job-([0-9]{1,16})$/.exec(window.location.hash);
-  if (match) void loadJob(match[1]);
+  const match = /^#(market-)?job-([0-9]{1,16})$/.exec(window.location.hash);
+  if (match) void loadJob(match[2], Boolean(match[1]));
 }
 window.addEventListener("hashchange", openLinkedJob);
 openLinkedJob();
