@@ -103,6 +103,10 @@ export function parseJob(value: unknown) {
     verdict_request_id: nullable(j.verdict_request_id, decimal),
     report_hash: nullable(j.report_hash, hash),
     failed_rule: j.failed_rule as string | null,
+    // Jobs made before the public format was added have none.
+    format_hash: j.format_hash == null ? null : hash(j.format_hash),
+    // Only market escrow jobs have one; they hold the payment from creation.
+    expires_at: j.expires_at == null ? null : decimal(j.expires_at),
   };
 }
 export type Job = ReturnType<typeof parseJob>;
@@ -130,7 +134,7 @@ export function progress(job: Job, now: bigint) {
   const expired = canExpire(job, now, stale, end);
   const canRetry = canRun(job, now, active, stale, end);
   return {
-    funds: funds(job.state),
+    funds: funds(job),
     verdict: verdict(job),
     run: active
       ? stale
@@ -161,12 +165,13 @@ function canRun(
 ) {
   if (active && !stale) return false;
   if (["Draft", "Challenging"].includes(job.state))
-    return now < BigInt(job.deadline);
+    return now < BigInt(job.expires_at ?? job.deadline);
   return (
     ["Delivered", "Verifying"].includes(job.state) && end !== null && now <= end
   );
 }
-function funds(state: string): string {
+function funds(job: Job): string {
+  const state = job.state;
   if (["Released"].includes(state))
     return "Paid to the worker by the confirmed payout callback.";
   if (["Refunded", "Expired"].includes(state))
@@ -176,6 +181,7 @@ function funds(state: string): string {
   if (["Releasing", "Refunding", "Expiring"].includes(state))
     return "Payout pending; transfer success is not confirmed yet.";
   if (
+    job.expires_at === null &&
     ["Open", "Draft", "Challenging", "CheckRejected", "Challenged"].includes(
       state,
     )

@@ -13,22 +13,29 @@ import { readJson } from "./read.ts";
 const digest = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 // Synthetic unverified quote for exercising binding checks, never presented as Intel-signed evidence.
-function record(job: Job, kind: "challenge" | "verify"): AttestationRecord {
+function record(
+  job: Job,
+  kind: "challenge" | "verify",
+  escrow = ESCROW,
+): AttestationRecord {
   const challenge = kind === "challenge",
-    other = (challenge ? job.fakes_hash : job.deliverable_hash)!;
+    other = (challenge ? job.fakes_hash : job.deliverable_hash)!,
+    format = job.format_hash ? { format_hash: job.format_hash } : {};
   const input = JSON.stringify(
     challenge
       ? {
           mode: "challenge",
-          escrow: ESCROW,
+          escrow,
           job: 11,
           check_hash: job.spec_hash,
           reference_hash: other,
+          ...format,
         }
       : {
           mode: "verify",
-          escrow: ESCROW,
+          escrow,
           job: 11,
+          ...format,
           check_hash: job.spec_hash,
           deliverable_hash: other,
         },
@@ -147,6 +154,59 @@ test("final block and get_job are fixed to the same hash; only view RPC is issue
   assert.equal(result.block_height, 123);
   assert.equal(result.job.state, "Released");
   assert.equal(result.attestations.challenge.status, "unavailable");
+});
+
+test("a market job is read and audited against the escrow it lives on", async () => {
+  const job = fixture("Released"),
+    blockHash = "A".repeat(44),
+    escrow = "escrow-v5.proven.testnet";
+  const result = await loadJob(
+    "21",
+    async (url, options) => {
+      if (String(url).includes("outlayer")) throw new Error("Unavailable API");
+      const call = JSON.parse(String(options?.body));
+      if (call.method === "block")
+        return Response.json({
+          result: {
+            header: { hash: blockHash, height: 123, timestamp_nanosec: "1000" },
+          },
+        });
+      assert.equal(call.params.account_id, escrow);
+      return Response.json({
+        result: {
+          block_hash: blockHash,
+          block_height: 123,
+          result: [...Buffer.from(JSON.stringify(job))],
+        },
+      });
+    },
+    escrow,
+  );
+  assert.equal(result.escrow, escrow);
+  assert.notEqual(escrow, ESCROW);
+  const attested = async () => Response.json(record(job, "challenge", escrow));
+  assert.equal(
+    (await audit(job, 11, "challenge", attested, escrow)).status,
+    "matched",
+  );
+  assert.equal(
+    (await audit(job, 11, "challenge", attested)).status,
+    "mismatch",
+  );
+  const formatted = {
+    ...job,
+    format_hash: "f".repeat(64),
+    verdict_request_id: "8815",
+    report_hash: "a".repeat(64),
+  };
+  for (const kind of ["challenge", "verify"] as const) {
+    const withFormat = async () =>
+      Response.json(record(formatted, kind, escrow));
+    assert.equal(
+      (await audit(formatted, 11, kind, withFormat, escrow)).status,
+      "matched",
+    );
+  }
 });
 
 test("read failures and malformed, oversized or invalid UTF-8 responses remain redacted errors", async () => {

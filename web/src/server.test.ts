@@ -4,11 +4,14 @@ import http from "node:http";
 import { once } from "node:events";
 import { clientKey, createApp } from "./server.ts";
 import { ReadError } from "./model.ts";
+import { MARKET_ESCROW } from "./market.ts";
 
 test("local HTTP only exposes allowed read routes, never private files or transaction endpoints", async (t) => {
   const jobs: string[] = [];
-  const app = createApp(async (id) => {
+  const escrows: (string | undefined)[] = [];
+  const app = createApp(async (id, _transport, escrow) => {
     jobs.push(id);
+    escrows.push(escrow);
     if (id === "404") throw new ReadError("Job missing", 404);
     throw new Error("PRIVATE configuration");
   });
@@ -86,7 +89,11 @@ test("local HTTP only exposes allowed read routes, never private files or transa
       ?.includes("connect-src 'self'"),
   );
   assert.equal(error.headers.get("cache-control"), "no-store");
-  assert.deepEqual(jobs, ["404", "11"]);
+  const market = await fetch(base + "/api/jobs/market/21");
+  assert.equal(market.status, 502);
+  assert.equal((await fetch(base + "/api/jobs/other.testnet/21")).status, 404);
+  assert.deepEqual(jobs, ["404", "11", "21"]);
+  assert.deepEqual(escrows, [undefined, undefined, MARKET_ESCROW]);
   const badHost = await new Promise<number>((resolve) => {
     const request = http.get(
       base + "/",
